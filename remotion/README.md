@@ -194,6 +194,25 @@ server forgets the jobs — the rendered files on disk are unaffected.
 One render runs at a time; more requests queue. On 16 GB, avoid running Studio,
 the UI, and a render all at once if you can.
 
+A track can only have one render in flight. Asking for a second while one is
+queued or running is refused with `RENDER_ALREADY_ACTIVE` (409), since both
+would take the single slot in turn and write the same `out/<slug>.mp4`. The UI
+recovers the running job from the server on load, so reloading the page or
+switching tracks re-attaches to a render in progress rather than offering to
+start another.
+
+### Editing metadata while something else changes it
+
+Saves are conditional. The API reports a `metadataRevision` for each track, the
+UI sends it back as `If-Match`, and a save based on a revision that is no longer
+current is refused with `METADATA_CONFLICT` (412) rather than overwriting the
+other change. Omitting `If-Match` keeps the plain merge behaviour, so the CLI
+and any script are unaffected.
+
+The form will not discard what you are typing: a refresh that carries no change
+leaves it alone, and if `metadata.json` does change on disk mid-edit, your text
+stays and a warning appears instead of the field silently reverting.
+
 ### Project structure
 
 The track logic lives in shared modules, so the CLI is a thin layer over it
@@ -391,6 +410,19 @@ npx remotion render
 ```console
 npx remotion upgrade
 ```
+
+**Checks**
+
+```console
+npm run lint    # eslint + tsc across src scripts services server ui tests
+npm test        # node:test regression suite (no browser, no render)
+```
+
+The suite covers the concurrency, error-containment, malformed-request and
+render-queue behaviour that is easy to break by accident; each test pins a
+defect that was reproduced before being fixed. It touches the filesystem under
+`public/tracks/` using uniquely named fixture tracks and removes them
+afterwards.
 
 ## Docs
 
