@@ -124,6 +124,48 @@ test("completion remains completed; duplicate and late worker events cannot reop
   assert.equal(terminalEvents, 1);
 });
 
+test("a second render of the same track is refused while one is in flight", async (t) => {
+  const workers: Worker[] = [];
+  const m = await manager(t, () => {
+    const w = new Worker();
+    w.pid = workers.length + 100;
+    workers.push(w);
+    return w;
+  });
+  const first = m.startRender("same-track");
+  assert.throws(() => m.startRender("same-track"), {
+    code: "RENDER_ALREADY_ACTIVE",
+  });
+  // A different track is unaffected, and queues behind the single slot.
+  const other = m.startRender("other-track");
+  assert.equal(m.getJob(other.id).status, "queued");
+
+  // Once the first finishes, the same track may be rendered again.
+  workers[0].emit("exit", 0, null);
+  await tick();
+  assert.equal(m.getJob(first.id).status, "failed");
+  const again = m.startRender("same-track");
+  assert.equal(m.getJob(again.id).status, "queued");
+  for (const worker of workers) worker.emit("close", 1, null);
+});
+
+test("a queued duplicate is refused too, not just a running one", async (t) => {
+  const workers: Worker[] = [];
+  const m = await manager(t, () => {
+    const w = new Worker();
+    w.pid = workers.length + 100;
+    workers.push(w);
+    return w;
+  });
+  m.startRender("busy");
+  const queued = m.startRender("waiting");
+  assert.equal(m.getJob(queued.id).status, "queued");
+  assert.throws(() => m.startRender("waiting"), {
+    code: "RENDER_ALREADY_ACTIVE",
+  });
+  for (const worker of workers) worker.emit("close", 1, null);
+});
+
 test("cancelled workers release the slot once without affecting the next worker", async (t) => {
   const workers: Worker[] = [];
   const m = await manager(t, () => {

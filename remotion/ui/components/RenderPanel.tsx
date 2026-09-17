@@ -6,10 +6,12 @@ import type {
 import {
   ApiRequestError,
   cancelRender,
+  listRenders,
   revealTrackOutput,
   startRender,
 } from "../api/client.ts";
 import { useRenderJob } from "../hooks/useRenderJob.ts";
+import { useStillCurrent } from "../hooks/useStillCurrent.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 
 const asApiError = (cause: unknown): ApiRequestError =>
@@ -53,12 +55,41 @@ export const RenderPanel: React.FC<{
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const { job, logs, missing } = useRenderJob(jobId, onChanged);
+  const stillCurrent = useStillCurrent(track.slug);
 
   // Drop the followed job when switching tracks, so one track's render does not
-  // appear under another.
+  // appear under another — then recover the real state from the server.
+  //
+  // Which render is running is the server's knowledge, not this component's. A
+  // reload, a track switch, or a second browser tab would otherwise leave the
+  // panel offering "Render" for a track that is already rendering, so it asks
+  // and re-attaches to the job in flight instead.
   useEffect(() => {
+    const slug = track.slug;
+    let abandoned = false;
+
     setJobId(null);
     setError(null);
+    setBusy(false);
+
+    void listRenders()
+      .then((jobs) => {
+        if (abandoned) {
+          return;
+        }
+        const active = jobs.find(
+          (candidate) =>
+            candidate.slug === slug && ACTIVE.includes(candidate.status),
+        );
+        if (active) {
+          setJobId(active.id);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      abandoned = true;
+    };
   }, [track.slug]);
 
   useEffect(() => {
@@ -68,27 +99,57 @@ export const RenderPanel: React.FC<{
   const active = job !== null && ACTIVE.includes(job.status);
 
   const begin = async () => {
+    const slug = track.slug;
+
     setBusy(true);
     setError(null);
 
     try {
-      const started = await startRender(track.slug);
+      const started = await startRender(slug);
 
-      setJobId(started.jobId);
+      if (stillCurrent(slug)) {
+        setJobId(started.jobId);
+      }
     } catch (cause) {
-      setError(asApiError(cause));
+      const failure = asApiError(cause);
+
+      // The server refuses a second render of the same track. That means one is
+      // already running — adopt it rather than reporting a failure the user
+      // cannot act on.
+      if (failure.code === "RENDER_ALREADY_ACTIVE") {
+        const jobs = await listRenders().catch(() => []);
+        const active = jobs.find(
+          (candidate) =>
+            candidate.slug === slug && ACTIVE.includes(candidate.status),
+        );
+
+        if (stillCurrent(slug) && active) {
+          setJobId(active.id);
+          return;
+        }
+      }
+
+      if (stillCurrent(slug)) {
+        setError(failure);
+      }
     } finally {
-      setBusy(false);
+      if (stillCurrent(slug)) {
+        setBusy(false);
+      }
     }
   };
 
   const reveal = async () => {
+    const slug = track.slug;
+
     setError(null);
 
     try {
-      await revealTrackOutput(track.slug);
+      await revealTrackOutput(slug);
     } catch (cause) {
-      setError(asApiError(cause));
+      if (stillCurrent(slug)) {
+        setError(asApiError(cause));
+      }
     }
   };
 
@@ -97,15 +158,21 @@ export const RenderPanel: React.FC<{
       return;
     }
 
+    const slug = track.slug;
+
     setBusy(true);
     setError(null);
 
     try {
       await cancelRender(jobId);
     } catch (cause) {
-      setError(asApiError(cause));
+      if (stillCurrent(slug)) {
+        setError(asApiError(cause));
+      }
     } finally {
-      setBusy(false);
+      if (stillCurrent(slug)) {
+        setBusy(false);
+      }
     }
   };
 

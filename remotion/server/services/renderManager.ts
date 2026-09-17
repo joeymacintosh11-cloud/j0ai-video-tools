@@ -79,6 +79,20 @@ class RenderManager {
 
     const slug = assertValidSlug(slugInput);
 
+    // One render per track at a time. Two jobs for the same slug would take the
+    // single render slot in turn and write the same out/<slug>.mp4 twice, so the
+    // second is only ever wasted work. A client that lost track of its job (a
+    // reload, say) should adopt the existing one from GET /api/renders.
+    const active = this.activeJobForSlug(slug);
+    if (active) {
+      throw new TrackError(
+        trackIssue(
+          "RENDER_ALREADY_ACTIVE",
+          `Track "${slug}" is already rendering (job ${active.id}, ${active.status}). Wait for it to finish, or cancel it first.`,
+        ),
+      );
+    }
+
     const job: RenderJob = {
       id: randomUUID(),
       slug,
@@ -110,6 +124,13 @@ class RenderManager {
 
   getJob(jobId: string): RenderJobView {
     return this.toView(this.requireJob(jobId));
+  }
+
+  /** The queued or running job for a track, if any. */
+  private activeJobForSlug(slug: string): RenderJob | undefined {
+    return [...this.jobs.values()].find(
+      (job) => job.slug === slug && !isTerminalStatus(job.status),
+    );
   }
 
   listJobs(): readonly RenderJobView[] {

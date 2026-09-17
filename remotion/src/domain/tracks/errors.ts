@@ -19,7 +19,8 @@ export type TrackErrorCode =
   | "ANALYSIS_GENERATION_FAILED"
   | "RENDER_FAILED"
   | "RENDER_JOB_NOT_FOUND"
-  | "RENDER_NOT_CANCELLABLE";
+  | "RENDER_NOT_CANCELLABLE"
+  | "RENDER_ALREADY_ACTIVE";
 
 export type TrackIssue = {
   readonly code: TrackErrorCode;

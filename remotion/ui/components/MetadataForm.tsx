@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   TrackDetailView,
   TrackMetadataPatch,
 } from "../../src/domain/api/views.ts";
 import { ApiRequestError, updateTrackMetadata } from "../api/client.ts";
+import { useStillCurrent } from "../hooks/useStillCurrent.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
+import { decideSeed } from "./metadataSeed.ts";
 
 type Fields = {
   readonly title: string;
@@ -85,19 +87,46 @@ export const MetadataForm: React.FC<{
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<ApiRequestError | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  /** Set when the file changed on disk while an edit was in progress. */
+  const [externallyChanged, setExternallyChanged] = useState(false);
 
-  // Re-seed when a different track is selected, or when the file changed on
-  // disk and the parent re-fetched.
+  const dirty = !sameFields(fields, initial);
+
+  // What the form was seeded from, which is what a conditional save must be
+  // based on — not the newest revision the parent happens to have fetched.
+  const seeded = useRef({
+    slug: track.slug,
+    revision: track.metadataRevision,
+  });
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  const stillCurrent = useStillCurrent(track.slug);
+
   useEffect(() => {
+    const decision = decideSeed({
+      switchedTrack: seeded.current.slug !== track.slug,
+      revisionChanged: seeded.current.revision !== track.metadataRevision,
+      dirty: dirtyRef.current,
+    });
+
+    if (decision === "ignore") {
+      return;
+    }
+
+    if (decision === "keep-local-edits") {
+      setExternallyChanged(true);
+      return;
+    }
+
     const next = toFields(track);
 
+    seeded.current = { slug: track.slug, revision: track.metadataRevision };
     setInitial(next);
     setFields(next);
     setError(null);
     setSavedAt(null);
+    setExternallyChanged(false);
   }, [track]);
-
-  const dirty = !sameFields(fields, initial);
   const editable = track.metadataPresent && track.status !== "invalid";
 
   const update = (name: keyof Fields) => (value: string) => {
@@ -106,15 +135,29 @@ export const MetadataForm: React.FC<{
   };
 
   const save = async () => {
+    const slug = track.slug;
+
     setSaving(true);
     setError(null);
 
     try {
-      await updateTrackMetadata(track.slug, toPatch(fields), track.metadataRevision);
+      // Conditional on the revision this form was seeded from, so an edit made
+      // elsewhere since then is reported as a conflict rather than overwritten.
+      await updateTrackMetadata(slug, toPatch(fields), seeded.current.revision);
+
+      if (!stillCurrent(slug)) {
+        return;
+      }
+
       setSavedAt(Date.now());
+      setExternallyChanged(false);
       // The parent re-reads the track, which re-seeds this form from disk.
       onSaved();
     } catch (cause) {
+      if (!stillCurrent(slug)) {
+        return;
+      }
+
       setError(
         cause instanceof ApiRequestError
           ? cause
@@ -124,7 +167,9 @@ export const MetadataForm: React.FC<{
             }),
       );
     } finally {
-      setSaving(false);
+      if (stillCurrent(slug)) {
+        setSaving(false);
+      }
     }
   };
 
@@ -147,6 +192,17 @@ export const MetadataForm: React.FC<{
       }}
     >
       {error ? <ErrorBanner error={error} title="Could not save" /> : null}
+
+      {externallyChanged ? (
+        <p className="note note--warning" role="status">
+          <span className="note__message">
+            metadata.json changed on disk while you were editing. Your changes
+            are still here and have not been overwritten — saving now will be
+            refused as a conflict. Use Revert to load the newer version, or copy
+            your edits out first.
+          </span>
+        </p>
+      ) : null}
 
       <div className="form__grid">
         <Field
@@ -192,10 +248,20 @@ export const MetadataForm: React.FC<{
         <button
           className="button button--quiet"
           type="button"
-          disabled={saving || !dirty}
+          disabled={saving || !(dirty || externallyChanged)}
           onClick={() => {
-            setFields(initial);
+            // After an external change, revert means "take what is on disk
+            // now", not "take what this form loaded a while ago".
+            const next = externallyChanged ? toFields(track) : initial;
+
+            seeded.current = {
+              slug: track.slug,
+              revision: track.metadataRevision,
+            };
+            setInitial(next);
+            setFields(next);
             setError(null);
+            setExternallyChanged(false);
           }}
         >
           Revert
