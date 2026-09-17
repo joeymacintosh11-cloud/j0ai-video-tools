@@ -395,6 +395,66 @@ body {
 }
 
 /* ---------------------------------------------------------------- *
+ * Forms
+ * ---------------------------------------------------------------- */
+
+.form {
+  display: grid;
+  gap: var(--gap);
+}
+
+.form__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--gap);
+}
+
+.form__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+}
+
+.field__label {
+  font-family: var(--font-label);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--vintage-gold);
+}
+
+.field__input {
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-label);
+  font-size: 15px;
+  padding: 7px 10px;
+  width: 100%;
+}
+
+.field__input:focus {
+  outline: none;
+  border-color: var(--vintage-gold);
+}
+
+.field__input:disabled {
+  opacity: 0.6;
+}
+
+.field__hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ---------------------------------------------------------------- *
  * Buttons and misc
  * ---------------------------------------------------------------- */
 

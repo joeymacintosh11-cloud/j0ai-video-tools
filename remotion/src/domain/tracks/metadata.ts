@@ -22,6 +22,35 @@ export const createDefaultMetadata = (title: string): TrackMetadataDraft => ({
   subtitle: DEFAULT_SUBTITLE,
 });
 
+/**
+ * Best-effort read of whatever is in a metadata.json, without judging it.
+ *
+ * Unlike validateTrackMetadata, this never fails: unusable fields fall back to
+ * "" / null. That is what lets an editor show a draft's real title and artist —
+ * and prefill a form for a track whose file is not yet valid — rather than only
+ * being able to display fully-valid metadata.
+ *
+ * Returns null only when the file does not even contain a JSON object.
+ */
+export const coerceMetadataDraft = (
+  raw: unknown,
+): TrackMetadataDraft | null => {
+  if (!isPlainObject(raw)) {
+    return null;
+  }
+
+  return {
+    title: typeof raw.title === "string" ? raw.title : "",
+    artist: typeof raw.artist === "string" ? raw.artist : "",
+    key: typeof raw.key === "string" ? raw.key : "",
+    bpm:
+      typeof raw.bpm === "number" && Number.isFinite(raw.bpm) && raw.bpm > 0
+        ? raw.bpm
+        : null,
+    subtitle: typeof raw.subtitle === "string" ? raw.subtitle : undefined,
+  };
+};
+
 /** Stable key order and trailing newline, so rewrites produce clean diffs. */
 export const serializeTrackMetadata = (
   metadata: TrackMetadataDraft,

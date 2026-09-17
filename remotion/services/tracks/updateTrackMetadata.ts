@@ -3,6 +3,7 @@ import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import type { TrackMetadataPatch } from "../../src/domain/api/views.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import {
+  coerceMetadataDraft,
   serializeTrackMetadata,
   validateTrackMetadata,
 } from "../../src/domain/tracks/metadata.ts";
@@ -57,7 +58,9 @@ const readExistingDraft = async (
     );
   }
 
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+  const current = coerceMetadataDraft(parsed);
+
+  if (current === null) {
     throw new TrackError(
       trackIssue(
         "METADATA_INVALID",
@@ -67,16 +70,7 @@ const readExistingDraft = async (
     );
   }
 
-  const current = parsed as Record<string, unknown>;
-
-  return {
-    title: typeof current.title === "string" ? current.title : "",
-    artist: typeof current.artist === "string" ? current.artist : "",
-    key: typeof current.key === "string" ? current.key : "",
-    bpm: typeof current.bpm === "number" ? current.bpm : null,
-    subtitle:
-      typeof current.subtitle === "string" ? current.subtitle : undefined,
-  };
+  return current;
 };
 
 /**

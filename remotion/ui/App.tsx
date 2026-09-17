@@ -91,7 +91,7 @@ export const App: React.FC = () => {
             <ErrorBanner error={detail.error} title="Could not load track" />
           </div>
         ) : detail.data ? (
-          <TrackDetail track={detail.data} />
+          <TrackDetail track={detail.data} onChanged={refreshAll} />
         ) : (
           <div className="placeholder">
             {tracks.loading || detail.loading

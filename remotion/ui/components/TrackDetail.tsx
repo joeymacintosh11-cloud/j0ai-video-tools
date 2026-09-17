@@ -1,6 +1,7 @@
 import type { TrackDetailView } from "../../src/domain/api/views.ts";
 import { publicAssetUrl } from "../api/assetUrl.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
+import { MetadataForm } from "./MetadataForm.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
 import { ValidationNotes } from "./ValidationNotes.tsx";
 
@@ -16,9 +17,10 @@ const Stat: React.FC<{
   </div>
 );
 
-export const TrackDetail: React.FC<{ readonly track: TrackDetailView }> = ({
-  track,
-}) => {
+export const TrackDetail: React.FC<{
+  readonly track: TrackDetailView;
+  readonly onChanged: () => void;
+}> = ({ track, onChanged }) => {
   const { metadata } = track;
 
   return (
@@ -40,24 +42,20 @@ export const TrackDetail: React.FC<{ readonly track: TrackDetailView }> = ({
           <div className="detail__slug">{track.assets.metadata}</div>
           <div className="detail__headmeta">
             <StatusBadge status={track.status} />
+            <Stat label="Key" value={metadata?.key ? metadata.key : null} />
+            <Stat
+              label="BPM"
+              value={
+                typeof metadata?.bpm === "number" ? String(metadata.bpm) : null
+              }
+            />
           </div>
         </div>
       </header>
 
       <section className="section">
         <h3 className="section__title">Track info</h3>
-        <div className="stats">
-          <Stat label="Key" value={metadata?.key ? metadata.key : null} />
-          <Stat
-            label="BPM"
-            value={
-              typeof metadata?.bpm === "number" ? String(metadata.bpm) : null
-            }
-          />
-        </div>
-        <p style={{ marginTop: 12 }}>
-          {metadata?.subtitle ?? <span className="muted">No subtitle</span>}
-        </p>
+        <MetadataForm track={track} onSaved={onChanged} />
       </section>
 
       <section className="section">

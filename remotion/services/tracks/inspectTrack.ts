@@ -2,6 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { trackIssue, type TrackIssue } from "../../src/domain/tracks/errors.ts";
 import {
+  coerceMetadataDraft,
   isDraftMetadata,
   validateTrackMetadata,
 } from "../../src/domain/tracks/metadata.ts";
@@ -47,6 +48,7 @@ const readMetadataIssues = async (
 ): Promise<{
   readonly issues: readonly TrackIssue[];
   readonly metadata: TrackInspection["metadata"];
+  readonly metadataDraft: TrackInspection["metadataDraft"];
   readonly isDraft: boolean;
 }> => {
   const locations = trackLocations(slug);
@@ -67,13 +69,19 @@ const readMetadataIssues = async (
         ),
       ],
       metadata: null,
+      metadataDraft: null,
       isDraft: false,
     };
   }
 
   const { issues, metadata } = validateTrackMetadata(parsed, source);
 
-  return { issues, metadata, isDraft: isDraftMetadata(parsed) };
+  return {
+    issues,
+    metadata,
+    metadataDraft: coerceMetadataDraft(parsed),
+    isDraft: isDraftMetadata(parsed),
+  };
 };
 
 /**
@@ -85,9 +93,19 @@ export const inspectTrack = async (slug: string): Promise<TrackInspection> => {
   const facts = observeFacts(slug);
   const assetIssues = validateTrackAssets(slug, facts);
 
-  const { issues: metadataIssues, metadata, isDraft } = facts.metadataExists
+  const {
+    issues: metadataIssues,
+    metadata,
+    metadataDraft,
+    isDraft,
+  } = facts.metadataExists
     ? await readMetadataIssues(slug)
-    : { issues: [] as readonly TrackIssue[], metadata: null, isDraft: false };
+    : {
+        issues: [] as readonly TrackIssue[],
+        metadata: null,
+        metadataDraft: null,
+        isDraft: false,
+      };
 
   const validation = buildValidationResult(
     assetIssues,
@@ -100,6 +118,7 @@ export const inspectTrack = async (slug: string): Promise<TrackInspection> => {
     status: deriveTrackStatus(validation, assetIssues, isDraft),
     facts,
     metadata,
+    metadataDraft,
     validation,
     paths: trackAssetPaths(slug),
   };

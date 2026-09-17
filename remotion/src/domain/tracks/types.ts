@@ -55,6 +55,12 @@ export type TrackInspection = {
   readonly facts: TrackAssetFacts;
   /** Only set when metadata.json is present and fully valid. */
   readonly metadata: TrackMetadata | null;
+  /**
+   * Whatever metadata.json currently holds, coerced field by field and never
+   * rejected — so an editor can prefill a draft or a not-yet-valid track.
+   * Null when the file is absent or is not a JSON object at all.
+   */
+  readonly metadataDraft: TrackMetadataDraft | null;
   readonly validation: ValidationResult;
   /** public/-relative paths for this track's files. */
   readonly paths: TrackAssetPaths;

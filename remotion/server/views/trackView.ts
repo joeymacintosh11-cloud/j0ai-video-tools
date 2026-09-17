@@ -18,7 +18,11 @@ export const toTrackSummaryView = (
   inspection: TrackInspection,
 ): TrackSummaryView => ({
   slug: inspection.slug,
-  title: inspection.metadata?.title ?? null,
+  // Falls back to the draft's title so a track that is not yet valid still
+  // shows the name it was created with, rather than its slug. An empty title
+  // stays null so callers can apply their own fallback.
+  title:
+    inspection.metadata?.title ?? (inspection.metadataDraft?.title || null),
   status: inspection.status,
   metadataPresent: inspection.facts.metadataExists,
   metadataValid: inspection.metadata !== null,
@@ -37,6 +41,7 @@ export const toTrackDetailView = (
   return {
     ...toTrackSummaryView(inspection),
     metadata: inspection.metadata,
+    metadataDraft: inspection.metadataDraft,
     validation: inspection.validation,
     assets: {
       cover: publicLabel(inspection.paths.cover),

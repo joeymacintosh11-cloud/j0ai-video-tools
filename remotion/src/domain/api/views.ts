@@ -1,6 +1,7 @@
 import type { TrackErrorCode, TrackIssue } from "../tracks/errors.ts";
 import type {
   TrackMetadata,
+  TrackMetadataDraft,
   TrackStatus,
   ValidationResult,
 } from "../tracks/types.ts";
@@ -76,7 +77,14 @@ export type TrackSummaryView = {
 
 /** GET /api/tracks/:slug, and the response to create/metadata updates. */
 export type TrackDetailView = TrackSummaryView & {
+  /** Set only when the track is fully valid and renderable. */
   readonly metadata: TrackMetadata | null;
+  /**
+   * What metadata.json currently holds, coerced rather than validated — the
+   * shape an editor prefills from, so a draft or not-yet-valid track can still
+   * be edited. Null when the file is absent or is not a JSON object.
+   */
+  readonly metadataDraft: TrackMetadataDraft | null;
   readonly validation: ValidationResult;
   readonly assets: {
     readonly cover: string;
