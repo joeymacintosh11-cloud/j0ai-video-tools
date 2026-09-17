@@ -4,8 +4,14 @@ import type {
   TrackDetailView,
 } from "../../src/domain/api/views.ts";
 import {
+  DEFAULT_RENDER_PRESET_ID,
+  RENDER_PRESETS,
+  type RenderPresetId,
+} from "../../src/domain/video/renderPresets.ts";
+import {
   ApiRequestError,
   cancelRender,
+  createRenderBatch,
   listRenders,
   revealTrackOutput,
   startRender,
@@ -47,8 +53,11 @@ const formatElapsed = (ms: number): string => {
 
 export const RenderPanel: React.FC<{
   readonly track: TrackDetailView;
+  /** Formats picked in the toolbar. One means a single render, more a batch. */
+  readonly formats: readonly RenderPresetId[];
   readonly onChanged: () => void;
-}> = ({ track, onChanged }) => {
+  readonly onBatchStarted: (batchId: string) => void;
+}> = ({ track, formats, onChanged, onBatchStarted }) => {
   const [jobId, setJobId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiRequestError | null>(null);
@@ -100,12 +109,27 @@ export const RenderPanel: React.FC<{
 
   const begin = async () => {
     const slug = track.slug;
+    const chosen = formats.length > 0 ? formats : [DEFAULT_RENDER_PRESET_ID];
 
     setBusy(true);
     setError(null);
 
     try {
-      const started = await startRender(slug);
+      // Several formats become a batch, which the queue panel then follows.
+      // A single format stays a single job, exactly as before.
+      if (chosen.length > 1) {
+        const created = await createRenderBatch(
+          chosen.map((preset) => ({ slug, preset })),
+        );
+
+        if (stillCurrent(slug)) {
+          onBatchStarted(created.batchId);
+          onChanged();
+        }
+        return;
+      }
+
+      const started = await startRender(slug, chosen[0]);
 
       if (stillCurrent(slug)) {
         setJobId(started.jobId);
@@ -120,7 +144,9 @@ export const RenderPanel: React.FC<{
         const jobs = await listRenders().catch(() => []);
         const active = jobs.find(
           (candidate) =>
-            candidate.slug === slug && ACTIVE.includes(candidate.status),
+            candidate.slug === slug &&
+            candidate.presetId === chosen[0] &&
+            ACTIVE.includes(candidate.status),
         );
 
         if (stillCurrent(slug) && active) {
@@ -139,13 +165,13 @@ export const RenderPanel: React.FC<{
     }
   };
 
-  const reveal = async () => {
+  const reveal = async (presetId: RenderPresetId) => {
     const slug = track.slug;
 
     setError(null);
 
     try {
-      await revealTrackOutput(slug);
+      await revealTrackOutput(slug, presetId);
     } catch (cause) {
       if (stillCurrent(slug)) {
         setError(asApiError(cause));
@@ -194,7 +220,11 @@ export const RenderPanel: React.FC<{
           }
           onClick={() => void begin()}
         >
-          {active ? "Rendering…" : "Render"}
+          {active
+            ? "Rendering…"
+            : formats.length > 1
+              ? `Render ${formats.length} formats`
+              : `Render ${RENDER_PRESETS[formats[0] ?? DEFAULT_RENDER_PRESET_ID].shortLabel}`}
         </button>
 
         {active ? (
@@ -208,19 +238,26 @@ export const RenderPanel: React.FC<{
           </button>
         ) : null}
 
-        {track.render.present && !active ? (
-          <>
-            <button
-              className="button button--quiet"
-              type="button"
-              disabled={busy}
-              title={track.render.outputPath ?? undefined}
-              onClick={() => void reveal()}
-            >
-              Show in Finder
-            </button>
-            <span className="actions__result">{track.render.outputLabel}</span>
-          </>
+        {!active
+          ? track.render.outputs
+              .filter((output) => output.present)
+              .map((output) => (
+                <button
+                  key={output.presetId}
+                  className="button button--quiet"
+                  type="button"
+                  disabled={busy}
+                  title={output.outputPath ?? undefined}
+                  onClick={() => void reveal(output.presetId)}
+                >
+                  Show {output.label}
+                </button>
+              ))
+          : null}
+        {!active && track.render.legacyPresent ? (
+          <span className="actions__result" title={track.render.outputPath ?? undefined}>
+            plus an earlier render at {`out/${track.slug}.mp4`}
+          </span>
         ) : null}
       </div>
 

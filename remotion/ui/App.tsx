@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { getTrack, listTracks } from "./api/client.ts";
+import {
+  DEFAULT_RENDER_PRESET_ID,
+  type RenderPresetId,
+} from "../src/domain/video/renderPresets.ts";
+import { createRenderBatch, getTrack, listTracks } from "./api/client.ts";
+import { ApiRequestError } from "./api/client.ts";
 import { ErrorBanner } from "./components/ErrorBanner.tsx";
+import { FormatPicker } from "./components/FormatPicker.tsx";
 import { NewTrackPanel } from "./components/NewTrackPanel.tsx";
+import { QueueDrawer } from "./components/QueueDrawer.tsx";
 import { TrackDetail } from "./components/TrackDetail.tsx";
 import { TrackList } from "./components/TrackList.tsx";
 import { useAsync } from "./hooks/useAsync.ts";
@@ -15,6 +22,19 @@ export const App: React.FC = () => {
   // keeps you on the track you were looking at.
   const [selectedSlug, setSelectedSlug] = useState<string | null>(slugFromHash);
   const [creating, setCreating] = useState(false);
+
+  /**
+   * Which formats to render. Shared by the single-track Render button and by
+   * batching, so there is one answer to "what am I exporting" on screen. It
+   * starts as 16:9 alone, which is what a render produced before presets.
+   */
+  const [formats, setFormats] = useState<readonly RenderPresetId[]>([
+    DEFAULT_RENDER_PRESET_ID,
+  ]);
+  /** Tracks ticked for a batch. Empty means the single-track workflow. */
+  const [checked, setChecked] = useState<readonly string[]>([]);
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const [queueError, setQueueError] = useState<ApiRequestError | null>(null);
 
   const select = useCallback((slug: string) => {
     window.location.hash = slug;
@@ -60,8 +80,44 @@ export const App: React.FC = () => {
 
   useWindowFocus(refreshAll);
 
+  const toggleChecked = useCallback((slug: string) => {
+    setChecked((previous) =>
+      previous.includes(slug)
+        ? previous.filter((candidate) => candidate !== slug)
+        : [...previous, slug],
+    );
+  }, []);
+
+  /** Queues every ticked track in every ticked format. */
+  const queueSelected = async () => {
+    setQueueError(null);
+
+    const targets = checked.flatMap((slug) =>
+      formats.map((preset) => ({ slug, preset })),
+    );
+
+    try {
+      const created = await createRenderBatch(targets);
+
+      setBatchId(created.batchId);
+      setChecked([]);
+      refreshAll();
+    } catch (cause) {
+      setQueueError(
+        cause instanceof ApiRequestError
+          ? cause
+          : new ApiRequestError(0, {
+              code: "INTERNAL_ERROR",
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+      );
+    }
+  };
+
+  const targetCount = checked.length * formats.length;
+
   return (
-    <div className="app">
+    <div className={`app${batchId === null ? "" : " app--queue"}`}>
       <header className="app__header">
         <h1 className="app__title">Toshi Visualizer</h1>
         <span className="app__subtitle">Local render tool</span>
@@ -82,6 +138,46 @@ export const App: React.FC = () => {
         </button>
       </header>
 
+      <div className="app__toolbar">
+        <FormatPicker selected={formats} onChange={setFormats} />
+
+        <span className="app__spacer" />
+
+        {checked.length > 0 ? (
+          <>
+            <span className="actions__result">
+              {checked.length} track{checked.length === 1 ? "" : "s"} ×{" "}
+              {formats.length} format{formats.length === 1 ? "" : "s"} ={" "}
+              {targetCount} render{targetCount === 1 ? "" : "s"}
+            </span>
+            <button
+              type="button"
+              className="button button--quiet"
+              onClick={() => setChecked([])}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="button"
+              onClick={() => void queueSelected()}
+            >
+              Add to render queue
+            </button>
+          </>
+        ) : (
+          <span className="muted">
+            Tick tracks to queue several at once, or render the open track below.
+          </span>
+        )}
+      </div>
+
+      {queueError ? (
+        <div className="app__toolbar app__toolbar--error">
+          <ErrorBanner error={queueError} title="Could not queue renders" />
+        </div>
+      ) : null}
+
       <div className="app__body">
         {tracks.error ? (
           <div style={{ padding: 20 }}>
@@ -92,6 +188,8 @@ export const App: React.FC = () => {
             tracks={tracks.data ?? []}
             selectedSlug={selectedSlug}
             onSelect={select}
+            checked={checked}
+            onToggleChecked={toggleChecked}
           />
         )}
 
@@ -111,15 +209,24 @@ export const App: React.FC = () => {
             />
           </div>
         ) : detail.data ? (
-          <TrackDetail track={detail.data} onChanged={refreshAll} />
+          <TrackDetail
+            track={detail.data}
+            formats={formats}
+            onChanged={refreshAll}
+            onBatchStarted={setBatchId}
+          />
         ) : (
           <div className="placeholder">
-            {tracks.loading || detail.loading
-              ? "Loading…"
-              : "Select a track"}
+            {tracks.loading || detail.loading ? "Loading…" : "Select a track"}
           </div>
         )}
       </div>
+
+      <QueueDrawer
+        batchId={batchId}
+        onChanged={refreshAll}
+        onDismiss={() => setBatchId(null)}
+      />
     </div>
   );
 };

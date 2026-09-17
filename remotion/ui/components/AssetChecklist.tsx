@@ -97,12 +97,29 @@ export const AssetChecklist: React.FC<{ readonly track: TrackDetailView }> = ({
         path={track.assets.analysis}
         note={analysisNote}
       />
-      <Row
-        name="Output"
-        state={track.renderPresent ? "present" : "missing"}
-        path={track.render.outputLabel}
-        note={track.renderPresent ? undefined : "not rendered yet"}
-      />
+      {/*
+        One row per export format, each reporting only its own file. A single
+        combined row claimed the default format existed whenever any render did,
+        which was wrong as soon as there was more than one format.
+      */}
+      {track.render.outputs.map((output) => (
+        <Row
+          key={output.presetId}
+          name={output.label}
+          state={output.present ? "present" : "missing"}
+          path={output.outputLabel}
+          note={output.present ? undefined : "not rendered yet"}
+        />
+      ))}
+
+      {track.render.legacyPresent ? (
+        <Row
+          name="Earlier"
+          state="present"
+          path={`out/${track.slug}.mp4`}
+          note="rendered before formats existed; left untouched"
+        />
+      ) : null}
     </ul>
   );
 };

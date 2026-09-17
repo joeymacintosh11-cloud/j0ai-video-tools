@@ -1,47 +1,6 @@
 import assert from "node:assert/strict";
-import childProcess, { type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { EventEmitter } from "node:events";
-import { syncBuiltinESMExports } from "node:module";
-import { PassThrough } from "node:stream";
-import test, { type TestContext } from "node:test";
-
-class Worker extends EventEmitter {
-  stdout = new PassThrough();
-  stderr = new PassThrough();
-  pid: number | undefined;
-  send() {
-    return true;
-  }
-  kill() {
-    return true;
-  }
-}
-type Manager =
-  typeof import("../server/services/renderManager.ts").renderManager;
-const manager = async (
-  t: TestContext,
-  spawn: () => Worker,
-): Promise<Manager> => {
-  t.mock.method(
-    childProcess,
-    "fork",
-    (() => spawn() as unknown as ChildProcess) as typeof childProcess.fork,
-  );
-  syncBuiltinESMExports();
-  t.after(() => {
-    t.mock.restoreAll();
-    syncBuiltinESMExports();
-  });
-  const module = (await import(
-    new URL(
-      `../server/services/renderManager.ts?test=${randomUUID()}`,
-      import.meta.url,
-    ).href
-  )) as { renderManager: Manager };
-  return module.renderManager;
-};
-const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+import test from "node:test";
+import { manager, tick, Worker } from "./managerHarness.mts";
 
 test("spawn error without exit releases the slot and drains the queue once", async (t) => {
   const workers: Worker[] = [];

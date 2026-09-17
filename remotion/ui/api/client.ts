@@ -2,11 +2,15 @@ import type {
   ApiError,
   ApiErrorCode,
   ApiResponse,
+  CreateRenderBatchBody,
+  CreateRenderBatchView,
   CreateTrackBody,
   HealthView,
   PrepareTrackView,
+  RenderBatchView,
   RenderJobView,
   RenderLogsView,
+  RenderTarget,
   RevealOutputView,
   StartRenderView,
   TrackAssetKind,
@@ -17,6 +21,7 @@ import type {
   UploadAssetView,
   ValidateTrackView,
 } from "../../src/domain/api/views.ts";
+import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
 
 /**
@@ -178,21 +183,29 @@ export const getTrackPreview = (
     `/api/tracks/${encodeURIComponent(slug)}/preview`,
   );
 
-/** Shows the rendered file in Finder. Only the slug is sent. */
-export const revealTrackOutput = (slug: string): Promise<RevealOutputView> =>
+/** Shows a rendered file in Finder. Only the slug and format are sent. */
+export const revealTrackOutput = (
+  slug: string,
+  preset?: RenderPresetId,
+): Promise<RevealOutputView> =>
   jsonRequest<RevealOutputView>(
     `/api/tracks/${encodeURIComponent(slug)}/reveal`,
     "POST",
+    preset === undefined ? {} : { preset },
   );
 
 /* ------------------------------------------------------------------ *
  * Renders
  * ------------------------------------------------------------------ */
 
-export const startRender = (slug: string): Promise<StartRenderView> =>
+export const startRender = (
+  slug: string,
+  preset?: RenderPresetId,
+): Promise<StartRenderView> =>
   jsonRequest<StartRenderView>(
     `/api/tracks/${encodeURIComponent(slug)}/render`,
     "POST",
+    preset === undefined ? {} : { preset },
   );
 
 export const listRenders = (): Promise<readonly RenderJobView[]> =>
@@ -213,3 +226,39 @@ export const cancelRender = (jobId: string): Promise<RenderJobView> =>
 /** SSE endpoint for a job's live progress; consumed with EventSource. */
 export const renderEventsUrl = (jobId: string): string =>
   `/api/renders/${encodeURIComponent(jobId)}/events`;
+
+/* ------------------------------------------------------------------ *
+ * Render batches
+ * ------------------------------------------------------------------ */
+
+export const createRenderBatch = (
+  targets: readonly RenderTarget[],
+): Promise<CreateRenderBatchView> => {
+  const body: CreateRenderBatchBody = { targets };
+
+  return jsonRequest<CreateRenderBatchView>(
+    "/api/render-batches",
+    "POST",
+    body,
+  );
+};
+
+export const listRenderBatches = (): Promise<readonly RenderBatchView[]> =>
+  request<readonly RenderBatchView[]>("/api/render-batches");
+
+export const getRenderBatch = (batchId: string): Promise<RenderBatchView> =>
+  request<RenderBatchView>(
+    `/api/render-batches/${encodeURIComponent(batchId)}`,
+  );
+
+export const cancelRenderBatch = (
+  batchId: string,
+): Promise<RenderBatchView> =>
+  jsonRequest<RenderBatchView>(
+    `/api/render-batches/${encodeURIComponent(batchId)}/cancel`,
+    "POST",
+  );
+
+/** SSE endpoint for a batch's aggregate; consumed with EventSource. */
+export const renderBatchEventsUrl = (batchId: string): string =>
+  `/api/render-batches/${encodeURIComponent(batchId)}/events`;

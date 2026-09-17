@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { TrackDetailView } from "../../src/domain/api/views.ts";
+import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 import { publicAssetUrl } from "../api/assetUrl.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
 import { AssetDropZone } from "./AssetDropZone.tsx";
@@ -24,8 +25,11 @@ const Stat: React.FC<{
 
 export const TrackDetail: React.FC<{
   readonly track: TrackDetailView;
+  /** Formats chosen in the toolbar; drives both preview and rendering. */
+  readonly formats: readonly RenderPresetId[];
   readonly onChanged: () => void;
-}> = ({ track, onChanged }) => {
+  readonly onBatchStarted: (batchId: string) => void;
+}> = ({ track, formats, onChanged, onBatchStarted }) => {
   const { metadata } = track;
 
   // Bumped only when an upload succeeds, so the cover's URL changes exactly
@@ -100,13 +104,19 @@ export const TrackDetail: React.FC<{
         <h3 className="section__title">Preview</h3>
         <TrackPreview
           slug={track.slug}
+          presetId={formats[0] ?? "youtube-16x9"}
           canPreview={track.metadataValid && track.coverPresent && track.audioPresent}
         />
       </section>
 
       <section className="section">
         <h3 className="section__title">Render</h3>
-        <RenderPanel track={track} onChanged={onChanged} />
+        <RenderPanel
+          track={track}
+          formats={formats}
+          onChanged={onChanged}
+          onBatchStarted={onBatchStarted}
+        />
       </section>
 
       <section className="section">

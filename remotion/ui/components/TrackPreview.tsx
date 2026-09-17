@@ -1,6 +1,11 @@
 import { Player } from "@remotion/player";
 import { useState } from "react";
 import { BeatVisualizer } from "../../src/BeatVisualizer/BeatVisualizer.tsx";
+import { secondsToFrames } from "../../src/domain/video/compositionConfig.ts";
+import {
+  renderPreset,
+  type RenderPresetId,
+} from "../../src/domain/video/renderPresets.ts";
 import { getTrackPreview } from "../api/client.ts";
 import { useAsync } from "../hooks/useAsync.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
@@ -16,7 +21,10 @@ import { ErrorBanner } from "./ErrorBanner.tsx";
  * decodes analysis.wav for the waveform, which is worth a few seconds when the
  * user wants a preview but not on every track they click through.
  */
-const PreviewPlayer: React.FC<{ readonly slug: string }> = ({ slug }) => {
+const PreviewPlayer: React.FC<{
+  readonly slug: string;
+  readonly presetId: RenderPresetId;
+}> = ({ slug, presetId }) => {
   const preview = useAsync(() => getTrackPreview(slug), [slug]);
 
   if (preview.error) {
@@ -27,23 +35,29 @@ const PreviewPlayer: React.FC<{ readonly slug: string }> = ({ slug }) => {
     return <p className="muted">Loading preview…</p>;
   }
 
-  const { composition, durationInFrames, inputProps, analysisAvailable } =
-    preview.data;
+  const { durationInSeconds, inputProps, analysisAvailable } = preview.data;
+
+  // Dimensions and frame count come from the shared preset definition rather
+  // than a second request per format — the same module the renderer uses, so
+  // the preview is the format it claims to be.
+  const preset = renderPreset(presetId);
 
   return (
     <div className="preview">
       <Player
+        key={preset.id}
         component={BeatVisualizer}
-        inputProps={inputProps}
-        durationInFrames={durationInFrames}
-        compositionWidth={composition.width}
-        compositionHeight={composition.height}
-        fps={composition.fps}
+        inputProps={{ ...inputProps, presetId: preset.id }}
+        durationInFrames={secondsToFrames(durationInSeconds, preset.fps)}
+        compositionWidth={preset.width}
+        compositionHeight={preset.height}
+        fps={preset.fps}
         controls
         acknowledgeRemotionLicense
         style={{ width: "100%" }}
       />
       <p className="preview__note">
+        {preset.label} · {preset.width}×{preset.height} —{" "}
         {analysisAvailable
           ? "Waveform reads analysis.wav; audio is the original beat.wav."
           : "analysis.wav has not been generated, so the waveform is reading the full beat.wav — run Prepare to make this faster."}
@@ -54,8 +68,9 @@ const PreviewPlayer: React.FC<{ readonly slug: string }> = ({ slug }) => {
 
 export const TrackPreview: React.FC<{
   readonly slug: string;
+  readonly presetId: RenderPresetId;
   readonly canPreview: boolean;
-}> = ({ slug, canPreview }) => {
+}> = ({ slug, presetId, canPreview }) => {
   const [open, setOpen] = useState(false);
 
   if (!canPreview) {
@@ -76,7 +91,7 @@ export const TrackPreview: React.FC<{
 
   return (
     <div className="actions">
-      <PreviewPlayer slug={slug} />
+      <PreviewPlayer slug={slug} presetId={presetId} />
       <div className="form__actions">
         <button
           className="button button--quiet"
