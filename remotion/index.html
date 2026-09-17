@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Toshi Visualizer</title>
+    <!--
+      The brand faces, matching the composition's own typography (Bebas Neue
+      for headlines, Oswald for labels). Loaded here rather than through
+      @remotion/google-fonts so the UI does not depend on Remotion's render
+      lifecycle; every rule in tokens.css carries a system fallback, so the app
+      stays fully usable offline.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@400;600&display=swap"
+    />
   </head>
   <body>
     <div id="root"></div>

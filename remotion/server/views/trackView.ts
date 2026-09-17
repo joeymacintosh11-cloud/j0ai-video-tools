@@ -20,6 +20,7 @@ export const toTrackSummaryView = (
   slug: inspection.slug,
   title: inspection.metadata?.title ?? null,
   status: inspection.status,
+  metadataPresent: inspection.facts.metadataExists,
   metadataValid: inspection.metadata !== null,
   coverPresent: inspection.facts.coverExists,
   audioPresent: inspection.facts.beatExists,

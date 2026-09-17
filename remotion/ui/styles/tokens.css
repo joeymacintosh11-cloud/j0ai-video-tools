@@ -1,0 +1,50 @@
+/*
+ * Toshi brand tokens for the local app.
+ *
+ * The palette mirrors src/BeatVisualizer/theme.ts, which stays the brand's
+ * source of truth for the video itself. It is restated here as CSS variables
+ * rather than imported, so the UI does not pull the composition's font-loading
+ * side effects into its bundle. If the palette changes there, change it here.
+ *
+ * Phase 2C-A intentionally stops at usable tokens and layout. Visual polish is
+ * Phase 2C-B's job, and this is the file it should start from.
+ */
+
+:root {
+  /* Brand palette */
+  --off-black: #0b0b0b;
+  --warm-cream: #f4e8d0;
+  --vintage-gold: #b8860b;
+  --deep-red: #7a1e1e;
+  --olive-green: #2d3a2e;
+
+  /* Surfaces, derived from off-black so the app reads as one dark object */
+  --surface-0: #0b0b0b;
+  --surface-1: #131313;
+  --surface-2: #1a1a1a;
+  --surface-3: #232323;
+  --border: #2c2c2c;
+  --border-strong: #3a3a3a;
+
+  /* Text */
+  --text: var(--warm-cream);
+  --text-dim: #a89e8c;
+  --text-faint: #6f675c;
+
+  /* Status. `draft` is deliberately not an error colour: a scaffolded track
+     waiting on key/bpm is a normal state, not a problem. */
+  --status-ready: #7d9a6d;
+  --status-draft: var(--vintage-gold);
+  --status-incomplete: var(--text-faint);
+  --status-invalid: #b3524f;
+
+  /* Typography */
+  --font-headline: "Bebas Neue", "Oswald", "Helvetica Neue", sans-serif;
+  --font-label: "Oswald", "Helvetica Neue", system-ui, sans-serif;
+  --font-body: system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Spacing / shape */
+  --radius: 4px;
+  --gap: 12px;
+}

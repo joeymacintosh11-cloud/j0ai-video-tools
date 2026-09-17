@@ -63,6 +63,9 @@ export type TrackSummaryView = {
   readonly slug: string;
   readonly title: string | null;
   readonly status: TrackStatus;
+  /** metadata.json exists on disk, whether or not its contents are complete. */
+  readonly metadataPresent: boolean;
+  /** metadata.json parsed and every required field is valid — i.e. renderable. */
   readonly metadataValid: boolean;
   readonly coverPresent: boolean;
   readonly audioPresent: boolean;
