@@ -32,12 +32,13 @@
     "dev": "remotion studio",
     "build": "remotion bundle",
     "upgrade": "remotion upgrade",
-    "lint": "eslint src scripts services server ui && tsc",
+    "lint": "eslint src scripts services server ui tests && tsc",
     "server": "node server/index.mts",
     "ui": "vite",
     "new-track": "node scripts/new-track.mts",
     "prepare-track": "node scripts/prepare-track.mts",
     "validate-track": "node scripts/render-track.mts --validate-only",
-    "render-track": "node scripts/render-track.mts"
+    "render-track": "node scripts/render-track.mts",
+    "test": "node --test tests/*.test.mts"
   }
 }
