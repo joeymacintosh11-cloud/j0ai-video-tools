@@ -5,6 +5,7 @@ import { AssetChecklist } from "./AssetChecklist.tsx";
 import { AssetDropZone } from "./AssetDropZone.tsx";
 import { MetadataForm } from "./MetadataForm.tsx";
 import { PrepareActions } from "./PrepareActions.tsx";
+import { RenderPanel } from "./RenderPanel.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
 import { TrackPreview } from "./TrackPreview.tsx";
 import { ValidationNotes } from "./ValidationNotes.tsx";
@@ -101,6 +102,11 @@ export const TrackDetail: React.FC<{
           slug={track.slug}
           canPreview={track.metadataValid && track.coverPresent && track.audioPresent}
         />
+      </section>
+
+      <section className="section">
+        <h3 className="section__title">Render</h3>
+        <RenderPanel track={track} onChanged={onChanged} />
       </section>
 
       <section className="section">

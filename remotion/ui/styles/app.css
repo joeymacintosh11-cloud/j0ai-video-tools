@@ -486,6 +486,96 @@ body {
 }
 
 /* ---------------------------------------------------------------- *
+ * Render progress and logs
+ * ---------------------------------------------------------------- */
+
+.render {
+  display: grid;
+  gap: 12px;
+}
+
+.render__status {
+  display: grid;
+  gap: 8px;
+  max-width: 720px;
+}
+
+.render__phase {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-label);
+  font-size: 13px;
+}
+
+.render__numbers {
+  display: flex;
+  gap: 16px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.badge--job-queued,
+.badge--job-preparing {
+  color: var(--vintage-gold);
+}
+.badge--job-rendering {
+  color: var(--warm-cream);
+}
+.badge--job-completed {
+  color: var(--status-ready);
+}
+.badge--job-failed {
+  color: var(--status-invalid);
+}
+.badge--job-cancelled {
+  color: var(--text-faint);
+}
+
+.progress {
+  height: 6px;
+  background: var(--surface-3);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress__fill {
+  height: 100%;
+  background: var(--vintage-gold);
+  transition: width 120ms linear;
+}
+
+.logs {
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  max-width: 720px;
+}
+
+.logs__line {
+  display: flex;
+  gap: 10px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.logs__line--error {
+  color: var(--status-invalid);
+}
+
+.logs__time {
+  color: var(--text-faint);
+  flex: none;
+}
+
+/* ---------------------------------------------------------------- *
  * Preview
  * ---------------------------------------------------------------- */
 
