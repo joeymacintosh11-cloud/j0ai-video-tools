@@ -233,6 +233,10 @@ class RenderManager {
     const job = jobId ? this.jobs.get(jobId) : undefined;
 
     if (!job || job.cancelRequested) {
+      // Defensive: cancelRender splices a queued job out itself, so this is not
+      // reachable today. Draining again anyway keeps "the queue always makes
+      // progress" true unconditionally, rather than depending on that.
+      queueMicrotask(() => this.drainQueue());
       return;
     }
 
@@ -241,40 +245,20 @@ class RenderManager {
     job.startedAt = Date.now();
     this.emit(job, { type: "status", job: this.toView(job) });
 
-    const child = fork(WORKER_PATH, [job.slug], {
-      stdio: ["ignore", "pipe", "pipe", "ipc"],
-    });
-    job.child = child;
+    let child: ChildProcess | null = null;
+    let finalized = false;
 
-    child.stdout?.setEncoding("utf-8");
-    child.stderr?.setEncoding("utf-8");
-    child.stdout?.on("data", (chunk: string) => {
-      this.appendWorkerOutput(job, chunk, "info");
-    });
-    child.stderr?.on("data", (chunk: string) => {
-      this.appendWorkerOutput(job, chunk, "error");
-    });
-
-    child.on("message", (event: WorkerEvent) => {
-      this.handleWorkerEvent(job, event);
-    });
-
-    child.on("error", (error) => {
-      this.appendLog(job, "error", `Render process error: ${error.message}`);
-      job.error = {
-        code: "RENDER_FAILED",
-        message: `The render process could not be started: ${error.message}`,
-        details: error.stack,
-      };
-    });
-
-    child.on("exit", (code, signal) => {
+    // Spawn failure need not emit exit. Both close and exit may fire for a
+    // normal process, so slot release must be independent and idempotent.
+    const finalize = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (finalized) return;
+      finalized = true;
       if (job.killTimer) {
         clearTimeout(job.killTimer);
         job.killTimer = null;
       }
       job.child = null;
-      this.activeJobId = null;
+      if (this.activeJobId === job.id) this.activeJobId = null;
 
       if (!isTerminalStatus(job.status)) {
         if (job.cancelRequested) {
@@ -290,8 +274,48 @@ class RenderManager {
           this.finish(job, "failed");
         }
       }
+      // Avoid recursive queue draining if several consecutive forks throw.
+      queueMicrotask(() => this.drainQueue());
+    };
 
-      this.drainQueue();
+    const onError = (error: Error) => {
+      if (finalized) return;
+      job.error = {
+        code: "RENDER_FAILED",
+        message: `The render process failed: ${error.message}`,
+        details: error.stack,
+      };
+      this.appendLog(job, "error", job.error.message);
+      // A failed spawn has no PID and might never emit exit. For an error
+      // on an existing process (e.g. IPC), keep its slot until it actually exits.
+      if (!child?.pid) finalize(null, null);
+    };
+
+    try {
+      child = fork(WORKER_PATH, [job.slug], {
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
+      });
+    } catch (error) {
+      onError(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    job.child = child;
+
+    child.on("error", onError);
+    child.on("exit", finalize);
+    child.on("close", finalize);
+    child.stdout?.setEncoding("utf-8");
+    child.stderr?.setEncoding("utf-8");
+    child.stdout?.on("data", (chunk: string) => {
+      if (!finalized) this.appendWorkerOutput(job, chunk, "info");
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      if (!finalized) this.appendWorkerOutput(job, chunk, "error");
+    });
+    child.on("message", (event: WorkerEvent) => {
+      if (!finalized && !isTerminalStatus(job.status)) {
+        this.handleWorkerEvent(job, event);
+      }
     });
   }
 
