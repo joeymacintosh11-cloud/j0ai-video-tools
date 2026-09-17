@@ -1,0 +1,38 @@
+{
+  "name": "remotion",
+  "version": "1.0.0",
+  "description": "My Remotion video",
+  "repository": {},
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@remotion/cli": "4.0.525",
+    "@remotion/google-fonts": "4.0.525",
+    "@remotion/media": "4.0.525",
+    "@remotion/media-utils": "4.0.525",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.525"
+  },
+  "devDependencies": {
+    "@remotion/bundler": "4.0.525",
+    "@remotion/eslint-config-flat": "4.0.525",
+    "@remotion/renderer": "4.0.525",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "eslint": "9.19.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion bundle",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src scripts services server && tsc",
+    "server": "node server/index.mts",
+    "new-track": "node scripts/new-track.mts",
+    "prepare-track": "node scripts/prepare-track.mts",
+    "validate-track": "node scripts/render-track.mts --validate-only",
+    "render-track": "node scripts/render-track.mts"
+  }
+}

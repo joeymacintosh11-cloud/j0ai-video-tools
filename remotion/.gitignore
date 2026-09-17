@@ -1,0 +1,11 @@
+node_modules
+dist
+.DS_Store
+.env
+
+# Ignore the output video from Git but not videos you import into src/.
+out
+
+# Auto-generated waveform-analysis copies of each track's beat.wav
+# (npm run prepare-track regenerates these deterministically).
+public/tracks/*/analysis.wav
