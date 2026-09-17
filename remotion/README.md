@@ -116,7 +116,34 @@ npm run render-track -- ghetto-geek
 
 This prepares the track (see above), bundles the project, resolves the
 video's duration from `beat.wav` automatically, and writes the result to
-`out/<track-slug>.mp4` (e.g. `out/ghetto-geek.mp4`).
+`out/<track-slug>/<preset>.mp4` (e.g. `out/ghetto-geek/youtube-16x9.mp4`).
+
+### Export formats
+
+Three formats ship, all at 30fps, defined once in
+`src/domain/video/renderPresets.ts`:
+
+| Preset | Format | Size |
+| --- | --- | --- |
+| `youtube-16x9` | YouTube landscape | 1920×1080 |
+| `vertical-9x16` | Reels / Shorts | 1080×1920 |
+| `square-1x1` | Square | 1080×1080 |
+
+```console
+npm run render-track -- ghetto-geek                          # 16:9 (default)
+npm run render-track -- ghetto-geek --preset vertical-9x16
+npm run render-track -- ghetto-geek --all-formats
+npm run render-all-formats -- ghetto-geek                    # same thing
+```
+
+All three use the same visualizer — 16:9 keeps cover and copy side by side,
+while the vertical and square formats stack into a single centred column
+rather than cropping the landscape design. The audio, duration and brand are
+identical across formats; only the layout adapts.
+
+A render made before formats existed still sits at `out/<slug>.mp4`. It is
+still found and shown, and nothing overwrites or deletes it — but new renders
+always go to the per-format path above.
 
 ### Previewing in Remotion Studio
 
@@ -194,6 +221,37 @@ server forgets the jobs — the rendered files on disk are unaffected.
 One render runs at a time; more requests queue. On 16 GB, avoid running Studio,
 the UI, and a render all at once if you can.
 
+### Rendering several tracks and formats at once
+
+Tick the formats you want in the toolbar, tick one or more tracks in the list,
+and press **Add to render queue**. That queues every ticked track in every
+ticked format and opens the queue panel, which shows each render's status,
+progress, elapsed time and output, with a cancel action while it is unsettled.
+
+Selecting more than one format turns the single-track **Render** button into a
+batch too. With one format selected it behaves exactly as it always did, so
+nothing forces you to batch.
+
+Renders still run one at a time in the order queued. A failed or cancelled
+render does not stop the rest of the batch, and asking for a track/format pair
+that is already queued or running skips it rather than duplicating the work.
+
+Batch progress is the average of the renders' real progress, so a batch
+containing a failure settles below 100% — the counts next to it say why.
+
+```console
+curl -X POST http://127.0.0.1:4600/api/render-batches \
+  -H 'content-type: application/json' \
+  -d '{"targets":[
+        {"slug":"ghetto-geek","preset":"youtube-16x9"},
+        {"slug":"ghetto-geek","preset":"vertical-9x16"}
+      ]}'
+
+curl http://127.0.0.1:4600/api/render-batches/<batchId>
+curl -N http://127.0.0.1:4600/api/render-batches/<batchId>/events
+curl -X POST http://127.0.0.1:4600/api/render-batches/<batchId>/cancel
+```
+
 A track can only have one render in flight. Asking for a second while one is
 queued or running is refused with `RENDER_ALREADY_ACTIVE` (409), since both
 would take the single slot in turn and write the same `out/<slug>.mp4`. The UI
@@ -223,7 +281,8 @@ code rather than re-implementing it.
 src/domain/             Pure, no filesystem. Safe to import anywhere, including
                         the composition and browser code.
   tracks/               types · errors · paths · metadata · validation · slug
-  video/                compositionConfig — id, size and fps, in one place
+  video/                compositionConfig · renderPresets — the export formats,
+                        defined once and read by everything
 
 services/               Node only. The single owner of filesystem, ffmpeg and
                         Remotion-API access.
@@ -297,13 +356,18 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | POST | `/api/tracks/:slug/validate` | Structured validation result |
 | POST | `/api/tracks/:slug/prepare` | Validate + refresh `analysis.wav` |
 | GET | `/api/tracks/:slug/preview` | Composition config + `inputProps` + duration |
-| POST | `/api/tracks/:slug/render` | Start a render, returns a job id immediately |
+| POST | `/api/tracks/:slug/render` | Start a render, returns a job id immediately; optional `{"preset":"..."}` |
 | POST | `/api/tracks/:slug/reveal` | Show `out/<slug>.mp4` in Finder (macOS) |
 | GET | `/api/renders` | All render jobs, newest first |
 | GET | `/api/renders/:jobId` | Job status and progress |
 | GET | `/api/renders/:jobId/events` | Live progress (Server-Sent Events) |
 | GET | `/api/renders/:jobId/logs` | Recent log lines for the job |
 | POST | `/api/renders/:jobId/cancel` | Cancel a queued or running render |
+| POST | `/api/render-batches` | Queue many track/format pairs at once |
+| GET | `/api/render-batches` | All batches, newest first |
+| GET | `/api/render-batches/:batchId` | Batch totals, progress and member jobs |
+| GET | `/api/render-batches/:batchId/events` | Live batch aggregate (Server-Sent Events) |
+| POST | `/api/render-batches/:batchId/cancel` | Cancel a batch's unfinished renders |
 
 Successful responses are `{"ok":true,"data":...}`. Failures are
 `{"ok":false,"error":{"code","message","path?"}}`, where `code` is the shared

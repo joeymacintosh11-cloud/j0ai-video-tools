@@ -18,13 +18,22 @@ in §23a rather than silently corrected.
 
 ## 0. Read this first
 
-**The entire working project is not committed to git.** `git status` at the
-parent repo (`~/Documents/j0ai-video-tools`) shows the whole `remotion/`
-folder as a single untracked directory. The one existing commit
-(`9385543 Create new Remotion video`) only tracks a dead, empty
-`create-video` scaffold at the *parent* repo root — not anything described in
-this document. See §23a and §34 for the exact commands to fix this. **Do this
-before writing any Phase 2C code**, or all of Phase 2A/2B work has no backup.
+**Sections 1–34 describe the project as it stood at the end of Phase 2B.**
+Phases 2C-A, 2C-B, a stability hardening pass and a multi-format/batch feature
+set have all landed since. Where an older section disagrees with the code, the
+code wins — and **§35 onwards is the current state**. Read §35 before acting on
+anything in §23 (limitations), §26–30 (Phase 2C plans, now delivered) or §34
+(git, now resolved).
+
+Specifically, these earlier statements are **no longer true**:
+
+- The git warning that used to be here: everything is committed, and the repo
+  has a remote (`joeymacintosh11-cloud/j0ai-video-tools`). §34's "nothing is
+  committed" text is historical.
+- §23's "no file uploads" and §26's "no UI exists": both were delivered in
+  Phase 2C-A.
+- Renders no longer go to `out/<slug>.mp4`. See §35.2.
+- The composition is no longer 1920×1080 only. See §35.1.
 
 ---
 
@@ -1260,6 +1269,205 @@ This correctly excludes `out/ghetto-geek.mp4` and the regenerable
 `analysis.wav`, but does **not** exclude the two stray files from §23b
 (`public/Ghetto Geek.wav`, `public/toshi-brandguide.png`) — resolve §29.5
 before committing, or they'll be included.
+
+---
+
+## 35. Current State — Multi-Format Export and the Batch Render Queue
+
+Written after the feature set that followed the hardening pass. Everything here
+was verified against the live repository and by rendering.
+
+### 35.1 Export formats
+
+`src/domain/video/renderPresets.ts` is the single definition of what the tool
+can export. It is pure and browser-safe, so the composition, the render
+service, the API, the CLI and the UI all read the same numbers.
+
+| id | label | size | fps | aspect | layout |
+|---|---|---|---|---|---|
+| `youtube-16x9` | YouTube Landscape | 1920×1080 | 30 | 16:9 | landscape |
+| `vertical-9x16` | Reels / Shorts | 1080×1920 | 30 | 9:16 | portrait |
+| `square-1x1` | Square | 1080×1080 | 30 | 1:1 | square |
+
+`youtube-16x9` is the default, so anything that does not name a format behaves
+exactly as it did before presets existed. `compositionConfig.ts` now derives its
+width, height and fps from that default rather than repeating them.
+
+**One composition covers every format.** `calculateBeatVisualizerMetadata`
+returns `width` and `height` alongside `durationInFrames`, taken from the
+`presetId` carried in the props — so `selectComposition` with a different preset
+yields that format's canvas. There is no second registration and no duplicated
+visualizer. Do not add one.
+
+Layout is chosen by the preset's **shape**, not its id (`LAYOUTS` in
+`src/BeatVisualizer/layouts.ts`), so a fourth 9:16 format would reuse the
+portrait arrangement for free. `landscape` keeps cover and copy side by side
+with the waveform beneath; `portrait` and `square` share one centred column —
+logo, cover, title, metadata, waveform. Nothing is cropped or letterboxed from
+the landscape design. `TrackInfo` takes its type sizes as a prop, defaulting to
+the landscape values.
+
+**16:9 is byte-identical and must stay that way.** The landscape numbers are the
+composition's original literals and the landscape branch is the original markup.
+Verified twice: frame 900 rendered from before and after the change hashed the
+same (`0ceb655d8be1a4ffdc206fe4db93df0a`), and the full render's decoded video
+stream is still `094c36432da2eb824791209145adbf6d` — the same value recorded in
+§11. **Re-check that hash after any composition change.**
+
+### 35.2 Output paths
+
+```
+out/<slug>/<preset-id>.mp4      e.g. out/ghetto-geek/vertical-9x16.mp4
+```
+
+A folder per track, a file per format. `outputRelativePath()` and
+`trackOutputLocation()` own this; nothing hand-builds it.
+
+The pre-preset path `out/<slug>.mp4` is **still read** — an older render is
+found and reported rather than vanishing from the UI — but nothing writes there
+and no file at that path is ever modified or deleted. `TrackInspection` reports
+`renderedPresets` and `legacyOutputExists`; `TrackDetailView.render` carries a
+per-format `outputs` array plus `legacyPresent`, with the older
+`outputLabel`/`outputPath` fields kept pointing at the default format for
+callers that predate this.
+
+### 35.3 Batch render queue
+
+`RenderManager` now tracks batches beside jobs. A job carries a `presetId` and a
+`batchId` (null for a single render).
+
+Execution is unchanged where it matters: **one render at a time**, FIFO, one
+forked worker each. Do not raise this — a render already uses three Chromium
+tabs and 16 GB is the binding constraint.
+
+- **Deduplication is per track *and* format.** The three formats of one track
+  queue happily; a second request for a pair already queued or running is
+  refused (`RENDER_ALREADY_ACTIVE`, 409) for a single render, and *skipped* for
+  a batch, with the skipped pairs returned. Duplicates inside one request are
+  collapsed the same way.
+- **Order is deterministic** — targets keep the order given.
+- **Validation happens before anything is queued**, so a bad slug or preset
+  cannot leave a half-created batch.
+- **Aggregate numbers are derived, never stored**: counts per status, plus the
+  mean of the jobs' real progress with a completed job counting as 1. A failed
+  or cancelled job keeps the progress it reached, so a batch containing one
+  settles below 100%. That is deliberate — the counts alongside explain it.
+  Nothing is synthesized.
+- A failed or cancelled job does not stop the batch; the next one starts.
+- Cancelling a batch cancels only its own unsettled jobs.
+
+Batches live in memory, so a server restart forgets them (the rendered files do
+not care). A client that loses track re-reads `GET /api/render-batches`.
+
+### 35.4 New endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/render-batches` | Queue `{"targets":[{"slug","preset"}]}`; max 50 |
+| GET | `/api/render-batches` | All batches, newest first |
+| GET | `/api/render-batches/:batchId` | Aggregate + member jobs |
+| GET | `/api/render-batches/:batchId/events` | Live aggregate (SSE) |
+| POST | `/api/render-batches/:batchId/cancel` | Cancel its unsettled jobs |
+
+`POST /api/tracks/:slug/render` and `/reveal` now accept an optional
+`{"preset":"..."}` body; an empty body still means 16:9.
+
+New error codes: `INVALID_PRESET` (400), `RENDER_BATCH_NOT_FOUND` (404).
+Still SSE, still no WebSockets.
+
+### 35.5 CLI
+
+```console
+npm run render-track -- <slug>                          # 16:9, as always
+npm run render-track -- <slug> --preset vertical-9x16
+npm run render-track -- <slug> --all-formats
+npm run render-all-formats -- <slug>
+```
+
+Existing invocations are unchanged apart from the output path. `--all-formats`
+renders sequentially and reuses the analysis audio prepared once.
+
+### 35.6 UI
+
+The toolbar holds one format selection, shared by the single-track button and
+by batching, so there is one answer on screen to "what am I exporting". At least
+one format stays selected.
+
+With 16:9 alone selected, Render starts a single job exactly as before —
+**the single-track workflow is intact and nobody is forced to batch.** Selecting
+more formats turns the same button into a batch. Track rows gained a checkbox
+that is purely additive: clicking a row still opens it; ticking several and
+pressing "Add to render queue" queues every ticked track × every ticked format.
+
+The queue drawer only exists while a batch is being followed, so the layout is
+otherwise untouched. It subscribes to the batch SSE stream rather than counting
+anything itself. Preview follows the selected format, taking dimensions from the
+shared preset module rather than a request per format.
+
+### 35.7 Audio and performance
+
+Unchanged and verified, not assumed:
+
+- `beat.wav` is the final audio in **every** format — all three renders measured
+  the same mean volume (−20.5 dB).
+- `analysis.wav` is waveform-only, and is **not regenerated per format**:
+  `prepareTrack` is per track and mtime-gated, so the second and third formats
+  reuse it. Verified — its mtime was unchanged across a three-format batch and
+  all three jobs logged "already up to date".
+- Duration is identical across formats (185.216s, 5555 frames each).
+- `concurrency: 3` inside one render is unchanged.
+
+Timings on the M5/16 GB machine, three formats back to back in one batch:
+16:9 ≈ 185s, 9:16 and 1:1 similar; the whole batch finished a little over 9
+minutes. 9:16 is by far the largest file (195 MB vs 81 MB for 16:9) because a
+1080×1920 canvas carries more moving detail.
+
+### 35.8 Tests
+
+`npm test` is now **55 tests** (`node --test`, no new dependency), adding:
+
+- **presets**: every preset's shape has layout numbers behind it; the declared
+  canvases; `compositionConfig` not drifting from the default preset; unknown
+  ids rejected as `INVALID_PRESET` with the options named; an absent preset
+  resolving to the default; per-format output paths distinct; the legacy path
+  still expressible and distinct; duration agreeing across formats.
+- **batches**: deterministic order with one active; repeated and already-running
+  pairs skipped; an invalid target rejecting the request without queueing
+  anything; an empty batch refused; a failed or cancelled job letting the next
+  start; batch cancellation leaving unrelated renders alone; aggregate progress
+  a real mean that settles below 100% after a failure; subscribers silent after
+  unsubscribing; unknown batch ids reported; a preset-less single render
+  reporting the default.
+
+The fork harness lives in `tests/managerHarness.mts`, shared by both manager
+test files.
+
+### 35.9 Known limitations
+
+1. **Batch and job history are in memory.** A server restart forgets them.
+2. **A failed job leaves the batch below 100%** by design; read the counts.
+3. **A `SIGKILL`'d render can orphan Chromium.** Observed while testing: killing
+   a `render-track` process left 14 `chrome-headless-shell` processes, cleaned up
+   by hand. The app's own cancel and shutdown paths do not do this — only an
+   abrupt external kill. If you ever kill a render rudely, check `pgrep -f
+   chrome-headless-shell`. Completed outputs survive it (Remotion only moves the
+   file into place at the end).
+4. **No cross-track batch progress persistence**, no retry of a failed job, and
+   no reordering of a queued batch. All deliberate omissions, not oversights.
+5. `GET /api/renders` and `/api/render-batches` are still uncapped in memory.
+6. Portrait and square have only been eyeballed with one cover and one title
+   length. A very long title will wrap differently; `titleMaxWidth` per layout
+   is the dial.
+
+### 35.10 Recommended next step
+
+**A track-level "export everything that's missing" action**, i.e. look at
+`renderedPresets`, diff against the selected formats, and queue only the gap.
+The pieces all exist — per-format presence is already reported and batching
+already skips what is in flight — so it is mostly UI. That would make the tool
+genuinely one-click for a catalogue.
+
+Not started.
 
 ---
 
