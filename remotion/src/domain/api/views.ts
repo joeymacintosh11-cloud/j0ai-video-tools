@@ -141,6 +141,18 @@ export type UploadAssetView = {
   readonly track: TrackDetailView;
 };
 
+/**
+ * POST /api/tracks/:slug/reveal
+ *
+ * Shows the rendered video in Finder. The client sends only the slug; the path
+ * is resolved server-side, so no filesystem path is ever accepted from it.
+ */
+export type RevealOutputView = {
+  readonly slug: string;
+  readonly outputPath: string;
+  readonly outputLabel: string;
+};
+
 /** POST /api/tracks/:slug/validate */
 export type ValidateTrackView = {
   readonly slug: string;

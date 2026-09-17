@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   PrepareTrackView,
+  RevealOutputView,
   StartRenderView,
   TrackAssetKind,
   TrackPreviewView,
@@ -20,6 +21,7 @@ import { createTrack } from "../../services/tracks/createTrack.ts";
 import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
 import { listTracks } from "../../services/tracks/listTracks.ts";
 import { prepareTrack } from "../../services/tracks/prepareTrack.ts";
+import { revealTrackOutput } from "../../services/tracks/revealTrackOutput.ts";
 import { trackLocations } from "../../services/tracks/trackLocations.ts";
 import { uploadTrackAsset } from "../../services/tracks/uploadTrackAsset.ts";
 import {
@@ -244,6 +246,15 @@ export const handleTrackPreview = async (
     analysisAvailable,
     studioUrlHint: `/${COMPOSITION_CONFIG.id}`,
   };
+
+  sendOk(response, payload);
+};
+
+export const handleRevealOutput = async (
+  slugInput: string,
+  response: ServerResponse,
+): Promise<void> => {
+  const payload: RevealOutputView = await revealTrackOutput(slugInput);
 
   sendOk(response, payload);
 };

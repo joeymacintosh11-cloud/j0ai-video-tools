@@ -7,6 +7,7 @@ import type {
   PrepareTrackView,
   RenderJobView,
   RenderLogsView,
+  RevealOutputView,
   StartRenderView,
   TrackAssetKind,
   TrackDetailView,
@@ -168,6 +169,13 @@ export const getTrackPreview = (
 ): Promise<TrackPreviewView<BeatVisualizerProps>> =>
   request<TrackPreviewView<BeatVisualizerProps>>(
     `/api/tracks/${encodeURIComponent(slug)}/preview`,
+  );
+
+/** Shows the rendered file in Finder. Only the slug is sent. */
+export const revealTrackOutput = (slug: string): Promise<RevealOutputView> =>
+  jsonRequest<RevealOutputView>(
+    `/api/tracks/${encodeURIComponent(slug)}/reveal`,
+    "POST",
   );
 
 /* ------------------------------------------------------------------ *

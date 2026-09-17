@@ -3,7 +3,12 @@ import type {
   RenderJobStatus,
   TrackDetailView,
 } from "../../src/domain/api/views.ts";
-import { ApiRequestError, cancelRender, startRender } from "../api/client.ts";
+import {
+  ApiRequestError,
+  cancelRender,
+  revealTrackOutput,
+  startRender,
+} from "../api/client.ts";
 import { useRenderJob } from "../hooks/useRenderJob.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 
@@ -77,6 +82,16 @@ export const RenderPanel: React.FC<{
     }
   };
 
+  const reveal = async () => {
+    setError(null);
+
+    try {
+      await revealTrackOutput(track.slug);
+    } catch (cause) {
+      setError(asApiError(cause));
+    }
+  };
+
   const stop = async () => {
     if (jobId === null) {
       return;
@@ -127,9 +142,18 @@ export const RenderPanel: React.FC<{
         ) : null}
 
         {track.render.present && !active ? (
-          <span className="actions__result">
-            Last output: {track.render.outputLabel}
-          </span>
+          <>
+            <button
+              className="button button--quiet"
+              type="button"
+              disabled={busy}
+              title={track.render.outputPath ?? undefined}
+              onClick={() => void reveal()}
+            >
+              Show in Finder
+            </button>
+            <span className="actions__result">{track.render.outputLabel}</span>
+          </>
         ) : null}
       </div>
 

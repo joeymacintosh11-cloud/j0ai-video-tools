@@ -14,6 +14,7 @@ import {
   handleGetTrack,
   handleListTracks,
   handlePrepareTrack,
+  handleRevealOutput,
   handleStartRender,
   handleTrackPreview,
   handleUpdateMetadata,
@@ -109,6 +110,10 @@ const route = async (
     }
     if (third === "render" && method === "POST") {
       await handleStartRender(second, response);
+      return;
+    }
+    if (third === "reveal" && method === "POST") {
+      await handleRevealOutput(second, response);
       return;
     }
 
