@@ -129,6 +129,71 @@ Studio's preview always shows the `ghetto-geek` track by default
 `npm run render-track` renders any track's own data regardless of what
 Studio is currently showing.
 
+## Local app
+
+A local web UI over the same API: browse tracks, edit metadata, upload cover
+art and audio, prepare, preview with the real composition, render with live
+progress, and reveal the result in Finder.
+
+It needs two processes, in two terminals:
+
+```console
+npm run server    # the API on 127.0.0.1:4600
+npm run ui        # the UI on 127.0.0.1:5174
+```
+
+Then open <http://127.0.0.1:5174>.
+
+The UI's dev server proxies `/api` to the API server, so the browser only ever
+talks to one origin — that's why the API needs no CORS handling. It also serves
+`public/` at the web root, which is what lets the preview resolve the
+composition's `staticFile()` paths and show real cover art.
+
+Both bind to loopback only. There is no auth, no database and no cloud, exactly
+as with the CLI.
+
+The selected track is kept in the URL, so reloading keeps your place. The track
+list and detail re-read when the window regains focus, so editing
+`metadata.json` in an editor shows up without pressing Refresh.
+
+### Uploading files
+
+Cover art and audio can be dropped onto the track's panel (or picked with a
+file dialog) instead of being copied into `public/tracks/<slug>/` by hand. Each
+upload streams straight to disk and is checked before it is kept — a cover must
+really be a PNG and audio must really be a WAV, up to 25 MB and 400 MB
+respectively. A rejected upload leaves the existing file untouched.
+
+Replacing `beat.wav` makes `analysis.wav` stale, so press **Prepare**
+afterwards (or just render, which prepares first).
+
+### Previewing
+
+**Load preview** mounts the real `ToshiBeatVisualizer` component with that
+track's own props. It fetches the audio and decodes `analysis.wav` for the
+waveform, so give it a few seconds before playback is smooth. It is deliberately
+behind a button rather than loading for every track you click.
+
+Remotion Studio (`npm run dev`) is still there and unchanged; it previews the
+`ghetto-geek` default props rather than a selected track.
+
+### Rendering
+
+**Render** starts a job and follows it over Server-Sent Events. Progress and
+frame counts come straight from Remotion.
+
+Progress sits near zero for the first stretch even though work is happening:
+each of the three render workers decodes the analysis audio once before its
+first frame. That's why the panel leads with the phase (`preparing` →
+`rendering`) and treats the bar as secondary.
+
+**Cancel** stops a running or queued render. It never touches a previously
+completed video. Job history lives in the server's memory, so restarting the
+server forgets the jobs — the rendered files on disk are unaffected.
+
+One render runs at a time; more requests queue. On 16 GB, avoid running Studio,
+the UI, and a render all at once if you can.
+
 ### Project structure
 
 The track logic lives in shared modules, so the CLI is a thin layer over it
@@ -155,6 +220,19 @@ scripts/                CLI entry points: parse args, call a service, format
 
 server/                 Local HTTP API over the same services (see below).
   render-worker.mts     Runs one render in its own process.
+
+ui/                     The local web app. Calls the API and renders what comes
+                        back; it re-implements no validation, slug rules or path
+                        building of its own.
+  api/                  typed client · public-asset URLs
+  components/           track list · detail · metadata form · upload zones ·
+                        prepare · preview · render progress
+  hooks/                useAsync · useRenderJob (SSE) · useWindowFocus
+  styles/               tokens.css (brand) · app.css (layout)
+
+index.html              Vite entry for the UI.
+vite.config.ts          Vite root is the project root, so publicDir defaults to
+                        public/ and ui/ can import the composition directly.
 ```
 
 Two conventions worth knowing before changing anything here:
@@ -166,6 +244,9 @@ Two conventions worth knowing before changing anything here:
   `public/`-relative path (`tracks/<slug>/cover.png` and friends);
   `services/tracks/trackLocations.ts` turns those into absolute paths. Don't
   hand-build these strings anywhere else.
+- **The API's wire format is declared once**, in `src/domain/api/views.ts`. The
+  server implements those types and the UI consumes them, so a change that
+  breaks one end fails to compile rather than failing in the browser.
 
 The CLI commands above are unchanged and remain the supported way to work with
 tracks.
@@ -192,10 +273,13 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | POST | `/api/tracks` | Create a track from `{"title":"..."}` |
 | GET | `/api/tracks/:slug` | Full detail: metadata, assets, validation, render |
 | PATCH | `/api/tracks/:slug/metadata` | Update title/artist/key/bpm/subtitle |
+| PUT | `/api/tracks/:slug/cover` | Upload `cover.png` (raw PNG body) |
+| PUT | `/api/tracks/:slug/beat` | Upload `beat.wav` (raw WAV body) |
 | POST | `/api/tracks/:slug/validate` | Structured validation result |
 | POST | `/api/tracks/:slug/prepare` | Validate + refresh `analysis.wav` |
 | GET | `/api/tracks/:slug/preview` | Composition config + `inputProps` + duration |
 | POST | `/api/tracks/:slug/render` | Start a render, returns a job id immediately |
+| POST | `/api/tracks/:slug/reveal` | Show `out/<slug>.mp4` in Finder (macOS) |
 | GET | `/api/renders` | All render jobs, newest first |
 | GET | `/api/renders/:jobId` | Job status and progress |
 | GET | `/api/renders/:jobId/events` | Live progress (Server-Sent Events) |
@@ -221,6 +305,19 @@ curl -X PATCH http://127.0.0.1:4600/api/tracks/ghetto-geek/metadata \
   -H 'content-type: application/json' -d '{"bpm":102,"key":"F Minor"}'
 
 curl -X POST http://127.0.0.1:4600/api/tracks/ghetto-geek/prepare
+```
+
+Uploads are raw `PUT` bodies — no multipart form, and no filename is sent,
+because the endpoint decides which file is written:
+
+```console
+curl -X PUT --data-binary @cover.png \
+  -H 'content-type: image/png' \
+  http://127.0.0.1:4600/api/tracks/midnight-rider/cover
+
+curl -X PUT --data-binary @beat.wav \
+  -H 'content-type: audio/wav' \
+  http://127.0.0.1:4600/api/tracks/midnight-rider/beat
 ```
 
 ### Render job lifecycle
