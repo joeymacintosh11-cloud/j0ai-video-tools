@@ -6,6 +6,7 @@ import { AssetDropZone } from "./AssetDropZone.tsx";
 import { MetadataForm } from "./MetadataForm.tsx";
 import { PrepareActions } from "./PrepareActions.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
+import { TrackPreview } from "./TrackPreview.tsx";
 import { ValidationNotes } from "./ValidationNotes.tsx";
 
 const Stat: React.FC<{
@@ -92,6 +93,14 @@ export const TrackDetail: React.FC<{
       <section className="section">
         <h3 className="section__title">Prepare</h3>
         <PrepareActions track={track} onChanged={onChanged} />
+      </section>
+
+      <section className="section">
+        <h3 className="section__title">Preview</h3>
+        <TrackPreview
+          slug={track.slug}
+          canPreview={track.metadataValid && track.coverPresent && track.audioPresent}
+        />
       </section>
 
       <section className="section">
