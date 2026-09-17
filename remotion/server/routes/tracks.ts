@@ -12,6 +12,7 @@ import type {
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+import { assertRenderPresetId } from "../../src/domain/video/renderPresets.ts";
 import {
   COMPOSITION_CONFIG,
   secondsToFrames,
@@ -277,18 +278,28 @@ export const handleTrackPreview = async (
 
 export const handleRevealOutput = async (
   slugInput: string,
+  request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> => {
-  const payload: RevealOutputView = await revealTrackOutput(slugInput);
+  // An empty body means the default format, so an older caller still works.
+  const body = await readJsonBody(request);
+  const payload: RevealOutputView = await revealTrackOutput(
+    slugInput,
+    body.preset,
+  );
 
   sendOk(response, payload);
 };
 
 export const handleStartRender = async (
   slugInput: string,
+  request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> => {
   const slug = assertValidSlug(slugInput);
+  // An empty body means the default format, preserving the original call.
+  const body = await readJsonBody(request);
+  const presetId = assertRenderPresetId(body.preset);
   const inspection = await inspectTrack(slug);
 
   // Reject an invalid track up front so the caller gets a real 4xx instead of
@@ -301,7 +312,7 @@ export const handleStartRender = async (
     );
   }
 
-  const job = renderManager.startRender(slug);
+  const job = renderManager.startRender(slug, presetId);
 
   const payload: StartRenderView = {
     jobId: job.id,

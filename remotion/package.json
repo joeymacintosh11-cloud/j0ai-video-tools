@@ -39,6 +39,7 @@
     "prepare-track": "node scripts/prepare-track.mts",
     "validate-track": "node scripts/render-track.mts --validate-only",
     "render-track": "node scripts/render-track.mts",
-    "test": "node --test tests/*.test.mts"
+    "test": "node --test tests/*.test.mts",
+    "render-all-formats": "node scripts/render-track.mts --all-formats"
   }
 }

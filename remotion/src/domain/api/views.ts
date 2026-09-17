@@ -251,6 +251,10 @@ export type RenderJobError = {
 export type RenderJobView = {
   readonly id: string;
   readonly slug: string;
+  /** Which export format this job renders. */
+  readonly presetId: RenderPresetId;
+  /** The batch this job belongs to, or null for a single render. */
+  readonly batchId: string | null;
   readonly status: RenderJobStatus;
   readonly progress: number;
   readonly framesRendered: number | null;
@@ -270,6 +274,54 @@ export type StartRenderView = {
   readonly jobId: string;
   readonly status: RenderJobStatus;
   readonly job: RenderJobView;
+};
+
+/** One track/format pair to render. */
+export type RenderTarget = {
+  readonly slug: string;
+  readonly preset: RenderPresetId;
+};
+
+/** POST /api/render-batches request body. */
+export type CreateRenderBatchBody = {
+  readonly targets: readonly RenderTarget[];
+};
+
+/**
+ * GET /api/render-batches/:batchId
+ *
+ * Counts come straight from the member jobs. `progress` is the mean of their
+ * real progress, with a completed job counting as 1 — a job that failed or was
+ * cancelled keeps whatever progress it had reached, so a batch containing one
+ * can finish below 100%. Nothing here is synthesized to look tidy.
+ */
+export type RenderBatchView = {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly totalJobs: number;
+  readonly queued: number;
+  readonly preparing: number;
+  readonly rendering: number;
+  readonly completed: number;
+  readonly failed: number;
+  readonly cancelled: number;
+  /** preparing + rendering. */
+  readonly active: number;
+  /** completed + failed + cancelled. */
+  readonly settled: number;
+  readonly progress: number;
+  /** "running" until every job has settled. */
+  readonly status: "running" | "finished";
+  /** Member jobs in the order they were queued. */
+  readonly jobs: readonly RenderJobView[];
+};
+
+/** POST /api/render-batches */
+export type CreateRenderBatchView = {
+  readonly batchId: string;
+  readonly batch: RenderBatchView;
+  /** Targets already queued or running, which were not queued again. */
+  readonly skipped: readonly RenderTarget[];
 };
 
 /** GET /api/renders/:jobId/logs */

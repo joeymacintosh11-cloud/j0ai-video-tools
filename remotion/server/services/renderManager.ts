@@ -5,6 +5,14 @@ import { fileURLToPath } from "node:url";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
 import {
+  assertRenderPresetId,
+  type RenderPresetId,
+} from "../../src/domain/video/renderPresets.ts";
+import type {
+  RenderBatchView,
+  RenderTarget,
+} from "../../src/domain/api/views.ts";
+import {
   isTerminalStatus,
   type RenderJobError,
   type RenderJobLogEntry,
@@ -33,9 +41,26 @@ export type RenderJobEvent =
 
 type JobListener = (event: RenderJobEvent) => void;
 
+export type RenderBatchEvent = {
+  readonly type: "batch";
+  readonly batch: RenderBatchView;
+};
+
+type BatchListener = (event: RenderBatchEvent) => void;
+
+type RenderBatch = {
+  id: string;
+  createdAt: number;
+  /** Member job ids, in the order they were queued. */
+  jobIds: string[];
+  listeners: Set<BatchListener>;
+};
+
 type RenderJob = {
   id: string;
   slug: string;
+  presetId: RenderPresetId;
+  batchId: string | null;
   status: RenderJobStatus;
   progress: number;
   framesRendered: number | null;
@@ -63,11 +88,12 @@ type RenderJob = {
  */
 class RenderManager {
   private readonly jobs = new Map<string, RenderJob>();
+  private readonly batches = new Map<string, RenderBatch>();
   private readonly queue: string[] = [];
   private activeJobId: string | null = null;
   private acceptingWork = true;
 
-  startRender(slugInput: string): RenderJobView {
+  private assertAccepting(): void {
     if (!this.acceptingWork) {
       throw new TrackError(
         trackIssue(
@@ -76,26 +102,19 @@ class RenderManager {
         ),
       );
     }
+  }
 
-    const slug = assertValidSlug(slugInput);
-
-    // One render per track at a time. Two jobs for the same slug would take the
-    // single render slot in turn and write the same out/<slug>.mp4 twice, so the
-    // second is only ever wasted work. A client that lost track of its job (a
-    // reload, say) should adopt the existing one from GET /api/renders.
-    const active = this.activeJobForSlug(slug);
-    if (active) {
-      throw new TrackError(
-        trackIssue(
-          "RENDER_ALREADY_ACTIVE",
-          `Track "${slug}" is already rendering (job ${active.id}, ${active.status}). Wait for it to finish, or cancel it first.`,
-        ),
-      );
-    }
-
+  /** Creates and queues one job. Callers have already validated their input. */
+  private enqueue(
+    slug: string,
+    presetId: RenderPresetId,
+    batchId: string | null,
+  ): RenderJob {
     const job: RenderJob = {
       id: randomUUID(),
       slug,
+      presetId,
+      batchId,
       status: "queued",
       progress: 0,
       framesRendered: null,
@@ -116,21 +135,165 @@ class RenderManager {
 
     this.jobs.set(job.id, job);
     this.queue.push(job.id);
-    this.appendLog(job, "info", `Queued render for "${slug}".`);
+    this.appendLog(job, "info", `Queued ${presetId} render for "${slug}".`);
+
+    return job;
+  }
+
+  startRender(slugInput: string, presetInput?: unknown): RenderJobView {
+    this.assertAccepting();
+
+    const slug = assertValidSlug(slugInput);
+    const presetId = assertRenderPresetId(presetInput);
+
+    // One job per track and format. A second job for the same pair would take
+    // the single render slot in turn and write the same file again, so it is
+    // only ever wasted work. Different formats of the same track are fine and
+    // simply queue. A client that lost track of its job (a reload, say) should
+    // adopt the existing one from GET /api/renders.
+    const active = this.activeJobFor(slug, presetId);
+    if (active) {
+      throw new TrackError(
+        trackIssue(
+          "RENDER_ALREADY_ACTIVE",
+          `Track "${slug}" is already rendering ${presetId} (job ${active.id}, ${active.status}). Wait for it to finish, or cancel it first.`,
+        ),
+      );
+    }
+
+    const job = this.enqueue(slug, presetId, null);
     this.drainQueue();
 
     return this.toView(job);
+  }
+
+  /**
+   * Queues several track/format pairs as one batch.
+   *
+   * Targets keep their given order, so the queue is deterministic. A pair that
+   * is already queued or running is skipped rather than rejected — asking for a
+   * batch that overlaps one in flight should top up the queue, not fail
+   * wholesale — and the skipped pairs are reported back.
+   */
+  startBatch(targets: readonly RenderTarget[]): {
+    readonly batch: RenderBatchView;
+    readonly skipped: readonly RenderTarget[];
+  } {
+    this.assertAccepting();
+
+    if (targets.length === 0) {
+      throw new TrackError(
+        trackIssue("INVALID_REQUEST", "A batch needs at least one target."),
+      );
+    }
+
+    // Validate everything before queueing anything, so a bad target cannot
+    // leave a half-created batch behind.
+    const resolved = targets.map((target) => ({
+      slug: assertValidSlug(target.slug),
+      presetId: assertRenderPresetId(target.preset),
+    }));
+
+    const batch: RenderBatch = {
+      id: randomUUID(),
+      createdAt: Date.now(),
+      jobIds: [],
+      listeners: new Set(),
+    };
+
+    const skipped: RenderTarget[] = [];
+    const seen = new Set<string>();
+
+    for (const { slug, presetId } of resolved) {
+      const key = `${slug}::${presetId}`;
+
+      // Duplicates inside the request itself, and pairs already in flight.
+      if (seen.has(key) || this.activeJobFor(slug, presetId)) {
+        skipped.push({ slug, preset: presetId });
+        continue;
+      }
+      seen.add(key);
+
+      const job = this.enqueue(slug, presetId, batch.id);
+      batch.jobIds.push(job.id);
+    }
+
+    this.batches.set(batch.id, batch);
+    this.drainQueue();
+
+    return { batch: this.toBatchView(batch), skipped };
+  }
+
+  getBatch(batchId: string): RenderBatchView {
+    return this.toBatchView(this.requireBatch(batchId));
+  }
+
+  listBatches(): readonly RenderBatchView[] {
+    return [...this.batches.values()]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((batch) => this.toBatchView(batch));
+  }
+
+  /** Subscribe to a batch's aggregate updates; returns an unsubscribe function. */
+  subscribeBatch(batchId: string, listener: BatchListener): () => void {
+    const batch = this.requireBatch(batchId);
+    batch.listeners.add(listener);
+
+    return () => {
+      batch.listeners.delete(listener);
+    };
+  }
+
+  /**
+   * Cancels every job in a batch that has not settled.
+   *
+   * Jobs outside the batch are untouched, and a batch whose jobs have all
+   * finished is reported rather than treated as an error — there is nothing
+   * left to stop.
+   */
+  cancelBatch(batchId: string): RenderBatchView {
+    const batch = this.requireBatch(batchId);
+
+    for (const jobId of batch.jobIds) {
+      const job = this.jobs.get(jobId);
+      if (job && !isTerminalStatus(job.status)) {
+        this.cancelRender(job.id);
+      }
+    }
+
+    return this.toBatchView(batch);
   }
 
   getJob(jobId: string): RenderJobView {
     return this.toView(this.requireJob(jobId));
   }
 
-  /** The queued or running job for a track, if any. */
-  private activeJobForSlug(slug: string): RenderJob | undefined {
+  /** The queued or running job for a track/format pair, if any. */
+  private activeJobFor(
+    slug: string,
+    presetId: RenderPresetId,
+  ): RenderJob | undefined {
     return [...this.jobs.values()].find(
-      (job) => job.slug === slug && !isTerminalStatus(job.status),
+      (job) =>
+        job.slug === slug &&
+        job.presetId === presetId &&
+        !isTerminalStatus(job.status),
     );
+  }
+
+  private requireBatch(batchId: string): RenderBatch {
+    const batch = this.batches.get(batchId);
+
+    if (!batch) {
+      throw new TrackError(
+        trackIssue(
+          "RENDER_BATCH_NOT_FOUND",
+          `Render batch "${batchId}" not found.`,
+        ),
+      );
+    }
+
+    return batch;
   }
 
   listJobs(): readonly RenderJobView[] {
@@ -313,7 +476,7 @@ class RenderManager {
     };
 
     try {
-      child = fork(WORKER_PATH, [job.slug], {
+      child = fork(WORKER_PATH, [job.slug, job.presetId], {
         stdio: ["ignore", "pipe", "pipe", "ipc"],
       });
     } catch (error) {
@@ -441,6 +604,75 @@ class RenderManager {
     for (const listener of job.listeners) {
       listener(event);
     }
+
+    // A batch's aggregate is derived from its jobs, so it moves whenever one
+    // of them does. Log-only events do not change any number.
+    if (event.type !== "log") {
+      this.emitBatchFor(job);
+    }
+  }
+
+  /**
+   * Aggregates a batch from its member jobs.
+   *
+   * Progress is the mean of the jobs' own real progress, a completed job
+   * counting as 1. A failed or cancelled job keeps whatever it had reached, so
+   * a batch containing one settles below 100% — that is honest, and the counts
+   * alongside say why.
+   */
+  private toBatchView(batch: RenderBatch): RenderBatchView {
+    const jobs = batch.jobIds
+      .map((jobId) => this.jobs.get(jobId))
+      .filter((job): job is RenderJob => job !== undefined);
+
+    const count = (status: RenderJobStatus) =>
+      jobs.filter((job) => job.status === status).length;
+
+    const completed = count("completed");
+    const failed = count("failed");
+    const cancelled = count("cancelled");
+    const preparing = count("preparing");
+    const rendering = count("rendering");
+
+    const progressTotal = jobs.reduce(
+      (total, job) => total + (job.status === "completed" ? 1 : job.progress),
+      0,
+    );
+    const settled = completed + failed + cancelled;
+
+    return {
+      id: batch.id,
+      createdAt: new Date(batch.createdAt).toISOString(),
+      totalJobs: jobs.length,
+      queued: count("queued"),
+      preparing,
+      rendering,
+      completed,
+      failed,
+      cancelled,
+      active: preparing + rendering,
+      settled,
+      progress: jobs.length === 0 ? 0 : progressTotal / jobs.length,
+      status: settled === jobs.length ? "finished" : "running",
+      jobs: jobs.map((job) => this.toView(job)),
+    };
+  }
+
+  /** Tells a job's batch, if it has one, that its aggregate moved. */
+  private emitBatchFor(job: RenderJob): void {
+    if (job.batchId === null) {
+      return;
+    }
+
+    const batch = this.batches.get(job.batchId);
+    if (!batch || batch.listeners.size === 0) {
+      return;
+    }
+
+    const view = this.toBatchView(batch);
+    for (const listener of batch.listeners) {
+      listener({ type: "batch", batch: view });
+    }
   }
 
   private toView(job: RenderJob): RenderJobView {
@@ -450,6 +682,8 @@ class RenderManager {
     return {
       id: job.id,
       slug: job.slug,
+      presetId: job.presetId,
+      batchId: job.batchId,
       status: job.status,
       progress: job.progress,
       framesRendered: job.framesRendered,

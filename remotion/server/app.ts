@@ -4,6 +4,13 @@ import type { HealthView } from "../src/domain/api/views.ts";
 import { sendErrorForException, sendNotFound } from "./http/errors.ts";
 import { sendOk } from "./http/json.ts";
 import {
+  handleBatchEvents,
+  handleCancelBatch,
+  handleCreateBatch,
+  handleGetBatch,
+  handleListBatches,
+} from "./routes/batches.ts";
+import {
   handleCancelRender,
   handleGetRender,
   handleGetRenderLogs,
@@ -110,11 +117,49 @@ const route = async (
       return;
     }
     if (third === "render" && method === "POST") {
-      await handleStartRender(second, response);
+      await handleStartRender(second, request, response);
       return;
     }
     if (third === "reveal" && method === "POST") {
-      await handleRevealOutput(second, response);
+      await handleRevealOutput(second, request, response);
+      return;
+    }
+
+    sendNotFound(response, "Endpoint");
+    return;
+  }
+
+  if (collection === "render-batches") {
+    // /api/render-batches
+    if (second === undefined) {
+      if (method === "POST") {
+        await handleCreateBatch(request, response);
+        return;
+      }
+      if (method === "GET") {
+        handleListBatches(response);
+        return;
+      }
+      sendNotFound(response, "Endpoint");
+      return;
+    }
+
+    // /api/render-batches/:batchId
+    if (third === undefined) {
+      if (method === "GET") {
+        handleGetBatch(second, response);
+        return;
+      }
+      sendNotFound(response, "Endpoint");
+      return;
+    }
+
+    if (third === "events" && method === "GET") {
+      handleBatchEvents(second, response);
+      return;
+    }
+    if (third === "cancel" && method === "POST") {
+      handleCancelBatch(second, response);
       return;
     }
 
