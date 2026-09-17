@@ -4,6 +4,7 @@ import { publicAssetUrl } from "../api/assetUrl.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
 import { AssetDropZone } from "./AssetDropZone.tsx";
 import { MetadataForm } from "./MetadataForm.tsx";
+import { PrepareActions } from "./PrepareActions.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
 import { ValidationNotes } from "./ValidationNotes.tsx";
 
@@ -86,6 +87,11 @@ export const TrackDetail: React.FC<{
           />
         </div>
         <AssetChecklist track={track} />
+      </section>
+
+      <section className="section">
+        <h3 className="section__title">Prepare</h3>
+        <PrepareActions track={track} onChanged={onChanged} />
       </section>
 
       <section className="section">
