@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { HealthView } from "../src/domain/api/views.ts";
 import { sendErrorForException, sendNotFound } from "./http/errors.ts";
 import { sendOk } from "./http/json.ts";
 import {
@@ -48,7 +49,8 @@ const route = async (
       sendNotFound(response, "Endpoint");
       return;
     }
-    sendOk(response, { ok: true, service: "toshi-visualizer" });
+    const health: HealthView = { ok: true, service: "toshi-visualizer" };
+    sendOk(response, health);
     return;
   }
 

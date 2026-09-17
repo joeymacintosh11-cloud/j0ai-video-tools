@@ -1,4 +1,5 @@
 import type { ServerResponse } from "node:http";
+import type { RenderLogsView } from "../../src/domain/api/views.ts";
 import { sendOk } from "../http/json.ts";
 import { openSseStream } from "../http/sse.ts";
 import { renderManager } from "../services/renderManager.ts";
@@ -21,12 +22,14 @@ export const handleGetRenderLogs = (
 ): void => {
   const job = renderManager.getJob(jobId);
 
-  sendOk(response, {
+  const payload: RenderLogsView = {
     id: job.id,
     slug: job.slug,
     status: job.status,
     logs: renderManager.getLogs(jobId),
-  });
+  };
+
+  sendOk(response, payload);
 };
 
 export const handleCancelRender = (

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import type { TrackMetadataPatch } from "../../src/domain/api/views.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import {
   serializeTrackMetadata,
@@ -16,14 +17,8 @@ import type {
 } from "../../src/domain/tracks/types.ts";
 import { trackLocations } from "./trackLocations.ts";
 
-/** Every field a caller is allowed to change. The slug is never one of them. */
-export type TrackMetadataPatch = {
-  readonly title?: string;
-  readonly artist?: string;
-  readonly key?: string;
-  readonly bpm?: number | null;
-  readonly subtitle?: string;
-};
+/** Declared in src/domain/api/views.ts, since it is also the PATCH body. */
+export type { TrackMetadataPatch };
 
 export type UpdateTrackMetadataResult = {
   readonly slug: string;

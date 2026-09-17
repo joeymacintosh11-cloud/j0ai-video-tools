@@ -1,4 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type {
+  PrepareTrackView,
+  StartRenderView,
+  TrackPreviewView,
+  ValidateTrackView,
+} from "../../src/domain/api/views.ts";
+import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
 import {
@@ -128,12 +135,14 @@ export const handleValidateTrack = async (
   const slug = assertValidSlug(slugInput);
   const inspection = await inspectTrack(slug);
 
-  sendOk(response, {
+  const payload: ValidateTrackView = {
     slug,
     status: inspection.status,
     validation: inspection.validation,
     assets: toTrackSummaryView(inspection),
-  });
+  };
+
+  sendOk(response, payload);
 };
 
 export const handlePrepareTrack = async (
@@ -146,7 +155,7 @@ export const handlePrepareTrack = async (
   const { analysis, metadata } = await prepareTrack(slug);
   const inspection = await inspectTrack(slug);
 
-  sendOk(response, {
+  const payload: PrepareTrackView = {
     slug,
     status: inspection.status,
     metadata,
@@ -157,7 +166,9 @@ export const handlePrepareTrack = async (
       alreadyUpToDate: !analysis.regenerated,
     },
     elapsedMs: Date.now() - startedAt,
-  });
+  };
+
+  sendOk(response, payload);
 };
 
 export const handleTrackPreview = async (
@@ -185,7 +196,7 @@ export const handleTrackPreview = async (
     trackLocations(slug).beat,
   );
 
-  sendOk(response, {
+  const payload: TrackPreviewView<BeatVisualizerProps> = {
     slug,
     composition: COMPOSITION_CONFIG,
     durationInFrames: secondsToFrames(durationInSeconds),
@@ -198,7 +209,9 @@ export const handleTrackPreview = async (
     }),
     analysisAvailable,
     studioUrlHint: `/${COMPOSITION_CONFIG.id}`,
-  });
+  };
+
+  sendOk(response, payload);
 };
 
 export const handleStartRender = async (
@@ -220,5 +233,11 @@ export const handleStartRender = async (
 
   const job = renderManager.startRender(slug);
 
-  sendOk(response, { jobId: job.id, status: job.status, job });
+  const payload: StartRenderView = {
+    jobId: job.id,
+    status: job.status,
+    job,
+  };
+
+  sendOk(response, payload);
 };

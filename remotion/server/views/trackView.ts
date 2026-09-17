@@ -1,22 +1,18 @@
-import { publicLabel } from "../../src/domain/tracks/paths.ts";
 import type {
-  TrackInspection,
-  TrackStatus,
-  ValidationResult,
-} from "../../src/domain/tracks/types.ts";
+  TrackDetailView,
+  TrackSummaryView,
+} from "../../src/domain/api/views.ts";
+import { publicLabel } from "../../src/domain/tracks/paths.ts";
+import type { TrackInspection } from "../../src/domain/tracks/types.ts";
 import { trackLocations } from "../../services/tracks/trackLocations.ts";
 
-export type TrackSummaryView = {
-  readonly slug: string;
-  readonly title: string | null;
-  readonly status: TrackStatus;
-  readonly metadataValid: boolean;
-  readonly coverPresent: boolean;
-  readonly audioPresent: boolean;
-  readonly analysisPresent: boolean;
-  readonly analysisUpToDate: boolean;
-  readonly renderPresent: boolean;
-};
+/**
+ * Turns a TrackInspection into the API's wire shape.
+ *
+ * The view types themselves live in src/domain/api/views.ts, shared with the
+ * UI; this module is only the Node-side mapping, because it needs
+ * trackLocations() for absolute paths.
+ */
 
 export const toTrackSummaryView = (
   inspection: TrackInspection,
@@ -31,24 +27,6 @@ export const toTrackSummaryView = (
   analysisUpToDate: inspection.facts.analysisUpToDate,
   renderPresent: inspection.facts.outputExists,
 });
-
-export type TrackDetailView = TrackSummaryView & {
-  readonly metadata: TrackInspection["metadata"];
-  readonly validation: ValidationResult;
-  readonly assets: {
-    readonly cover: string;
-    readonly beat: string;
-    readonly analysis: string;
-    readonly metadata: string;
-  };
-  readonly render: {
-    readonly present: boolean;
-    readonly outputLabel: string;
-    /** Absolute path, so a UI can reveal it in Finder. */
-    readonly outputPath: string | null;
-  };
-  readonly previewEndpoint: string;
-};
 
 export const toTrackDetailView = (
   inspection: TrackInspection,
@@ -73,3 +51,5 @@ export const toTrackDetailView = (
     previewEndpoint: `/api/tracks/${inspection.slug}/preview`,
   };
 };
+
+export type { TrackDetailView, TrackSummaryView };
