@@ -20,6 +20,7 @@ import {
   deriveTrackStatus,
   validateTrackAssets,
 } from "../../src/domain/tracks/validation.ts";
+import { metadataRevision } from "./metadataRevision.ts";
 import { trackLocations } from "./trackLocations.ts";
 
 const mtimeMs = (filePath: string): number | null =>
@@ -50,6 +51,7 @@ const readMetadataIssues = async (
   readonly metadata: TrackInspection["metadata"];
   readonly metadataDraft: TrackInspection["metadataDraft"];
   readonly isDraft: boolean;
+  readonly metadataRevision: string;
 }> => {
   const locations = trackLocations(slug);
   const source = publicLabel(trackAssetPaths(slug).metadata);
@@ -71,6 +73,7 @@ const readMetadataIssues = async (
       metadata: null,
       metadataDraft: null,
       isDraft: false,
+      metadataRevision: metadataRevision(raw),
     };
   }
 
@@ -81,6 +84,7 @@ const readMetadataIssues = async (
     metadata,
     metadataDraft: coerceMetadataDraft(parsed),
     isDraft: isDraftMetadata(parsed),
+    metadataRevision: metadataRevision(raw),
   };
 };
 
@@ -98,6 +102,7 @@ export const inspectTrack = async (slug: string): Promise<TrackInspection> => {
     metadata,
     metadataDraft,
     isDraft,
+    metadataRevision: revision,
   } = facts.metadataExists
     ? await readMetadataIssues(slug)
     : {
@@ -105,6 +110,7 @@ export const inspectTrack = async (slug: string): Promise<TrackInspection> => {
         metadata: null,
         metadataDraft: null,
         isDraft: false,
+        metadataRevision: null,
       };
 
   const validation = buildValidationResult(
@@ -120,6 +126,7 @@ export const inspectTrack = async (slug: string): Promise<TrackInspection> => {
     metadata,
     metadataDraft,
     validation,
+    metadataRevision: revision,
     paths: trackAssetPaths(slug),
   };
 };

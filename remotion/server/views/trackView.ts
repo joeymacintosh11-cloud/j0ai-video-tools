@@ -42,6 +42,7 @@ export const toTrackDetailView = (
     ...toTrackSummaryView(inspection),
     metadata: inspection.metadata,
     metadataDraft: inspection.metadataDraft,
+    metadataRevision: inspection.metadataRevision,
     validation: inspection.validation,
     assets: {
       cover: publicLabel(inspection.paths.cover),

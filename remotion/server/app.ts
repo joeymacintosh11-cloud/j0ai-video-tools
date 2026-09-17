@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
 import type { HealthView } from "../src/domain/api/views.ts";
 import { sendErrorForException, sendNotFound } from "./http/errors.ts";
 import { sendOk } from "./http/json.ts";
@@ -166,10 +167,19 @@ export const handleRequest = async (
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> => {
-  const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+  let pathname = request.url ?? "/";
 
   try {
-    await route(request, response, segmentsOf(pathname));
+    let segments: string[];
+    try {
+      pathname = new URL(pathname, "http://localhost").pathname;
+      segments = segmentsOf(pathname);
+    } catch {
+      throw new TrackError(trackIssue(
+        "INVALID_REQUEST", "Request URL is malformed.",
+      ));
+    }
+    await route(request, response, segments);
   } catch (error) {
     if (response.headersSent) {
       console.error(`[api] error after response started for ${pathname}:`, error);

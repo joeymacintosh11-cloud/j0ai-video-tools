@@ -61,6 +61,8 @@ export type TrackInspection = {
    * Null when the file is absent or is not a JSON object at all.
    */
   readonly metadataDraft: TrackMetadataDraft | null;
+  /** Opaque revision for conditional metadata saves; null when absent. */
+  readonly metadataRevision: string | null;
   readonly validation: ValidationResult;
   /** public/-relative paths for this track's files. */
   readonly paths: TrackAssetPaths;

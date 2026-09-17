@@ -1,5 +1,7 @@
 import { existsSync } from "node:fs";
-import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { withFileMutation, writeAtomicFile } from "./atomicFile.ts";
+import { metadataRevision } from "./metadataRevision.ts";
 import type { TrackMetadataPatch } from "../../src/domain/api/views.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import {
@@ -28,7 +30,7 @@ export type UpdateTrackMetadataResult = {
 
 const readExistingDraft = async (
   slug: string,
-): Promise<TrackMetadataDraft> => {
+): Promise<{ current: TrackMetadataDraft; revision: string }> => {
   const locations = trackLocations(slug);
   const source = publicLabel(trackAssetPaths(slug).metadata);
 
@@ -70,7 +72,7 @@ const readExistingDraft = async (
     );
   }
 
-  return current;
+  return { current, revision: metadataRevision(raw) };
 };
 
 /**
@@ -86,46 +88,53 @@ const readExistingDraft = async (
 export const updateTrackMetadata = async (
   slugInput: string,
   patch: TrackMetadataPatch,
+  expectedRevision?: string,
 ): Promise<UpdateTrackMetadataResult> => {
   const slug = assertValidSlug(slugInput);
   const locations = trackLocations(slug);
   const source = publicLabel(trackAssetPaths(slug).metadata);
 
-  const current = await readExistingDraft(slug);
-
-  const merged: TrackMetadataDraft = {
-    title: patch.title ?? current.title,
-    artist: patch.artist ?? current.artist,
-    key: patch.key ?? current.key,
-    bpm: patch.bpm === undefined ? current.bpm : patch.bpm,
-    subtitle: patch.subtitle ?? current.subtitle,
-  };
-
-  const { issues, metadata } = validateTrackMetadata(merged, source);
-
-  if (metadata === null) {
-    throw new TrackError(
-      issues[0] ??
-        trackIssue("METADATA_INVALID", `${source} is not valid.`, source),
-    );
-  }
-
-  const tempPath = `${locations.metadata}.tmp-${process.pid}`;
-
-  try {
-    await writeFile(tempPath, serializeTrackMetadata(metadata), "utf-8");
-    await rename(tempPath, locations.metadata);
-  } catch (error) {
-    await unlink(tempPath).catch(() => undefined);
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new TrackError(
-      trackIssue(
-        "METADATA_WRITE_FAILED",
-        `Could not write ${source}: ${reason}`,
+  return withFileMutation(locations.metadata, async () => {
+    try {
+      const { current, revision } = await readExistingDraft(slug);
+      const conflict = () => new TrackError(trackIssue(
+        "METADATA_CONFLICT",
+        "Metadata changed since it was read. Refresh the track before saving again.",
         source,
-      ),
-    );
-  }
+      ));
+      if (expectedRevision !== undefined && expectedRevision !== revision) {
+        throw conflict();
+      }
 
-  return { slug, metadata };
+      const merged: TrackMetadataDraft = {
+        title: patch.title ?? current.title,
+        artist: patch.artist ?? current.artist,
+        key: patch.key ?? current.key,
+        bpm: patch.bpm === undefined ? current.bpm : patch.bpm,
+        subtitle: patch.subtitle ?? current.subtitle,
+      };
+      const { issues, metadata } = validateTrackMetadata(merged, source);
+      if (metadata === null) {
+        throw new TrackError(issues[0] ??
+          trackIssue("METADATA_INVALID", `${source} is not valid.`, source));
+      }
+
+      await writeAtomicFile(
+        locations.metadata,
+        (handle) => handle.writeFile(serializeTrackMetadata(metadata), "utf-8"),
+        async () => {
+          // Catch edits made outside this process while we staged the update.
+          const latest = await readFile(locations.metadata, "utf-8");
+          if (metadataRevision(latest) !== revision) throw conflict();
+        },
+      );
+      return { slug, metadata };
+    } catch (error) {
+      if (error instanceof TrackError) throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new TrackError(trackIssue(
+        "METADATA_WRITE_FAILED", `Could not write ${source}: ${reason}`, source,
+      ));
+    }
+  });
 };

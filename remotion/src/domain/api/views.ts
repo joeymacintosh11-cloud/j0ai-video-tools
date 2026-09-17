@@ -85,6 +85,8 @@ export type TrackDetailView = TrackSummaryView & {
    * be edited. Null when the file is absent or is not a JSON object.
    */
   readonly metadataDraft: TrackMetadataDraft | null;
+  /** Opaque revision for conditional metadata saves; null when absent. */
+  readonly metadataRevision: string | null;
   readonly validation: ValidationResult;
   readonly assets: {
     readonly cover: string;

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { createWriteStream } from "node:fs";
-import { rename, unlink } from "node:fs/promises";
-import { once } from "node:events";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { writeAtomicFile } from "./atomicFile.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import {
   publicLabel,
@@ -136,97 +136,64 @@ export const uploadTrackAsset = async ({
   }
 
   const replaced = existsSync(destination);
-  const tempPath = `${destination}.tmp-${process.pid}`;
-  const handle = createWriteStream(tempPath);
-
   let total = 0;
   let head = Buffer.alloc(0);
   let headChecked = false;
 
-  const abort = async () => {
-    handle.destroy();
-    await unlink(tempPath).catch(() => undefined);
-  };
-
-  try {
-    for await (const chunk of body) {
-      const buffer = Buffer.from(chunk);
-      total += buffer.length;
-
+  const validator = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      total += chunk.length;
       if (total > rule.maxBytes) {
-        throw new TrackError(
-          trackIssue(
-            "UPLOAD_TOO_LARGE",
-            `${rule.label} may be at most ${describeBytes(rule.maxBytes)}.`,
-            target,
-          ),
-        );
+        callback(new TrackError(trackIssue(
+          "UPLOAD_TOO_LARGE",
+          `${rule.label} may be at most ${describeBytes(rule.maxBytes)}.`,
+          target,
+        )));
+        return;
       }
-
-      // Judge the format as soon as enough bytes have arrived, so a wrong file
-      // is rejected immediately instead of after a long transfer.
       if (!headChecked) {
-        head = Buffer.concat([head, buffer]);
-
+        head = Buffer.concat([head, chunk.subarray(0, rule.headBytes - head.length)]);
         if (head.length >= rule.headBytes) {
           headChecked = true;
-
           if (!rule.looksValid(head)) {
-            throw new TrackError(
-              trackIssue(
-                "UPLOAD_INVALID",
-                `That file does not look like ${rule.expected}, so it was not saved as ${rule.label}.`,
-                target,
-              ),
-            );
+            callback(new TrackError(trackIssue(
+              "UPLOAD_INVALID",
+              `That file does not look like ${rule.expected}, so it was not saved as ${rule.label}.`,
+              target,
+            )));
+            return;
           }
         }
       }
-
-      if (!handle.write(buffer)) {
-        await once(handle, "drain");
+      callback(null, chunk);
+    },
+    flush(callback) {
+      if (!headChecked) {
+        callback(new TrackError(trackIssue(
+          "UPLOAD_INVALID",
+          total === 0
+            ? `No data was uploaded for ${rule.label}.`
+            : `That file is too short to be ${rule.expected}.`,
+          target,
+        )));
+        return;
       }
-    }
-
-    if (total === 0) {
-      throw new TrackError(
-        trackIssue(
-          "UPLOAD_INVALID",
-          `No data was uploaded for ${rule.label}.`,
-          target,
-        ),
-      );
-    }
-
-    if (!headChecked) {
-      throw new TrackError(
-        trackIssue(
-          "UPLOAD_INVALID",
-          `That file is too short to be ${rule.expected}.`,
-          target,
-        ),
-      );
-    }
-
-    handle.end();
-    await once(handle, "finish");
-  } catch (error) {
-    await abort();
-
-    if (error instanceof TrackError) {
-      throw error;
-    }
-
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new TrackError(
-      trackIssue("UPLOAD_FAILED", `Could not save ${target}: ${reason}`, target),
-    );
-  }
+      callback();
+    },
+  });
 
   try {
-    await rename(tempPath, destination);
+    // Unique staging files let concurrent uploads finish independently.
+    // Atomic publication preserves the existing last-completed-upload behavior.
+    await writeAtomicFile(destination, async (handle) => {
+      await pipeline(
+        body instanceof Readable ? body : Readable.from(body),
+        validator,
+        handle.createWriteStream(),
+      );
+    });
   } catch (error) {
-    await unlink(tempPath).catch(() => undefined);
+    if (error instanceof TrackError) throw error;
     const reason = error instanceof Error ? error.message : String(error);
     throw new TrackError(
       trackIssue("UPLOAD_FAILED", `Could not save ${target}: ${reason}`, target),

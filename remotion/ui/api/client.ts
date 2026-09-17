@@ -122,11 +122,18 @@ export const createTrack = (title: string): Promise<TrackDetailView> => {
 export const updateTrackMetadata = (
   slug: string,
   patch: TrackMetadataPatch,
+  revision?: string | null,
 ): Promise<TrackDetailView> =>
-  jsonRequest<TrackDetailView>(
+  request<TrackDetailView>(
     `/api/tracks/${encodeURIComponent(slug)}/metadata`,
-    "PATCH",
-    patch,
+    {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        ...(revision ? { "if-match": `"${revision}"` } : {}),
+      },
+      body: JSON.stringify(patch),
+    },
   );
 
 export const validateTrack = (slug: string): Promise<ValidateTrackView> =>

@@ -15,7 +15,11 @@ const DEFAULT_PORT = 4600;
 const port = Number.parseInt(process.env.TOSHI_API_PORT ?? "", 10) || DEFAULT_PORT;
 
 const server = createServer((request, response) => {
-  void handleRequest(request, response);
+  void handleRequest(request, response).catch((error: unknown) => {
+    // Last-resort boundary, including a failure while writing an error response.
+    console.error("[api] request handler failed:", error);
+    response.destroy();
+  });
 });
 
 server.listen(port, HOST, () => {

@@ -110,7 +110,7 @@ export const MetadataForm: React.FC<{
     setError(null);
 
     try {
-      await updateTrackMetadata(track.slug, toPatch(fields));
+      await updateTrackMetadata(track.slug, toPatch(fields), track.metadataRevision);
       setSavedAt(Date.now());
       // The parent re-reads the track, which re-seeds this form from disk.
       onSaved();

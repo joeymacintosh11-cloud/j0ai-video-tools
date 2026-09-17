@@ -1,3 +1,4 @@
+import { PassThrough } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   PrepareTrackView,
@@ -127,7 +128,12 @@ export const handleUpdateMetadata = async (
   const slug = assertValidSlug(slugInput);
   const patch = readMetadataPatch(await readJsonBody(request));
 
-  await updateTrackMetadata(slug, patch);
+  const ifMatch = request.headers["if-match"];
+  if (ifMatch !== undefined &&
+      (typeof ifMatch !== "string" || !/^"[a-f0-9]{64}"$/.test(ifMatch))) {
+    throw new TrackError(trackIssue("INVALID_REQUEST", "If-Match must contain a quoted metadata revision."));
+  }
+  await updateTrackMetadata(slug, patch, ifMatch?.slice(1, -1));
   const inspection = await inspectTrack(slug);
 
   sendOk(response, toTrackDetailView(inspection));
@@ -147,12 +153,31 @@ export const handleUploadAsset = async (
 ): Promise<void> => {
   const slug = assertValidSlug(slugInput);
 
-  const result = await uploadTrackAsset({
-    slug,
-    kind,
-    body: request,
-    contentType: request.headers["content-type"],
-  });
+  // Do not give pipeline ownership of the HTTP socket: destroying it on a
+  // disk/validation error would prevent us from returning structured JSON.
+  const body = new PassThrough();
+  // A disconnect can arrive while the destination is still being opened.
+  // pipeline observes body.errored when it attaches; until then keep it handled.
+  body.on("error", () => undefined);
+  const onRequestError = (error: Error) => body.destroy(error);
+  request.on("error", onRequestError);
+  request.once("close", () => request.off("error", onRequestError));
+  request.pipe(body);
+
+  let result;
+  try {
+    result = await uploadTrackAsset({
+      slug,
+      kind,
+      body,
+      contentType: request.headers["content-type"],
+    });
+  } finally {
+    request.unpipe(body);
+    body.destroy();
+    // Drain any remaining request bytes without retaining them.
+    request.resume();
+  }
 
   const inspection = await inspectTrack(slug);
 
