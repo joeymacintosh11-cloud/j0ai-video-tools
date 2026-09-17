@@ -8,10 +8,12 @@ import type {
   RenderJobView,
   RenderLogsView,
   StartRenderView,
+  TrackAssetKind,
   TrackDetailView,
   TrackMetadataPatch,
   TrackPreviewView,
   TrackSummaryView,
+  UploadAssetView,
   ValidateTrackView,
 } from "../../src/domain/api/views.ts";
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
@@ -136,6 +138,29 @@ export const prepareTrack = (slug: string): Promise<PrepareTrackView> =>
   jsonRequest<PrepareTrackView>(
     `/api/tracks/${encodeURIComponent(slug)}/prepare`,
     "POST",
+  );
+
+/**
+ * Uploads a cover or beat as a raw PUT body.
+ *
+ * No multipart form and no filename: the endpoint decides which file is being
+ * written, so there is nothing for the client to name. The File is passed
+ * straight to fetch, which streams it rather than reading it into memory.
+ */
+export const uploadTrackAsset = (
+  slug: string,
+  kind: TrackAssetKind,
+  file: File,
+): Promise<UploadAssetView> =>
+  request<UploadAssetView>(
+    `/api/tracks/${encodeURIComponent(slug)}/${kind}`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": kind === "cover" ? "image/png" : "audio/wav",
+      },
+      body: file,
+    },
   );
 
 export const getTrackPreview = (

@@ -2,7 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   PrepareTrackView,
   StartRenderView,
+  TrackAssetKind,
   TrackPreviewView,
+  UploadAssetView,
   ValidateTrackView,
 } from "../../src/domain/api/views.ts";
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
@@ -19,6 +21,7 @@ import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
 import { listTracks } from "../../services/tracks/listTracks.ts";
 import { prepareTrack } from "../../services/tracks/prepareTrack.ts";
 import { trackLocations } from "../../services/tracks/trackLocations.ts";
+import { uploadTrackAsset } from "../../services/tracks/uploadTrackAsset.ts";
 import {
   updateTrackMetadata,
   type TrackMetadataPatch,
@@ -126,6 +129,37 @@ export const handleUpdateMetadata = async (
   const inspection = await inspectTrack(slug);
 
   sendOk(response, toTrackDetailView(inspection));
+};
+
+/**
+ * Streams an uploaded cover or beat straight to disk.
+ *
+ * `kind` comes from the matched route, not from the request, so the only two
+ * possible destinations are this track's cover.png and beat.wav.
+ */
+export const handleUploadAsset = async (
+  slugInput: string,
+  kind: TrackAssetKind,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> => {
+  const slug = assertValidSlug(slugInput);
+
+  const result = await uploadTrackAsset({
+    slug,
+    kind,
+    body: request,
+    contentType: request.headers["content-type"],
+  });
+
+  const inspection = await inspectTrack(slug);
+
+  const payload: UploadAssetView = {
+    ...result,
+    track: toTrackDetailView(inspection),
+  };
+
+  sendOk(response, payload);
 };
 
 export const handleValidateTrack = async (

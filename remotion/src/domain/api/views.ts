@@ -120,6 +120,27 @@ export type CreateTrackBody = {
   readonly title: string;
 };
 
+/** The two files a client may upload into a track. */
+export type TrackAssetKind = "cover" | "beat";
+
+/**
+ * PUT /api/tracks/:slug/cover and /beat
+ *
+ * The request body is the raw file; there is no multipart form and no filename
+ * is sent, because the destination is fixed by the endpoint rather than chosen
+ * by the client.
+ */
+export type UploadAssetView = {
+  readonly slug: string;
+  readonly kind: TrackAssetKind;
+  /** public/-relative label for the file that was written. */
+  readonly path: string;
+  readonly bytes: number;
+  readonly replaced: boolean;
+  /** The track as it stands after the upload. */
+  readonly track: TrackDetailView;
+};
+
 /** POST /api/tracks/:slug/validate */
 export type ValidateTrackView = {
   readonly slug: string;

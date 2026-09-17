@@ -1,6 +1,8 @@
+import { useState } from "react";
 import type { TrackDetailView } from "../../src/domain/api/views.ts";
 import { publicAssetUrl } from "../api/assetUrl.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
+import { AssetDropZone } from "./AssetDropZone.tsx";
 import { MetadataForm } from "./MetadataForm.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
 import { ValidationNotes } from "./ValidationNotes.tsx";
@@ -23,13 +25,22 @@ export const TrackDetail: React.FC<{
 }> = ({ track, onChanged }) => {
   const { metadata } = track;
 
+  // Bumped only when an upload succeeds, so the cover's URL changes exactly
+  // when the file behind it did.
+  const [assetVersion, setAssetVersion] = useState(0);
+
+  const onUploaded = () => {
+    setAssetVersion((previous) => previous + 1);
+    onChanged();
+  };
+
   return (
     <article className="detail">
       <header className="detail__head">
         {track.coverPresent ? (
           <img
             className="detail__cover"
-            src={publicAssetUrl(track.assets.cover)}
+            src={publicAssetUrl(track.assets.cover, assetVersion)}
             alt={`${track.title ?? track.slug} cover art`}
           />
         ) : (
@@ -60,6 +71,20 @@ export const TrackDetail: React.FC<{
 
       <section className="section">
         <h3 className="section__title">Files</h3>
+        <div className="dropzones">
+          <AssetDropZone
+            slug={track.slug}
+            kind="cover"
+            present={track.coverPresent}
+            onUploaded={onUploaded}
+          />
+          <AssetDropZone
+            slug={track.slug}
+            kind="beat"
+            present={track.audioPresent}
+            onUploaded={onUploaded}
+          />
+        </div>
         <AssetChecklist track={track} />
       </section>
 

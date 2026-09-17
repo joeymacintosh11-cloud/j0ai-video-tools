@@ -9,10 +9,13 @@ const PUBLIC_PREFIX = "public/";
  * over HTTP. This is the one place that conversion happens — the UI never
  * assembles a track path itself, it only re-bases one the API gave it.
  */
-export const publicAssetUrl = (label: string): string => {
+export const publicAssetUrl = (label: string, version?: number): string => {
   const relative = label.startsWith(PUBLIC_PREFIX)
     ? label.slice(PUBLIC_PREFIX.length)
     : label;
 
-  return `/${relative}`;
+  // A re-uploaded file keeps its path, so the browser would serve the cached
+  // copy. `version` is bumped only after an upload — not on every refresh, so
+  // an unchanged cover is still served from cache.
+  return version ? `/${relative}?v=${version}` : `/${relative}`;
 };

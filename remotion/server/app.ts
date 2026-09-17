@@ -17,6 +17,7 @@ import {
   handleStartRender,
   handleTrackPreview,
   handleUpdateMetadata,
+  handleUploadAsset,
   handleValidateTrack,
 } from "./routes/tracks.ts";
 
@@ -90,6 +91,16 @@ const route = async (
     }
     if (third === "prepare" && method === "POST") {
       await handlePrepareTrack(second, response);
+      return;
+    }
+    // The asset kind is fixed by the route, so an upload can only ever write
+    // this track's cover.png or beat.wav.
+    if (third === "cover" && method === "PUT") {
+      await handleUploadAsset(second, "cover", request, response);
+      return;
+    }
+    if (third === "beat" && method === "PUT") {
+      await handleUploadAsset(second, "beat", request, response);
       return;
     }
     if (third === "preview" && method === "GET") {
