@@ -1,10 +1,13 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  OUTPUT_FILE_NAME,
+  LEGACY_OUTPUT_FILE_NAME,
+  outputLabel,
+  outputRelativePath,
   TRACKS_DIR_NAME,
   trackAssetPaths,
 } from "../../src/domain/tracks/paths.ts";
+import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 
 /**
  * Resolves absolute filesystem paths from the public/-relative conventions in
@@ -25,7 +28,13 @@ export type TrackLocations = {
   readonly beat: string;
   readonly analysis: string;
   readonly metadata: string;
-  readonly output: string;
+  /** Directory holding this track's rendered formats. */
+  readonly outputDir: string;
+  /**
+   * The pre-preset single-file output path. Read only, so an older render is
+   * still discovered; nothing writes here.
+   */
+  readonly legacyOutput: string;
 };
 
 export const trackLocations = (slug: string): TrackLocations => {
@@ -37,6 +46,23 @@ export const trackLocations = (slug: string): TrackLocations => {
     beat: path.join(PUBLIC_DIR, relative.beat),
     analysis: path.join(PUBLIC_DIR, relative.analysis),
     metadata: path.join(PUBLIC_DIR, relative.metadata),
-    output: path.join(OUT_DIR, OUTPUT_FILE_NAME(slug)),
+    outputDir: path.join(OUT_DIR, slug),
+    legacyOutput: path.join(OUT_DIR, LEGACY_OUTPUT_FILE_NAME(slug)),
   };
 };
+
+export type TrackOutputLocation = {
+  readonly path: string;
+  readonly dir: string;
+  readonly label: string;
+};
+
+/** Absolute location of one track/format render. */
+export const trackOutputLocation = (
+  slug: string,
+  presetId: RenderPresetId,
+): TrackOutputLocation => ({
+  path: path.join(OUT_DIR, outputRelativePath(slug, presetId)),
+  dir: path.join(OUT_DIR, slug),
+  label: outputLabel(slug, presetId),
+});

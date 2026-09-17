@@ -28,7 +28,30 @@ export const BRAND_ASSET_PATHS = {
   iconMark: "brand/toshi/toshi-icon-mark.png",
 } as const;
 
-export const OUTPUT_FILE_NAME = (slug: string): string => `${slug}.mp4`;
+/**
+ * Where a render lands, relative to out/.
+ *
+ * One folder per track, one file per format, so a track's exports sit together
+ * and adding a format never collides with an existing file.
+ */
+export const outputRelativePath = (slug: string, presetId: string): string =>
+  `${slug}/${presetId}.mp4`;
+
+/** "out/<slug>/<preset>.mp4", for messages. */
+export const outputLabel = (slug: string, presetId: string): string =>
+  `out/${outputRelativePath(slug, presetId)}`;
+
+/**
+ * The single-file path renders used before presets existed.
+ *
+ * Still read, so a render produced by an earlier version is still found and
+ * reported rather than silently disappearing from the UI. Nothing writes here
+ * any more, and no existing file at this path is ever modified or removed.
+ */
+export const LEGACY_OUTPUT_FILE_NAME = (slug: string): string => `${slug}.mp4`;
+
+export const legacyOutputLabel = (slug: string): string =>
+  `out/${LEGACY_OUTPUT_FILE_NAME(slug)}`;
 
 /** "tracks/x/cover.png" -> "public/tracks/x/cover.png", for messages. */
 export const publicLabel = (publicRelativePath: string): string =>

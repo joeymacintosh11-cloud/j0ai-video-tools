@@ -5,6 +5,7 @@ import type {
   TrackStatus,
   ValidationResult,
 } from "../tracks/types.ts";
+import type { RenderPresetId } from "../video/renderPresets.ts";
 
 /**
  * The local API's wire format, declared once and shared by both ends.
@@ -95,7 +96,13 @@ export type TrackDetailView = TrackSummaryView & {
     readonly metadata: string;
   };
   readonly render: {
+    /** True when any format has been rendered for this track. */
     readonly present: boolean;
+    /** One entry per export format, in preset order. */
+    readonly outputs: readonly RenderOutputView[];
+    /** A render made before presets existed still sits at out/<slug>.mp4. */
+    readonly legacyPresent: boolean;
+    /** The default format's output; kept for callers predating presets. */
     readonly outputLabel: string;
     /** Absolute path, so a UI can reveal it in Finder. */
     readonly outputPath: string | null;
@@ -120,6 +127,16 @@ export type TrackMetadataPatch = {
 /** POST /api/tracks request body. */
 export type CreateTrackBody = {
   readonly title: string;
+};
+
+/** One export format's render, present or not. */
+export type RenderOutputView = {
+  readonly presetId: RenderPresetId;
+  /** Short preset label, e.g. "Reels 9:16". */
+  readonly label: string;
+  readonly outputLabel: string;
+  readonly outputPath: string | null;
+  readonly present: boolean;
 };
 
 /** The two files a client may upload into a track. */

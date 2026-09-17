@@ -20,8 +20,9 @@ import {
   deriveTrackStatus,
   validateTrackAssets,
 } from "../../src/domain/tracks/validation.ts";
+import { RENDER_PRESET_IDS } from "../../src/domain/video/renderPresets.ts";
 import { metadataRevision } from "./metadataRevision.ts";
-import { trackLocations } from "./trackLocations.ts";
+import { trackLocations, trackOutputLocation } from "./trackLocations.ts";
 
 const mtimeMs = (filePath: string): number | null =>
   existsSync(filePath) ? statSync(filePath).mtimeMs : null;
@@ -32,6 +33,11 @@ const observeFacts = (slug: string): TrackAssetFacts => {
   const beatMtime = mtimeMs(locations.beat);
   const analysisMtime = mtimeMs(locations.analysis);
 
+  const renderedPresets = RENDER_PRESET_IDS.filter((presetId) =>
+    existsSync(trackOutputLocation(slug, presetId).path),
+  );
+  const legacyOutputExists = existsSync(locations.legacyOutput);
+
   return {
     trackDirExists: existsSync(locations.trackDir),
     coverExists: existsSync(locations.cover),
@@ -40,7 +46,9 @@ const observeFacts = (slug: string): TrackAssetFacts => {
     analysisExists: analysisMtime !== null,
     analysisUpToDate:
       analysisMtime !== null && beatMtime !== null && analysisMtime >= beatMtime,
-    outputExists: existsSync(locations.output),
+    outputExists: renderedPresets.length > 0 || legacyOutputExists,
+    renderedPresets,
+    legacyOutputExists,
   };
 };
 

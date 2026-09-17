@@ -7,12 +7,14 @@ import {
 } from "@remotion/renderer";
 import { existsSync, mkdirSync } from "node:fs";
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
-import { OUTPUT_FILE_NAME } from "../../src/domain/tracks/paths.ts";
 import { COMPOSITION_ID } from "../../src/domain/video/compositionConfig.ts";
 import {
-  OUT_DIR,
+  DEFAULT_RENDER_PRESET_ID,
+  type RenderPresetId,
+} from "../../src/domain/video/renderPresets.ts";
+import {
   REMOTION_ENTRY_POINT,
-  trackLocations,
+  trackOutputLocation,
 } from "../tracks/trackLocations.ts";
 
 export { COMPOSITION_ID };
@@ -29,6 +31,8 @@ export type RenderProgressUpdate = {
 export type RenderResolvedInfo = {
   readonly durationInFrames: number;
   readonly fps: number;
+  readonly width: number;
+  readonly height: number;
   readonly outputPath: string;
   readonly outputLabel: string;
 };
@@ -36,6 +40,8 @@ export type RenderResolvedInfo = {
 export type RenderTrackVideoOptions = {
   readonly slug: string;
   readonly props: BeatVisualizerProps;
+  /** Format to render; defaults to 16:9, matching the pre-preset behaviour. */
+  readonly presetId?: RenderPresetId;
   readonly cancelSignal?: CancelSignal;
   readonly onPhase?: (phase: RenderPhase) => void;
   readonly onResolved?: (info: RenderResolvedInfo) => void;
@@ -45,7 +51,7 @@ export type RenderTrackVideoOptions = {
 export type RenderTrackVideoResult = RenderResolvedInfo;
 
 /**
- * Renders a prepared track to out/<slug>.mp4.
+ * Renders a prepared track to out/<slug>/<preset>.mp4.
  *
  * Shared by the render-track CLI and the API's render worker so there is
  * exactly one place that knows how this project encodes video. The caller
@@ -58,6 +64,7 @@ export type RenderTrackVideoResult = RenderResolvedInfo;
 export const renderTrackVideo = async ({
   slug,
   props,
+  presetId = DEFAULT_RENDER_PRESET_ID,
   cancelSignal,
   onPhase,
   onResolved,
@@ -71,25 +78,32 @@ export const renderTrackVideo = async ({
   const puppeteerInstance = await openBrowser("chrome");
 
   try {
+    // The preset travels in the props, so calculateBeatVisualizerMetadata
+    // reports this format's width, height and frame count back to us.
+    const inputProps: BeatVisualizerProps = { ...props, presetId };
+
     onPhase?.("resolving");
     const composition = await selectComposition({
       serveUrl: bundleLocation,
       id: COMPOSITION_ID,
-      inputProps: props,
+      inputProps,
       puppeteerInstance,
     });
 
-    const outputPath = trackLocations(slug).output;
+    const output = trackOutputLocation(slug, presetId);
     const resolved: RenderResolvedInfo = {
       durationInFrames: composition.durationInFrames,
       fps: composition.fps,
-      outputPath,
-      outputLabel: `out/${OUTPUT_FILE_NAME(slug)}`,
+      width: composition.width,
+      height: composition.height,
+      outputPath: output.path,
+      outputLabel: output.label,
     };
     onResolved?.(resolved);
 
-    if (!existsSync(OUT_DIR)) {
-      mkdirSync(OUT_DIR, { recursive: true });
+    // One directory per track, created on demand.
+    if (!existsSync(output.dir)) {
+      mkdirSync(output.dir, { recursive: true });
     }
 
     onPhase?.("rendering");
@@ -97,8 +111,8 @@ export const renderTrackVideo = async ({
       composition,
       serveUrl: bundleLocation,
       codec: "h264",
-      outputLocation: outputPath,
-      inputProps: props,
+      outputLocation: output.path,
+      inputProps,
       imageFormat: "jpeg",
       overwrite: true,
       puppeteerInstance,

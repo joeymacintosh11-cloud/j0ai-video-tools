@@ -1,3 +1,4 @@
+import { LAYOUTS, type InfoLayout } from "./layouts";
 import { COLORS, FONTS } from "./theme";
 
 type Props = {
@@ -6,12 +7,20 @@ type Props = {
   readonly musicalKey: string;
   readonly bpm: number;
   readonly subtitle?: string;
+  /**
+   * Sizing for the current format. Defaults to the landscape values, which are
+   * the numbers this component has always used, so 16:9 is unaffected.
+   */
+  readonly layout?: InfoLayout;
 };
 
-const Stat: React.FC<{ label: string; value: string }> = ({
-  label,
-  value,
-}) => (
+const Stat: React.FC<{
+  label: string;
+  value: string;
+  labelFontSize: number;
+  valueFontSize: number;
+  align: "left" | "center";
+}> = ({ label, value, labelFontSize, valueFontSize, align }) => (
   <div
     style={{
       display: "flex",
@@ -19,12 +28,14 @@ const Stat: React.FC<{ label: string; value: string }> = ({
       gap: 10,
       paddingLeft: 20,
       borderLeft: `3px solid ${COLORS.vintageGold}`,
+      alignItems: align === "center" ? "flex-start" : undefined,
+      textAlign: "left",
     }}
   >
     <span
       style={{
         fontFamily: FONTS.label,
-        fontSize: 18,
+        fontSize: labelFontSize,
         fontWeight: 600,
         letterSpacing: 5,
         color: `${COLORS.vintageGold}cc`,
@@ -36,7 +47,7 @@ const Stat: React.FC<{ label: string; value: string }> = ({
     <span
       style={{
         fontFamily: FONTS.label,
-        fontSize: 34,
+        fontSize: valueFontSize,
         fontWeight: 600,
         letterSpacing: 1,
         color: COLORS.warmCream,
@@ -54,13 +65,23 @@ export const TrackInfo: React.FC<Props> = ({
   musicalKey,
   bpm,
   subtitle,
+  layout = LAYOUTS.landscape.info,
 }) => {
+  const centred = layout.align === "center";
+
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: centred ? "center" : undefined,
+        textAlign: centred ? "center" : undefined,
+      }}
+    >
       <span
         style={{
           fontFamily: FONTS.label,
-          fontSize: 26,
+          fontSize: layout.artistFontSize,
           fontWeight: 600,
           letterSpacing: 8,
           color: COLORS.deepRed,
@@ -73,10 +94,10 @@ export const TrackInfo: React.FC<Props> = ({
       <h1
         style={{
           margin: 0,
-          marginTop: 20,
-          maxWidth: 940,
+          marginTop: layout.titleMarginTop,
+          maxWidth: layout.titleMaxWidth,
           fontFamily: FONTS.headline,
-          fontSize: 158,
+          fontSize: layout.titleFontSize,
           lineHeight: 0.9,
           color: COLORS.warmCream,
           textTransform: "uppercase",
@@ -91,9 +112,9 @@ export const TrackInfo: React.FC<Props> = ({
         <span
           style={{
             marginTop: 18,
-            maxWidth: 760,
+            maxWidth: layout.subtitleMaxWidth,
             fontFamily: FONTS.label,
-            fontSize: 22,
+            fontSize: layout.subtitleFontSize,
             fontWeight: 600,
             letterSpacing: 3,
             color: `${COLORS.vintageGold}cc`,
@@ -107,12 +128,24 @@ export const TrackInfo: React.FC<Props> = ({
       <div
         style={{
           display: "flex",
-          gap: 72,
+          gap: layout.statGap,
           marginTop: subtitle ? 40 : 56,
         }}
       >
-        <Stat label="Key" value={musicalKey} />
-        <Stat label="BPM" value={String(bpm)} />
+        <Stat
+          label="Key"
+          value={musicalKey}
+          labelFontSize={layout.statLabelFontSize}
+          valueFontSize={layout.statValueFontSize}
+          align={layout.align}
+        />
+        <Stat
+          label="BPM"
+          value={String(bpm)}
+          labelFontSize={layout.statLabelFontSize}
+          valueFontSize={layout.statValueFontSize}
+          align={layout.align}
+        />
       </div>
     </div>
   );

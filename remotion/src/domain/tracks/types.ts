@@ -1,5 +1,6 @@
 import type { TrackIssue } from "./errors.ts";
 import type { TrackAssetPaths } from "./paths.ts";
+import type { RenderPresetId } from "../video/renderPresets.ts";
 
 /** A track whose metadata is complete and renderable. */
 export type TrackMetadata = {
@@ -40,7 +41,12 @@ export type TrackAssetFacts = {
   readonly analysisExists: boolean;
   /** analysis.wav exists and is at least as new as beat.wav. */
   readonly analysisUpToDate: boolean;
+  /** True when any render exists for this track, in any format. */
   readonly outputExists: boolean;
+  /** Which formats have been rendered, by preset id. */
+  readonly renderedPresets: readonly RenderPresetId[];
+  /** A render from before presets existed, at out/<slug>.mp4. */
+  readonly legacyOutputExists: boolean;
 };
 
 export type ValidationResult = {
