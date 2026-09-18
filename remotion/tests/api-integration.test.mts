@@ -380,3 +380,120 @@ test("stale execution queues replacements once and exposes rendering over disk f
   assert.equal(view.present, true);
   renderManager.cancelBatch(started.data.batchId);
 });
+
+test("delivery settings refuse an unusable destination and change nothing", async (t) => {
+  const { base } = await api(t);
+
+  const put = (body: unknown) =>
+    fetch(`${base}/api/delivery/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  const before = await (await fetch(`${base}/api/delivery/settings`)).json();
+  assert.equal(before.ok, true);
+  assert.equal(typeof before.data.settingsPath, "string");
+
+  for (const body of [
+    { root: "relative/path" },
+    { root: "/definitely/not/here" },
+    { root: process.cwd() },
+    { autoDeliver: "yes" },
+  ]) {
+    const response = await put(body);
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal((await response.json()).error.code, "INVALID_REQUEST");
+  }
+
+  const after = await (await fetch(`${base}/api/delivery/settings`)).json();
+  assert.deepEqual(after.data, before.data, "a refused change writes nothing");
+});
+
+test("delivery requests name tracks, never paths", async (t) => {
+  const f = await fixture(t);
+  const { base } = await api(t);
+
+  const post = async (path: string, body: unknown) => {
+    const response = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, body: await response.json() };
+  };
+
+  // Scope has to be stated, exactly as for export-missing, so a request that
+  // forgot its tracks cannot become a catalogue-wide operation.
+  const neither = await post("/api/delivery/deliver", { dryRun: true });
+  assert.equal(neither.status, 400);
+  assert.equal(neither.body.error.code, "INVALID_REQUEST");
+
+  const both = await post("/api/delivery/deliver", {
+    tracks: [f.slug],
+    catalogue: true,
+    dryRun: true,
+  });
+  assert.match(both.body.error.message, /not both/);
+
+  // A named track is planned, and reports why it cannot be delivered rather
+  // than failing: the fixture has no cover or audio.
+  const named = await post("/api/delivery/deliver", {
+    tracks: [f.slug],
+    dryRun: true,
+  });
+  assert.equal(named.status, 200);
+  assert.equal(named.body.data.dryRun, true);
+  assert.deepEqual(named.body.data.delivered, []);
+  assert.equal(named.body.data.invalid[0].slug, f.slug);
+
+  // Reveal accepts a slug and a format only; a traversal attempt is refused
+  // before anything is resolved or opened.
+  const traversal = await post("/api/delivery/reveal", { slug: "../../etc" });
+  assert.equal(traversal.status, 400);
+  assert.equal(traversal.body.error.code, "INVALID_SLUG");
+});
+
+test("a render refused for a locked target answers 409, not a queued job", async (t) => {
+  const { acquireRenderTargetLock, inspectRenderTargetLock } = await import(
+    "../services/render/renderLock.ts"
+  );
+  // Renderable, so the request gets past validation and reaches the lock check.
+  const f = await fixture(t);
+  await fs.writeFile(f.cover, "cover");
+  await fs.writeFile(f.beat, "audio");
+  const { base } = await api(t);
+
+  const lock = acquireRenderTargetLock(f.slug, "square-1x1", {
+    jobId: "held-elsewhere",
+  });
+  t.after(() => lock.release());
+
+  const response = await fetch(`${base}/api/tracks/${f.slug}/render`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ preset: "square-1x1" }),
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(body.error.code, "RENDER_TARGET_LOCKED");
+  assert.match(body.error.message, /another process/);
+  assert.match(body.error.message, /held-elsewhere/, "names the holding job");
+
+  // No job was created, so the refusal really did stop a second render rather
+  // than queueing one that would fail.
+  const jobs = await (await fetch(`${base}/api/renders`)).json();
+  assert.equal(
+    jobs.data.some((job: { slug: string }) => job.slug === f.slug),
+    false,
+  );
+
+  // Releasing frees the target again. Deliberately not started here: that would
+  // fork a worker and launch Chromium for a test about HTTP status codes.
+  lock.release();
+  assert.equal(
+    inspectRenderTargetLock(f.slug, "square-1x1").state,
+    "free",
+  );
+});
