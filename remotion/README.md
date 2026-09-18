@@ -239,6 +239,42 @@ that is already queued or running skips it rather than duplicating the work.
 Batch progress is the average of the renders' real progress, so a batch
 containing a failure settles below 100% — the counts next to it say why.
 
+### Exporting only what is missing
+
+Each track row shows a mark per format: a tick once the file is on disk, and
+distinct marks for queued, rendering, and a zero-byte file left behind by an
+interrupted render.
+
+**Export missing** queues only the formats a track does not already have. It
+asks first: one click shows the plan — how many are missing, already rendered,
+already queued or invalid — and only the confirm queues anything. If there is
+nothing to do it says so rather than making an empty batch. The same action
+works for every ticked track at once.
+
+A finished export is never overwritten automatically. To redo one, delete the
+file and render again. A zero-byte file does not count as an export and will be
+made again.
+
+```console
+# Plan without queueing anything
+curl -X POST http://127.0.0.1:4600/api/export-missing \
+  -H 'content-type: application/json' \
+  -d '{"tracks":["ghetto-geek"],"dryRun":true}'
+
+# Queue whatever is missing, in every format
+curl -X POST http://127.0.0.1:4600/api/export-missing \
+  -H 'content-type: application/json' \
+  -d '{"tracks":["ghetto-geek","midnight-rider"]}'
+```
+
+Omit `presets` to mean every format. The response reports `missing`, `queued`,
+`skippedExisting`, `skippedQueued`, `skippedActive`, `invalid` and a
+`nothingToDo` flag; `queued` is empty on a dry run while `missing` is not.
+
+Render job and batch history is kept in memory and bounded — the most recent
+200 jobs and 50 batches — so a long-running server does not grow without limit.
+Anything queued or running is never dropped, and files on disk are untouched.
+
 ```console
 curl -X POST http://127.0.0.1:4600/api/render-batches \
   -H 'content-type: application/json' \
@@ -363,6 +399,7 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | GET | `/api/renders/:jobId/events` | Live progress (Server-Sent Events) |
 | GET | `/api/renders/:jobId/logs` | Recent log lines for the job |
 | POST | `/api/renders/:jobId/cancel` | Cancel a queued or running render |
+| POST | `/api/export-missing` | Queue only the exports a track does not have |
 | POST | `/api/render-batches` | Queue many track/format pairs at once |
 | GET | `/api/render-batches` | All batches, newest first |
 | GET | `/api/render-batches/:batchId` | Batch totals, progress and member jobs |

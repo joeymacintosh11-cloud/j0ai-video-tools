@@ -19,6 +19,8 @@ in §23a rather than silently corrected.
 ## 0. Read this first
 
 **Sections 1–34 describe the project as it stood at the end of Phase 2B.**
+**§35 covers multi-format export and batching; §36 covers export-what's-missing
+and is the newest.**
 Phases 2C-A, 2C-B, a stability hardening pass and a multi-format/batch feature
 set have all landed since. Where an older section disagrees with the code, the
 code wins — and **§35 onwards is the current state**. Read §35 before acting on
@@ -1459,13 +1461,180 @@ test files.
    length. A very long title will wrap differently; `titleMaxWidth` per layout
    is the dial.
 
-### 35.10 Recommended next step
+### 35.10 Recommended next step — **delivered, see §36**
 
-**A track-level "export everything that's missing" action**, i.e. look at
-`renderedPresets`, diff against the selected formats, and queue only the gap.
-The pieces all exist — per-format presence is already reported and batching
-already skips what is in flight — so it is mostly UI. That would make the tool
-genuinely one-click for a catalogue.
+The "export everything that's missing" action recommended here has been built.
+§36 is the current state; the limitations in §35.9 are superseded by §36.7.
+
+---
+
+## 36. Current State — Export What's Missing
+
+The newest layer. Read this after §35; where the two disagree, this wins.
+
+### 36.1 Export coverage — one definition of "exported"
+
+`services/tracks/exportCoverage.ts` answers, per track and format: the output
+path, whether it is rendered, its size and its modified time. `inspectTrack`
+uses it, the API view uses it and the planner uses it, so the UI, the API and
+the planner cannot drift apart on what counts as an export.
+
+**The filesystem is the source of truth for finished exports — never the job
+history**, which is in memory and forgotten on restart. A finished export whose
+job record has been trimmed is still an export.
+
+**Health check (Feature E), deliberately shallow:** a file that exists but has
+**zero bytes** is the tell-tale of an interrupted or failed write, and is
+reported as *not* rendered, so it will be produced again. Nothing is deleted;
+the next render simply overwrites it.
+
+Anything deeper — decoding the MP4, checking its duration or dimensions — would
+mean opening every file on every listing. That is far too expensive for
+browsing and is **documented rather than built**. If it is ever wanted, it
+belongs behind an explicit "verify exports" action, not in the list.
+
+### 36.2 The planner
+
+`server/services/exportPlan.ts` → `planMissingExports({ slugs, presetIds })`
+returns five lists:
+
+| list | meaning |
+|---|---|
+| `missing` | no file, and nothing in flight — these need rendering |
+| `skippedExisting` | the file is already on disk |
+| `skippedQueued` | a render is already waiting |
+| `skippedActive` | a render is running right now |
+| `invalid` | the track cannot be rendered, with the reason |
+
+Those three "skipped" reasons are kept apart because they need different
+answers from a user. An unrenderable track is reported **once with its reason**
+rather than producing one doomed job per format.
+
+**Ordering is deterministic**: tracks keep the order asked for, formats always
+take canonical preset order, and duplicate tracks and formats are collapsed. The
+same request twice yields the same plan.
+
+Queue state is an optional `inFlight` parameter defaulting to the render
+manager, so a test can describe a queue without forking real render processes.
+
+### 36.3 API
+
+```
+POST /api/export-missing
+{ "tracks": ["ghetto-geek"], "presets": ["youtube-16x9"], "dryRun": true }
+```
+
+`presets` may be omitted to mean **every** format. The response carries
+`missing`, `queued`, the three `skipped*` lists, `invalid`, `batchId` and
+`nothingToDo`.
+
+Two details worth keeping:
+
+- **`missing` and `queued` are different fields.** `missing` is what needs
+  rendering and is filled in either way; `queued` is what was actually
+  enqueued, so it is empty on a dry run. The first cut only had `queued`, which
+  made a dry run report nothing missing when two exports were — the preview was
+  useless. Do not merge them again.
+- **Nothing missing is a successful no-op**: no batch is created, `batchId` is
+  null and `nothingToDo` is true. An empty batch would just be noise.
+
+It reuses `startBatch`, so queueing, dedup, SSE and cancellation are the
+existing machinery.
+
+### 36.4 UI
+
+Per-format marks appear on every track row — a tick for a file on disk, and
+distinct marks for queued, rendering and the zero-byte case, so a broken
+leftover never reads as a finished export. The detail panel shows the same with
+labels.
+
+**"Export missing" is two steps.** The first click is a dry run, so the summary
+shown (X missing, Y already rendered, Z queued, N invalid) is the server's own
+plan rather than something assembled in the browser from stale state. Only the
+confirm enqueues. With nothing missing it says *"All selected exports already
+exist"* and offers no button.
+
+One panel serves both the single track in the detail view and every ticked
+track from the toolbar. **The existing single-render controls and "Add to
+render queue" are untouched** — nobody is pushed into this path.
+
+Per-format state lives on `TrackSummaryView.exports` (the detail view inherits
+it), replacing the near-identical `render.outputs`. One shape for one fact.
+
+### 36.5 Job history retention (Feature G)
+
+Settled records are trimmed oldest first: **200 jobs, 50 batches**. Never
+dropped: anything queued or running, and any job still belonging to a retained
+batch — otherwise that batch could not list its members. Trimming runs only
+when a job settles. Memory only; **no persistent storage was added**, and files
+on disk are untouched.
+
+### 36.6 Long titles (Feature F)
+
+Rendering short, medium and long titles across all three formats found a real
+bug: a 45-character title at the landscape base size wrapped onto four lines and
+**pushed the waveform completely off the bottom of the 16:9 frame**.
+
+Titles now step down in size once long enough to need it (`titleSizeSteps` per
+layout in `layouts.ts`). **The first step is each layout's existing base size**,
+so a title short enough to have always fitted is drawn exactly as before.
+Portrait and square also lost some `titleMaxWidth`, which had equalled the full
+content width and ran a wrapped title into the padding.
+
+**Existing output is provably unchanged**: real Ghetto Geek props rendered at
+frame 900 from before and after, in all three formats, are pixel-identical.
+"Ghetto Geek" is 11 characters, so it takes the first step.
+
+`titleSizeSteps` is the dial for this. Do not redesign the layouts for a long
+title — adjust the steps.
+
+### 36.7 Known limitations
+
+1. Only the **zero-byte** health check exists. A truncated-but-non-empty MP4
+   still counts as an export. Deeper validation is deferred by design (§36.1).
+2. **Retention is in memory only.** A restart forgets all job and batch history;
+   coverage is unaffected because it reads the disk.
+3. Export planning **stats three files per track**, so a very large catalogue
+   makes the track list slightly heavier. Negligible at this scale; if it ever
+   matters, cache by directory mtime.
+4. **No "re-export" action.** A finished export is never overwritten
+   automatically, and there is deliberately no UI to force one — delete the file
+   and render again.
+5. Long titles were checked at three lengths with one cover. A title of extreme
+   length still shrinks rather than truncating.
+6. `GET /api/renders` and `/api/render-batches` remain unpaginated, now bounded.
+
+### 36.8 Tests
+
+`npm test` is **71 tests**, adding 16 for coverage, planning and retention —
+listed in the commit message for `32e829b`. Two of them changed the code rather
+than the reverse: the shared fixture writes metadata only (correctly invalid for
+planning), and the planner's queue state became injectable so tests need not
+fork render processes.
+
+### 36.9 Verification performed
+
+- Lint, tsc and 71 tests clean.
+- `validate-track` and `prepare-track` exit 0.
+- The live API checked across every path: all-exist no-op, a mixed request
+  separating a 16-byte export, a 0-byte one, an absent one and a malformed
+  track, and queue-then-immediately-re-ask reporting one active, one queued and
+  one existing.
+- The UI driven in a real browser for both the nothing-missing and
+  three-missing cases.
+- **16:9 output still hashes to `094c36432da2eb824791209145adbf6d`.**
+
+No full render was needed this time: the render pipeline itself is unchanged,
+and the only composition change was proven pixel-identical at frame level.
+
+### 36.10 Recommended next step
+
+**Per-track export presets** — remembering which formats a given track is meant
+to ship in, stored in its `metadata.json`, so "export missing" knows that one
+track is YouTube-only while another needs all three. Everything needed is in
+place: coverage is per format, the planner already takes a format list, and
+metadata already has a validated read/write path with conditional saves. It
+would remove the last piece of manual selection from a catalogue workflow.
 
 Not started.
 
