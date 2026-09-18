@@ -29,12 +29,15 @@ export type DeliverySettings = {
   readonly root: string | null;
   /** Copy automatically after a successful render. Off unless asked for. */
   readonly autoDeliver: boolean;
+  /** Rewrite a track's release bundle after a successful delivery. Opt-in. */
+  readonly autoUpdateReleaseBundle: boolean;
 };
 
 export const DELIVERY_OFF: DeliverySettings = {
   schemaVersion: DELIVERY_SETTINGS_VERSION,
   root: null,
   autoDeliver: false,
+  autoUpdateReleaseBundle: false,
 };
 
 const invalid = (message: string): never => {
@@ -115,6 +118,7 @@ export const readDeliverySettings = async (): Promise<DeliverySettings> => {
       schemaVersion: DELIVERY_SETTINGS_VERSION,
       root,
       autoDeliver: value.autoDeliver === true,
+      autoUpdateReleaseBundle: value.autoUpdateReleaseBundle === true,
     };
   } catch {
     return DELIVERY_OFF;
@@ -125,6 +129,7 @@ export type DeliverySettingsPatch = {
   /** Absolute path, or null to turn delivery off. Omitted leaves it alone. */
   readonly root?: string | null;
   readonly autoDeliver?: boolean;
+  readonly autoUpdateReleaseBundle?: boolean;
 };
 
 /** Validates, then writes atomically so a crash cannot leave half a config. */
@@ -141,14 +146,18 @@ export const writeDeliverySettings = async (
           ? null
           : assertDeliveryRoot(patch.root);
 
-    if (patch.autoDeliver !== undefined && typeof patch.autoDeliver !== "boolean") {
-      invalid('"autoDeliver" must be true or false.');
+    for (const flag of ["autoDeliver", "autoUpdateReleaseBundle"] as const) {
+      if (patch[flag] !== undefined && typeof patch[flag] !== "boolean") {
+        invalid(`"${flag}" must be true or false.`);
+      }
     }
 
     const next: DeliverySettings = {
       schemaVersion: DELIVERY_SETTINGS_VERSION,
       root,
       autoDeliver: patch.autoDeliver ?? current.autoDeliver,
+      autoUpdateReleaseBundle:
+        patch.autoUpdateReleaseBundle ?? current.autoUpdateReleaseBundle,
     };
 
     await writeAtomicFile(DELIVERY_SETTINGS_FILE, (handle) =>

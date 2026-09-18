@@ -74,10 +74,14 @@ const destination = async (t: TestContext) => {
   return root;
 };
 
-const settingsFor = (root: string | null, autoDeliver = false): DeliverySettings => ({
+const settingsFor = (
+  root: string | null,
+  autoDeliver = false,
+): DeliverySettings => ({
   schemaVersion: 1,
   root,
   autoDeliver,
+  autoUpdateReleaseBundle: false,
 });
 
 /** A track with a real published export, ready to deliver. */
@@ -596,7 +600,7 @@ test("several formats of one track each deliver to their own file", async (t) =>
     "intended formats only, in canonical order",
   );
 
-  const outcomes = await deliverPlanned(plan, settings);
+  const { outcomes } = await deliverPlanned(plan, settings);
   assert.deepEqual(
     outcomes.map((outcome) => outcome.status),
     ["delivered", "delivered"],
@@ -687,7 +691,7 @@ test("a plan with nothing to do is a successful no-op", async (t) => {
   const again = await planDeliveries({ slugs: [f.slug], settings });
   assert.deepEqual(again.deliverable, []);
   assert.equal(again.alreadyDelivered.length, 1);
-  assert.deepEqual(await deliverPlanned(again, settings), []);
+  assert.deepEqual((await deliverPlanned(again, settings)).outcomes, []);
 });
 
 test("empty input is refused rather than read as the catalogue", async () => {

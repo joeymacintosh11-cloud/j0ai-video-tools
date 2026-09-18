@@ -1,4 +1,5 @@
 import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+import { updateReleaseBundleAfterDelivery } from "./autoReleaseBundle.ts";
 import { deliverExport, type DeliveryOutcome } from "./deliverExport.ts";
 import { readDeliverySettings } from "./deliverySettings.ts";
 
@@ -27,6 +28,11 @@ export const deliverAfterRender = async (
 
     const outcome = await deliverExport({ slug, presetId, settings });
     report?.(outcome);
+
+    // After the delivery has released the target lock, and only when asked for.
+    if (outcome.status === "delivered") {
+      await updateReleaseBundleAfterDelivery([slug], settings);
+    }
 
     return outcome;
   } catch {

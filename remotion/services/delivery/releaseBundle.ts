@@ -21,6 +21,7 @@ import {
   type ReleaseFormatEntry,
   type ReleaseFormatStatus,
 } from "../../src/domain/delivery/releaseBundle.ts";
+import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
 import type { TrackInspection } from "../../src/domain/tracks/types.ts";
 import { secondsToFrames } from "../../src/domain/video/compositionConfig.ts";
@@ -37,7 +38,10 @@ import {
 } from "../tracks/exportCoverage.ts";
 import { inspectTrack } from "../tracks/inspectTrack.ts";
 import { trackLocations } from "../tracks/trackLocations.ts";
-import { assertDeliveryDestination } from "./deliveryDestination.ts";
+import {
+  assertDeliveryDestination,
+  directoryIdentity,
+} from "./deliveryDestination.ts";
 import { deliveryStateForTarget } from "./deliverExport.ts";
 import { readDeliveryReceipt } from "./deliveryReceipt.ts";
 import {
@@ -520,10 +524,30 @@ export const generateReleaseBundle = async ({
     missing: entries.filter((entry) => entry.status === "missing"),
   };
 
+  // Identity captured before the work, and compared again immediately before
+  // writing: a root that has been unmounted or swapped must not be silently
+  // recreated by mkdir, which would put a bundle inside an empty mount point.
+  const rootIdentity = directoryIdentity(root);
+
   await withFileMutation(gathered.paths.json, async () => {
+    assertDeliveryDestination(root, `${gathered.folder}/${RELEASE_JSON_FILENAME}`);
+    if (directoryIdentity(root) !== rootIdentity) {
+      throw new TrackError(
+        trackIssue(
+          "INVALID_REQUEST",
+          `The export destination ${root} changed while the bundle was being written.`,
+        ),
+      );
+    }
+
     // A bundle can precede any delivery, so the track's folder may not exist
-    // yet. Inside the validated root, which is what makes creating it safe.
-    await mkdir(path.dirname(gathered.paths.json), { recursive: true });
+    // yet. Created inside a root that has just been re-verified, and never
+    // recursively, so the root itself is never conjured back into existence.
+    await mkdir(path.dirname(gathered.paths.json), { recursive: false }).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== "EEXIST") throw error;
+      },
+    );
     await writeAtomicFile(gathered.paths.markdown, (handle) =>
       handle.writeFile(renderReleaseMarkdown(bundle), "utf-8"),
     );

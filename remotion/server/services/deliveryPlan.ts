@@ -24,6 +24,8 @@ import {
   resolveDeliveryRoot,
   type DeliverySettings,
 } from "../../services/delivery/deliverySettings.ts";
+import { updateReleaseBundleAfterDelivery } from "../../services/delivery/autoReleaseBundle.ts";
+import type { GenerateReleaseBundleResult } from "../../services/delivery/releaseBundle.ts";
 import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
 import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
 import { listTracks } from "../../services/tracks/listTracks.ts";
@@ -223,7 +225,10 @@ export const planDeliveries = async (
 export const deliverPlanned = async (
   plan: DeliveryPlan,
   settings?: DeliverySettings,
-): Promise<readonly DeliveryOutcome[]> => {
+): Promise<{
+  readonly outcomes: readonly DeliveryOutcome[];
+  readonly releaseBundles: readonly GenerateReleaseBundleResult[];
+}> => {
   const resolved = settings ?? (await readDeliverySettings());
   const outcomes: DeliveryOutcome[] = [];
 
@@ -237,7 +242,16 @@ export const deliverPlanned = async (
     );
   }
 
-  return outcomes;
+  // After every copy has finished, so no render target is held while a bundle
+  // is written, and once per track rather than once per format.
+  const releaseBundles = await updateReleaseBundleAfterDelivery(
+    outcomes
+      .filter((outcome) => outcome.status === "delivered")
+      .map((outcome) => outcome.slug),
+    resolved,
+  );
+
+  return { outcomes, releaseBundles };
 };
 
 /** Where a track delivers to, for display. */

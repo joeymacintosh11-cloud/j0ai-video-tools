@@ -35,6 +35,7 @@ const toSettingsView = async (): Promise<DeliverySettingsView> => {
     available: root !== null,
     problem,
     autoDeliver: settings.autoDeliver,
+    autoUpdateReleaseBundle: settings.autoUpdateReleaseBundle,
     settingsPath: DELIVERY_SETTINGS_FILE,
   };
 };
@@ -60,10 +61,12 @@ export const handleUpdateDeliverySettings = async (
     );
   }
 
-  if (body.autoDeliver !== undefined && typeof body.autoDeliver !== "boolean") {
-    throw new TrackError(
-      trackIssue("INVALID_REQUEST", '"autoDeliver" must be true or false.'),
-    );
+  for (const flag of ["autoDeliver", "autoUpdateReleaseBundle"] as const) {
+    if (body[flag] !== undefined && typeof body[flag] !== "boolean") {
+      throw new TrackError(
+        trackIssue("INVALID_REQUEST", `"${flag}" must be true or false.`),
+      );
+    }
   }
 
   await writeDeliverySettings({
@@ -71,6 +74,9 @@ export const handleUpdateDeliverySettings = async (
     ...(body.autoDeliver === undefined
       ? {}
       : { autoDeliver: body.autoDeliver as boolean }),
+    ...(body.autoUpdateReleaseBundle === undefined
+      ? {}
+      : { autoUpdateReleaseBundle: body.autoUpdateReleaseBundle as boolean }),
   });
 
   sendOk(response, await toSettingsView());
@@ -179,15 +185,35 @@ export const handleDeliver = async (
   };
 
   if (dryRun || plan.deliverable.length === 0) {
-    const payload: DeliverView = { ...common, dryRun, delivered: [] };
+    const payload: DeliverView = {
+      ...common,
+      dryRun,
+      delivered: [],
+      releaseBundles: [],
+    };
     sendOk(response, payload);
     return;
   }
 
+  const { outcomes, releaseBundles } = await deliverPlanned(plan, settings);
   const payload: DeliverView = {
     ...common,
     dryRun: false,
-    delivered: await deliverPlanned(plan, settings),
+    delivered: outcomes,
+    // Empty unless auto-update is switched on. Surfaced rather than logged
+    // away, because a delivery that succeeded with an unwritten bundle is a
+    // state worth seeing.
+    releaseBundles: releaseBundles.map((bundle) => ({
+      slug: bundle.slug,
+      freshness: bundle.freshness,
+      relativePath: bundle.relativePath,
+      generatedAt: null,
+      delivered: bundle.delivered,
+      outdated: bundle.outdated,
+      missing: bundle.missing,
+      problem: bundle.problem,
+      generated: bundle.generated,
+    })),
   };
 
   sendOk(response, payload);

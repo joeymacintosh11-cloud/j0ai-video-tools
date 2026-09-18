@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import {
   mkdtemp,
   readdir,
@@ -50,10 +50,14 @@ const destination = async (t: TestContext) => {
   return root;
 };
 
-const settingsFor = (root: string | null): DeliverySettings => ({
+const settingsFor = (
+  root: string | null,
+  autoUpdateReleaseBundle = false,
+): DeliverySettings => ({
   schemaVersion: 1,
   root,
   autoDeliver: false,
+  autoUpdateReleaseBundle,
 });
 
 /** A pinned clock, so a rendered document is reproducible. */
@@ -663,4 +667,288 @@ test("two concurrent generations for one track converge", async (t) => {
     RELEASE_MARKDOWN_FILENAME,
     `${f.slug}-youtube-16x9.mp4`,
   ].sort());
+});
+
+/* ------------------------------------------------------------------ *
+ * Atomicity
+ * ------------------------------------------------------------------ */
+
+test("neither file is ever observed partially written", async (t) => {
+  const f = await setup(t, { exportPresets: ["youtube-16x9", "square-1x1"] });
+  const root = await destination(t);
+  const settings = settingsFor(root);
+
+  await f.publish("youtube-16x9");
+  await f.deliver("youtube-16x9", root);
+  await generateReleaseBundle({ slug: f.slug, settings, now: at });
+
+  const paths = releaseBundlePaths(root, f.slug);
+  const seen = { json: new Set<string>(), markdown: new Set<string>() };
+  const sampling = setInterval(() => {
+    for (const [key, file] of [
+      ["json", paths.json],
+      ["markdown", paths.markdown],
+    ] as const) {
+      try {
+        seen[key].add(readFileSync(file, "utf8"));
+      } catch {
+        // Absent is impossible here; a rename never exposes a gap.
+      }
+    }
+  }, 1);
+
+  try {
+    // Publish a materially different bundle while sampling both files.
+    await f.publish("square-1x1");
+    await f.deliver("square-1x1", root);
+    await generateReleaseBundle({ slug: f.slug, settings, now: at });
+  } finally {
+    clearInterval(sampling);
+  }
+
+  // Every sample must be a complete document, never a prefix of one.
+  for (const sample of seen.json) {
+    assert.doesNotThrow(() => JSON.parse(sample), "release.json is always valid");
+  }
+  for (const sample of seen.markdown) {
+    assert.match(sample, /bundle `[0-9a-f]{12}`\n$/, "release.md is always whole");
+  }
+  assert.deepEqual(await temps(path.join(root, f.slug)), []);
+});
+
+/* ------------------------------------------------------------------ *
+ * Catalogue
+ * ------------------------------------------------------------------ */
+
+test("a catalogue run writes only what is missing or outdated", async (t) => {
+  const { planReleaseBundles, generatePlannedBundles } = await import(
+    "../server/services/releaseBundlePlan.ts"
+  );
+  const settled = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const fresh = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const root = await destination(t);
+  const settings = settingsFor(root);
+
+  await settled.publish();
+  await settled.deliver("youtube-16x9", root);
+  await generateReleaseBundle({ slug: settled.slug, settings, now: at });
+  const before = await readFile(
+    path.join(root, settled.slug, RELEASE_JSON_FILENAME),
+    "utf8",
+  );
+
+  await fresh.publish();
+  await fresh.deliver("youtube-16x9", root);
+
+  const plan = await planReleaseBundles({ settings });
+  assert.ok(plan.current.some((state) => state.slug === settled.slug));
+  assert.ok(plan.missing.some((state) => state.slug === fresh.slug));
+
+  const results = await generatePlannedBundles(plan, { settings });
+  const written = results.filter((result) => result.generated).map((r) => r.slug);
+
+  assert.ok(written.includes(fresh.slug));
+  assert.equal(
+    written.includes(settled.slug),
+    false,
+    "a current bundle is left exactly as it is",
+  );
+  assert.equal(
+    await readFile(path.join(root, settled.slug, RELEASE_JSON_FILENAME), "utf8"),
+    before,
+  );
+});
+
+test("one track failing does not stop the rest of the catalogue", async (t) => {
+  const { planReleaseBundles, generatePlannedBundles } = await import(
+    "../server/services/releaseBundlePlan.ts"
+  );
+  const broken = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const fine = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const root = await destination(t);
+  const settings = settingsFor(root);
+
+  for (const track of [broken, fine]) {
+    await track.publish();
+    await track.deliver("youtube-16x9", root);
+  }
+
+  // One folder that cannot be written to.
+  const folder = path.join(root, broken.slug);
+  await execFileAsync("chmod", ["500", folder]);
+  t.after(() => execFileAsync("chmod", ["700", folder]).catch(() => undefined));
+
+  const plan = await planReleaseBundles({ settings });
+  const results = await generatePlannedBundles(plan, { settings });
+
+  await execFileAsync("chmod", ["700", folder]);
+
+  const byslug = new Map(results.map((result) => [result.slug, result]));
+  assert.equal(byslug.get(broken.slug)?.generated, false);
+  assert.ok(byslug.get(broken.slug)?.problem);
+  assert.equal(
+    byslug.get(fine.slug)?.generated,
+    true,
+    "the rest of the catalogue still gets bundles",
+  );
+});
+
+test("a track with no destination is set aside, not counted as work", async (t) => {
+  const { planReleaseBundles } = await import(
+    "../server/services/releaseBundlePlan.ts"
+  );
+  await setup(t);
+
+  const plan = await planReleaseBundles({ settings: settingsFor(null) });
+
+  assert.equal(plan.root, null);
+  assert.deepEqual(plan.missing, []);
+  assert.deepEqual(plan.outdated, []);
+  assert.ok(plan.unavailable.length >= 1);
+  assert.equal(plan.unavailable[0].freshness, "not_configured");
+});
+
+/* ------------------------------------------------------------------ *
+ * Races
+ * ------------------------------------------------------------------ */
+
+test("metadata changing mid-generation leaves a consistent, self-describing bundle", async (t) => {
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const root = await destination(t);
+  const settings = settingsFor(root);
+
+  await f.publish();
+  await f.deliver("youtube-16x9", root);
+
+  // The edit lands while generation is between reading state and writing.
+  const original = JSON.parse(await readFile(f.metadataPath, "utf8"));
+  const edited = generateReleaseBundle({
+    slug: f.slug,
+    settings,
+    now: () => {
+      writeFileSync(
+        f.metadataPath,
+        JSON.stringify({ ...original, title: "Renamed mid-generation" }),
+      );
+      return AT;
+    },
+  });
+
+  await edited;
+
+  // Whatever it wrote describes one coherent state and carries that state's
+  // own id — so the newer metadata simply makes it outdated, and regenerating
+  // is what catches up. A bundle is never left claiming to be current when it
+  // is not.
+  const bundle = await readBundle(root, f.slug);
+  assert.doesNotThrow(() => JSON.parse(JSON.stringify(bundle)));
+  assert.equal((await releaseBundleState(f.slug, settings)).freshness, "outdated");
+
+  await generateReleaseBundle({ slug: f.slug, settings, now: at });
+  assert.equal((await releaseBundleState(f.slug, settings)).freshness, "current");
+  assert.equal((await readBundle(root, f.slug)).track.title, "Renamed mid-generation");
+});
+
+test("the destination disappearing mid-generation fails without leaving a bundle", async (t) => {
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const root = await destination(t);
+  const settings = settingsFor(root);
+
+  await f.publish();
+  await f.deliver("youtube-16x9", root);
+
+  await assert.rejects(() =>
+    generateReleaseBundle({
+      slug: f.slug,
+      settings,
+      now: () => {
+        // Gone by the time anything is written.
+        rmSync(root, { recursive: true, force: true });
+        return AT;
+      },
+    }),
+  );
+
+  assert.equal(existsSync(path.join(root, f.slug, RELEASE_JSON_FILENAME)), false);
+});
+
+/* ------------------------------------------------------------------ *
+ * Auto-update after delivery
+ * ------------------------------------------------------------------ */
+
+test("auto-update is off unless switched on", async (t) => {
+  const { updateReleaseBundleAfterDelivery } = await import(
+    "../services/delivery/autoReleaseBundle.ts"
+  );
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const root = await destination(t);
+
+  await f.publish();
+  await f.deliver("youtube-16x9", root);
+
+  assert.deepEqual(
+    await updateReleaseBundleAfterDelivery([f.slug], settingsFor(root, false)),
+    [],
+    "nothing is written when it was not asked for",
+  );
+  assert.equal(
+    existsSync(path.join(root, f.slug, RELEASE_JSON_FILENAME)),
+    false,
+  );
+});
+
+test("auto-update writes one bundle per track after a delivery", async (t) => {
+  const { updateReleaseBundleAfterDelivery } = await import(
+    "../services/delivery/autoReleaseBundle.ts"
+  );
+  const f = await setup(t, { exportPresets: ["youtube-16x9", "square-1x1"] });
+  const root = await destination(t);
+  const settings = settingsFor(root, true);
+
+  await f.publish("youtube-16x9");
+  await f.publish("square-1x1");
+  await f.deliver("youtube-16x9", root);
+  await f.deliver("square-1x1", root);
+
+  // Two formats delivered is still one bundle.
+  const results = await updateReleaseBundleAfterDelivery(
+    [f.slug, f.slug],
+    settings,
+  );
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].generated, true);
+  assert.equal((await releaseBundleState(f.slug, settings)).freshness, "current");
+  assert.equal((await readBundle(root, f.slug)).deliveries.length, 2);
+});
+
+test("a bundle that cannot be written never fails the delivery", async (t) => {
+  const { updateReleaseBundleAfterDelivery } = await import(
+    "../services/delivery/autoReleaseBundle.ts"
+  );
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const root = await destination(t);
+  const settings = settingsFor(root, true);
+
+  await f.publish();
+  const delivery = await f.deliver("youtube-16x9", root);
+  assert.equal(delivery.status, "delivered");
+
+  const folder = path.join(root, f.slug);
+  await execFileAsync("chmod", ["500", folder]);
+  t.after(() => execFileAsync("chmod", ["700", folder]).catch(() => undefined));
+
+  const results = await updateReleaseBundleAfterDelivery([f.slug], settings);
+
+  await execFileAsync("chmod", ["700", folder]);
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].generated, false);
+  assert.ok(results[0].problem, "the failure is reported, not thrown");
+
+  // And what was delivered is exactly where it was.
+  assert.equal(
+    existsSync(path.join(folder, `${f.slug}-youtube-16x9.mp4`)),
+    true,
+  );
 });

@@ -129,6 +129,20 @@ export const DeliverySettingsPanel: React.FC<{
             />
             <span className="format__name">Deliver after each render</span>
           </label>
+          <label
+            className="format"
+            title="Rewrite release.json and release.md after a successful delivery"
+          >
+            <input
+              type="checkbox"
+              checked={settings.autoUpdateReleaseBundle}
+              disabled={busy || settings.root === null}
+              onChange={(event) =>
+                void save({ autoUpdateReleaseBundle: event.target.checked })
+              }
+            />
+            <span className="format__name">Update release bundles</span>
+          </label>
           <span className="muted">
             {dirty
               ? "Unsaved change"

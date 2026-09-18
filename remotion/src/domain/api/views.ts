@@ -510,6 +510,8 @@ export type DeliverySettingsView = {
   readonly problem: string | null;
   /** Copy automatically after a successful render. Opt-in. */
   readonly autoDeliver: boolean;
+  /** Rewrite a track's release bundle after a successful delivery. Opt-in. */
+  readonly autoUpdateReleaseBundle: boolean;
   /** Where the machine-local setting is stored, for the UI to name. */
   readonly settingsPath: string;
 };
@@ -524,6 +526,7 @@ export type DeliverySettingsView = {
 export type DeliverySettingsBody = {
   readonly root?: string | null;
   readonly autoDeliver?: boolean;
+  readonly autoUpdateReleaseBundle?: boolean;
 };
 
 /** One target's result from a delivery attempt. */
@@ -583,6 +586,12 @@ export type DeliverView = {
   readonly invalid: readonly InvalidTrackView[];
   /** Results of the copies this call performed; empty on a dry run. */
   readonly delivered: readonly DeliveryOutcomeView[];
+  /**
+   * Release bundles rewritten afterwards. Empty unless auto-update is switched
+   * on. A bundle that could not be written never changes the fact that the
+   * copies landed, so it is reported here rather than as a delivery failure.
+   */
+  readonly releaseBundles: readonly ReleaseBundleResultView[];
   /** True when every considered export is already at the destination. */
   readonly nothingToDo: boolean;
 };

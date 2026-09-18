@@ -174,7 +174,7 @@ runCli("delivering exports", async () => {
   }
 
   console.log("");
-  const outcomes = await deliverPlanned(plan, settings);
+  const { outcomes, releaseBundles } = await deliverPlanned(plan, settings);
   const failed = outcomes.filter((outcome) => outcome.status !== "delivered");
 
   for (const outcome of outcomes) {
@@ -192,6 +192,16 @@ runCli("delivering exports", async () => {
         "INVALID_REQUEST",
         `${failed.length} of ${outcomes.length} deliveries failed. The rendered exports in out/ are unaffected.`,
       ),
+    );
+  }
+
+  // Only present when auto-update is switched on; a bundle that could not be
+  // written never changes the fact that the copies landed.
+  for (const bundle of releaseBundles) {
+    console.log(
+      bundle.generated
+        ? `✓ ${bundle.relativePath}`
+        : `! ${bundle.slug}: release bundle not updated — ${bundle.problem ?? "unknown"}`,
     );
   }
 
