@@ -2778,10 +2778,369 @@ directories, and real forked processes where the claim is about processes.
 
 All commits are local only. **Do not push without a new instruction.**
 
-### 40.14 Recommended next step (not started)
+### 40.14 Recommended next step
 
-The release bundle proposed in §39.22 remains the next product feature. Nothing
-in this pass is unfinished.
+The release bundle proposed in §39.22. **Built — see §41.** Nothing in this
+hardening pass is unfinished.
+
+
+---
+
+## 41. Current State — Release Bundles (2026-09-18)
+
+Every delivered track now describes itself. No composition, layout, presets,
+brand sources, final audio routing, render concurrency, locking or delivery
+behaviour changed. No dependencies were added.
+
+### 41.1 What a bundle is
+
+Two small files written into the track's own destination folder, beside the
+delivered videos:
+
+```text
+Toshi Exports/
+└── Probe Beat/
+    ├── zz-probe-youtube-16x9.mp4
+    ├── zz-probe-square-1x1.mp4
+    ├── release.json     ← machine-readable
+    └── release.md       ← human-readable
+```
+
+They answer one question: what shipped, in which formats, when, and what is
+still missing.
+
+### 41.2 Schema
+
+`src/domain/delivery/releaseBundle.ts` is browser-safe and holds the schema, the
+fingerprint input and the Markdown rendering, so the server, the CLI and the UI
+describe a bundle identically.
+
+```json
+{
+  "schemaVersion": 1,
+  "bundleId": "<sha256>",
+  "generatedAt": "2026-09-18T17:32:57.670Z",
+  "track": { "slug": "...", "title": "...", "artist": "...", "key": "...", "bpm": 100, "subtitle": "..." },
+  "folder": "Probe Beat",
+  "intendedPresets": ["youtube-16x9", "square-1x1"],
+  "deliveries": [ { "presetId": "...", "label": "YouTube 16:9", "filename": "...mp4",
+                    "width": 1920, "height": 1080, "fps": 30,
+                    "status": "delivered", "reason": null,
+                    "durationSeconds": 4, "durationFrames": 120,
+                    "bytes": 416219, "deliveredAt": "...",
+                    "exportFingerprint": "<sha256>" } ],
+  "outdated": [ ... ],
+  "missing":  [ ... ]
+}
+```
+
+- **`deliveries` / `outdated` / `missing`** are three separate arrays of the same
+  entry type, in canonical preset order. Delivered means a copy is at the
+  destination *and* is of the current canonical export; outdated means a copy is
+  there but does not represent what should ship; missing means nothing is there.
+  Those stay three distinct answers everywhere.
+- **No absolute path anywhere.** A bundle travels with its folder, so it records
+  the folder's own name and the filenames beside it — never the machine-local
+  root. Asserted by a test that greps the written file.
+- **`bytes` and `deliveredAt` only on a confirmed delivery.** For anything else
+  the receipt may describe a file that has since been replaced, and a wrong
+  number is worse than none.
+- A missing format still names the `filename` it would have, so a reader knows
+  what to expect.
+- Schema version is **1**. Nothing existed before it, so there is no migration.
+
+### 41.3 Fingerprint and freshness
+
+`bundleId` is a SHA-256 over a fixed serialization of the facts a bundle
+asserts: schema version, slug, folder, the rendered metadata (title, artist,
+key, BPM, normalized subtitle), the intended preset ids, and per format — in
+canonical order — its status, reason, canonical export fingerprint, delivered
+timestamp, delivered size, and the identity of the exact canonical file the
+delivery was made from.
+
+Deliberately **not** the document itself: `generatedAt` moves on every run, so
+hashing the bundle would make it instantly stale. Deliberately **not** a
+modification time: touching or hand-editing a bundle cannot make it look
+current.
+
+| Freshness | When |
+|---|---|
+| `not_configured` | no destination root, so there is nowhere for a bundle |
+| `missing` | no readable bundle in the folder, or the track cannot be described |
+| `outdated` | a bundle is there but its id differs from the current state, or the pair disagrees |
+| `current` | `release.json` and `release.md` both carry the current id |
+
+A bundle therefore becomes outdated when metadata changes, the intended preset
+list changes, a delivery happens, a re-render changes delivery freshness, the
+delivered file is replaced, or the delivery folder changes. All verified.
+
+Freshness costs one small file read plus the export coverage the track view
+already gathers — `trackExportCoverage` is now computed once per track and
+shared, rather than read twice. **No video is hashed or decoded.**
+
+### 41.4 Media metadata
+
+- **Dimensions and fps** come from the render preset, which is already the
+  authority for them.
+- **Duration** comes from one `ffprobe` of the track's `beat.wav` — a header
+  read, not a decode — put through the composition's own
+  `secondsToFrames(seconds, fps)`. So the reported length is the one that was
+  *rendered*, not a re-measurement of the output. Verified against a real
+  render: the bundle reported 120 frames / 4.000s / 1920×1080 / 30fps, and
+  `ffprobe` of the MP4 reported exactly the same.
+- One probe per track per generation, shared by every format. A track whose
+  audio cannot be read still gets a bundle, with the duration left out.
+- **Size** comes from the delivery receipt, which `deliveryStateFor` has already
+  confirmed against the file. No extra stat, no read.
+
+### 41.5 Publication
+
+Two files cannot be renamed into place together, so the order is chosen and the
+limitation is faced rather than hidden:
+
+1. **`release.md` first**, staged in the destination folder and renamed.
+2. **`release.json` second**, likewise. It is the file freshness is read from,
+   so it is the commit point.
+
+A crash between them leaves the *old* id in the JSON, so the bundle reads as
+outdated and regenerating repairs it. Publishing the JSON first would instead
+have a bundle claim to be current while its readable half was stale — strictly
+worse. Both files carry the same id (the Markdown carries its first 12
+characters), so **a disagreeing pair is detected** rather than trusted, and a
+missing `release.md` also reads as outdated.
+
+Neither file is touched until its replacement is fully written, so a previous
+valid bundle survives any failure; temp files are removed on every path. Proven
+by sampling both files throughout a real replacement and finding only whole,
+parseable documents.
+
+Paths reuse the delivery layer's own fencing: `assertDeliveryDestination`
+constrains `<root>/<folder>/release.json` exactly as it does a delivered video,
+and the root's dev/inode identity is captured up front and compared again
+immediately before writing. The track folder is created **non-recursively**
+inside a re-verified root, so a destination that has been deleted or unmounted
+is never silently recreated — a bug found by the test for it.
+
+### 41.6 Partial releases
+
+A bundle never requires a complete release. Two of three formats delivered is a
+valid, first-class result, and a track with nothing delivered yet still gets a
+bundle saying so. The Markdown distinguishes "nothing has been delivered yet"
+from "nothing here is current — re-render, then deliver again", because a folder
+holding out-of-date copies has not delivered nothing.
+
+Nothing at the destination is ever deleted for being outdated.
+
+### 41.7 release.md
+
+```markdown
+# Probe Beat — Toshi
+
+Key: F Minor
+BPM: 100
+
+Boom bap soul, trap bounce and latin heat.
+
+## Delivered
+
+- YouTube 16:9 — 1920×1080 — 0:04 — 0.4 MB
+
+## Missing
+
+- Square 1:1 — not rendered yet
+
+---
+
+Generated 2026-09-18 19:32 · bundle `b583fe714b45`
+```
+
+Fixed section order, fixed formatting, canonical preset order, and empty
+sections left out entirely. Sizes are decimal MB (what Finder shows) and
+durations `m:ss`. The generating clock is injectable, so a test can pin it and
+assert the document is byte-identical for identical state.
+
+### 41.8 API
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/release-bundles` | `{tracks?} \| {catalogue:true}`, optional `dryRun`, `force` |
+
+One endpoint for a track and for the catalogue, so both behave identically.
+`tracks` and `catalogue` are mutually exclusive and one is required, matching
+the delivery and export endpoints. No path is accepted: bundles go into each
+track's own folder, resolved from stored settings.
+
+Status is **folded into the existing track views** rather than given its own
+endpoint — `TrackSummaryView.releaseBundle` carries freshness, the portable
+relative path, the published `generatedAt`, and delivered/outdated/missing
+counts. `DeliverView` gained `releaseBundles`, which is empty unless
+auto-update is on. `DeliverySettingsView` and its PUT body gained
+`autoUpdateReleaseBundle`.
+
+### 41.9 CLI
+
+```console
+npm run release-bundle -- <slug> [--dry-run] [--force]
+npm run release-bundles [-- --dry-run] [--force]
+```
+
+Same planner and same generation service as the API, so "outdated" means one
+thing in both places and there is no formatting or path logic in `scripts/`. A
+run with failures exits non-zero and says outright that delivered files are
+unaffected.
+
+### 41.10 UI
+
+- The **Delivery** section shows the bundle's freshness as a badge plus its
+  counts, and a two-step action — dry run, then confirm — labelled "Generate"
+  or "Update" depending on whether one exists.
+- The **catalogue** gets "Update release bundles" beside the existing delivery
+  action.
+- Each **track row** carries a badge, so an incomplete release is visible
+  without opening the track. Hidden entirely when no destination is configured.
+- **Delivery settings** gained an "Update release bundles" toggle.
+- Phase 2C-B styling is reused: the badge shares the delivery badge's shape and
+  the existing status colours.
+
+### 41.11 Catalogue behaviour
+
+`planReleaseBundles` buckets every track into current / outdated / missing /
+unavailable. Only **missing and outdated** are written by default, so running it
+over a settled catalogue does no work and rewrites nothing; `--force` is there
+when a rewrite is wanted. Tracks with no destination, or that cannot be
+described at all, are set aside rather than counted as work.
+
+Each track is contained: a folder that cannot be written reports its own
+failure and **the rest of the catalogue still gets bundles**.
+
+### 41.12 Races and locking
+
+No new lock primitive was needed, and no global catalogue lock exists.
+
+- **Two generations of the same track.** Serialized in-process by
+  `withFileMutation` on the JSON path. Across processes the document is a *pure
+  function of what is on disk*, so racing generators write the same bytes and
+  whichever renames last is still correct. Proven by three concurrent forced
+  generations converging.
+- **Delivery during generation, or metadata changing mid-generation.** Whatever
+  is written describes one coherent state and carries that state's own id, so
+  newer state simply makes the bundle outdated and regenerating catches up. A
+  bundle is never left claiming to be current when it is not.
+- **Destination changing mid-generation.** Caught by the identity re-check
+  before writing (§41.5).
+- **Catalogue overlapping a manual track generation.** Same mutex, same
+  purity argument.
+- **No render lock is taken.** A bundle is a description; it has no business
+  holding a render target. Auto-update runs after the delivery has finished and
+  released its lock.
+
+### 41.13 Auto-update after delivery
+
+`autoUpdateReleaseBundle`, machine-local, **off by default** — nothing starts
+writing into a synced folder unannounced. When on, a track's bundle is rewritten
+after a successful delivery: once per track rather than once per format, after
+the target lock is released, and it never throws. A bundle that could not be
+written leaves the delivered files exactly where they are, so "delivered, bundle
+not updated" is reported in the response and printed by the CLI rather than
+turned into a failed delivery.
+
+### 41.14 Performance
+
+- Freshness: one small file read per track, plus coverage the view already had.
+  No video touched.
+- Generation: one `ffprobe` header read per track, two small text writes.
+- No watchers, no recursive destination scans, no MP4 hashing or decoding, no
+  Chromium, no new dependencies. Idle when unused, and entirely absent when no
+  destination is configured.
+
+### 41.15 Tests (28 added, 235 total)
+
+`tests/release-bundle.test.mts` uses real directories in a temp root and passes
+settings explicitly, so no test reads or writes the project's own
+`delivery.local.json`.
+
+Covers: a complete release; partial releases and one with nothing delivered;
+no destination; an MP4 without a receipt not counting as shipped; a stale
+canonical export; a re-render leaving the previous delivery outdated and
+re-delivery restoring it; freshness following metadata, intent, delivery and
+folder changes; a hand-edited or touched bundle not reading as current; a
+half-updated pair; deterministic JSON ordering and byte-identical Markdown;
+fingerprint stability under a forced rewrite; schema version; size, duration,
+dimensions and fps; both files never observed partially written; a failed
+publication preserving the previous bundle; temp cleanup; path traversal;
+no absolute paths in `release.json`; catalogue skip-current and per-track
+failure containment; tracks without a destination; concurrent generation;
+metadata and destination races; and auto-update in all three states.
+
+### 41.16 Verification performed
+
+- `npm run lint` (ESLint + TypeScript) clean; **235 tests pass**, suite run
+  three times consecutively.
+- Vite production build passes (the pre-existing >500 kB advisory is unchanged).
+- `validate-track` and `prepare-track` on `ghetto-geek` exit 0.
+- A synthetic 4-second probe was rendered in one of its two intended formats,
+  delivered, and bundled: the JSON parsed, the Markdown read cleanly, the
+  partial state was reported correctly, and the reported duration matched the
+  real render exactly. Rendering and delivering the second format made the
+  bundle outdated, and regenerating completed it.
+- The API exercised for a track, the catalogue, dry runs, and every refused
+  request shape. The UI driven in a real headless browser: badges in the track
+  list, the Delivery section's status line, and the two-step flow writing an
+  outdated bundle and returning it to current.
+- Auto-update proved end to end through the API: outdated → deliver → bundle
+  rewritten to current, reported in the delivery response.
+- **Ghetto Geek was not re-rendered and its assets were not touched.** Its
+  exports predate manifests, so they read as stale and its bundle correctly
+  reads as not written.
+- Final state: no leaked locks, no leftover fixtures, no temp files, no orphaned
+  workers or Chromium.
+
+### 41.17 Limitations
+
+- **The two files are not atomically published together.** Faced rather than
+  hidden: the order is fixed, both carry the same id, a disagreeing pair reads
+  as outdated, and regenerating repairs it.
+- **Cross-process generation is not mutually excluded**, only in-process. It is
+  safe because the document is a pure function of disk state, so racers write
+  identical bytes; the residual is that the *later* rename wins, which is
+  correct either way.
+- **A bundle can be outdated the instant it is written** if a delivery lands
+  during generation. Self-healing by design, and visible as `outdated`.
+- **Duration needs ffprobe.** Without it the duration fields are null and the
+  Markdown shows `—`; everything else still works.
+- **`bytes` is only reported for confirmed deliveries**, so an outdated entry
+  shows no size even though a file is sitting there.
+- **Bundles are not deleted.** A changed delivery folder leaves the old
+  folder's bundle in place, describing what is still in that folder. Tidying the
+  destination is the user's.
+- **Bundle writes are not fenced by a pinned working directory** the way the
+  delivery copy is. They are small text writes with a sub-millisecond window,
+  validated and identity-checked immediately before writing; forking a helper
+  for two text files would be disproportionate.
+- **No per-track bundle lock file.** Considered and rejected as unnecessary
+  given the purity argument above; it would be the first thing to add if
+  generation ever stopped being deterministic.
+
+### 41.18 Commits
+
+- `4177dca` — bundle schema, fingerprint, freshness, generation and publication.
+- `62d41ef` — API endpoint, catalogue planner and CLI.
+- `72a4563` — UI: status, badges, catalogue action.
+- `15668f3` — opt-in auto-update, destination re-check fix, remaining tests.
+- Documentation follow-up: this section.
+
+All commits are local only. **Do not push without a new instruction.**
+
+### 41.19 Recommended next major feature (not started)
+
+**A delivery log per destination** — an append-only `delivered.log` (or a small
+rolling JSON) at the destination root recording each delivery as it happens:
+timestamp, track, format, bytes, export fingerprint. Release bundles describe a
+*current* state per track; a log answers "what went out this week, across
+everything", which is the one question the current model cannot. It reuses
+receipts and the delivery service unchanged, needs no new concepts, and is
+append-only so it has none of the two-file atomicity awkwardness. Keep it
+bounded, and keep it out of git.
 
 ---
 

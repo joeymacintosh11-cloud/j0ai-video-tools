@@ -740,9 +740,21 @@ test("a catalogue run writes only what is missing or outdated", async (t) => {
   await fresh.publish();
   await fresh.deliver("youtube-16x9", root);
 
-  const plan = await planReleaseBundles({ settings });
-  assert.ok(plan.current.some((state) => state.slug === settled.slug));
-  assert.ok(plan.missing.some((state) => state.slug === fresh.slug));
+  // Named rather than catalogue-wide: the bucketing and the skip are the same
+  // code path either way, and naming the tracks keeps this test independent of
+  // whatever fixtures other test files hold at the same moment.
+  const plan = await planReleaseBundles({
+    slugs: [settled.slug, fresh.slug],
+    settings,
+  });
+  assert.deepEqual(
+    plan.current.map((state) => state.slug),
+    [settled.slug],
+  );
+  assert.deepEqual(
+    plan.missing.map((state) => state.slug),
+    [fresh.slug],
+  );
 
   const results = await generatePlannedBundles(plan, { settings });
   const written = results.filter((result) => result.generated).map((r) => r.slug);
@@ -778,7 +790,10 @@ test("one track failing does not stop the rest of the catalogue", async (t) => {
   await execFileAsync("chmod", ["500", folder]);
   t.after(() => execFileAsync("chmod", ["700", folder]).catch(() => undefined));
 
-  const plan = await planReleaseBundles({ settings });
+  const plan = await planReleaseBundles({
+    slugs: [broken.slug, fine.slug],
+    settings,
+  });
   const results = await generatePlannedBundles(plan, { settings });
 
   await execFileAsync("chmod", ["700", folder]);
@@ -797,15 +812,49 @@ test("a track with no destination is set aside, not counted as work", async (t) 
   const { planReleaseBundles } = await import(
     "../server/services/releaseBundlePlan.ts"
   );
-  await setup(t);
+  const f = await setup(t);
 
-  const plan = await planReleaseBundles({ settings: settingsFor(null) });
+  const plan = await planReleaseBundles({
+    slugs: [f.slug],
+    settings: settingsFor(null),
+  });
 
   assert.equal(plan.root, null);
   assert.deepEqual(plan.missing, []);
   assert.deepEqual(plan.outdated, []);
-  assert.ok(plan.unavailable.length >= 1);
-  assert.equal(plan.unavailable[0].freshness, "not_configured");
+  assert.deepEqual(plan.current, []);
+  assert.deepEqual(
+    plan.unavailable.map((state) => [state.slug, state.freshness]),
+    [[f.slug, "not_configured"]],
+  );
+});
+
+test("a catalogue run covers every track and contains what it cannot describe", async (t) => {
+  const { planReleaseBundles } = await import(
+    "../server/services/releaseBundlePlan.ts"
+  );
+  const ready = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const root = await destination(t);
+  const settings = settingsFor(root);
+
+  await ready.publish();
+  await ready.deliver("youtube-16x9", root);
+
+  // Catalogue-wide, so tolerant of whatever else is on disk: what matters is
+  // that every track lands in exactly one bucket and this one is in the right
+  // bucket.
+  const plan = await planReleaseBundles({ settings });
+  const buckets = [
+    ...plan.current,
+    ...plan.outdated,
+    ...plan.missing,
+    ...plan.unavailable,
+  ];
+
+  assert.equal(plan.catalogue, true);
+  assert.ok(plan.tracks >= 1);
+  assert.equal(buckets.length, plan.tracks, "each track is bucketed once");
+  assert.ok(plan.missing.some((state) => state.slug === ready.slug));
 });
 
 /* ------------------------------------------------------------------ *

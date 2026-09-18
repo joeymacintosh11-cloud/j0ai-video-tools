@@ -460,6 +460,70 @@ from the destination.
 **Deliver after each render** is available in Delivery settings and is off
 unless you turn it on.
 
+### Release bundles
+
+Every delivered track can describe itself. A release bundle is two small files
+written beside the delivered videos:
+
+```
+Toshi Exports/
+  Ghetto Geek/
+    ghetto-geek-youtube-16x9.mp4
+    ghetto-geek-vertical-9x16.mp4
+    release.json
+    release.md
+```
+
+`release.md` is what you read when you open the folder:
+
+```markdown
+# Ghetto Geek — Toshi
+
+Key: F Minor
+BPM: 100
+
+## Delivered
+
+- YouTube 16:9 — 1920×1080 — 3:05 — 62.4 MB
+- Reels 9:16 — 1080×1920 — 3:05 — 59.8 MB
+
+## Missing
+
+- Square 1:1 — not rendered yet
+```
+
+`release.json` is the same thing for anything that reads it, with preset ids,
+dimensions, frame rate, duration, byte sizes, delivery timestamps and the
+canonical export fingerprint each copy was made from. **Neither file records an
+absolute path** — a bundle travels with its folder.
+
+Generate one from the Delivery section of a track, from the catalogue action, or
+from the terminal:
+
+```console
+npm run release-bundle -- ghetto-geek --dry-run
+npm run release-bundle -- ghetto-geek
+npm run release-bundles
+npm run release-bundles -- --force
+```
+
+**A partial release is a first-class result.** A track that ships two of three
+formats gets a bundle saying exactly that, and delivered, outdated and missing
+stay three separate answers — an MP4 sitting at the destination is never itself
+taken as proof that something shipped, only a receipt that still matches the
+current export.
+
+The app shows whether each bundle still describes what shipped — current,
+outdated or not written yet — and only missing and outdated bundles are
+rewritten, so running it over a settled catalogue does nothing. A bundle goes
+outdated when the metadata changes, the intended formats change, something is
+delivered, or a re-render changes what should ship; it is a fingerprint of that
+state, not a timestamp, so touching the file cannot make it look current.
+
+**Update release bundles** in Delivery settings rewrites a track's bundle after
+a successful delivery. Off unless you turn it on, and a bundle that fails to
+write never affects the files that were delivered.
+
 ```console
 curl -X POST http://127.0.0.1:4600/api/render-batches \
   -H 'content-type: application/json' \
@@ -595,6 +659,7 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | PUT | `/api/delivery/settings` | Set `{"root":"/abs/path"}` (or `null` to turn it off) / `{"autoDeliver":true}` |
 | POST | `/api/delivery/deliver` | Plan/copy current exports; `{"tracks":[...]}` or `{"catalogue":true}`, optional `dryRun` |
 | POST | `/api/delivery/reveal` | Show the destination in Finder (macOS); takes a slug, never a path |
+| POST | `/api/release-bundles` | Write release.json/release.md; `{"tracks":[...]}` or `{"catalogue":true}`, optional `dryRun`/`force` |
 
 Successful responses are `{"ok":true,"data":...}`. Failures are
 `{"ok":false,"error":{"code","message","path?"}}`, where `code` is the shared
