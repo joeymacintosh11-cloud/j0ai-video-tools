@@ -319,27 +319,37 @@ export const TrackDeliveryHistory: React.FC<{ readonly slug: string }> = ({
 
   if (history === null || history.root === null) return null;
 
-  if (history.events.length === 0) {
-    return (
-      <p className="muted">
-        {history.status === "missing"
-          ? "No deliveries recorded yet."
-          : "No deliveries of this track are recorded."}
-      </p>
-    );
-  }
+  // The label lives here rather than in the section, so nothing is left
+  // hanging above an empty list when there is no destination to read.
+  const label = (
+    <p className="exports__intent">
+      <span className="exports__intentlabel">Recent</span>
+      <span className="muted">
+        {history.events.length === 0
+          ? history.status === "missing"
+            ? "nothing delivered from here yet"
+            : "no deliveries of this track are recorded"
+          : `last ${history.events.length} deliver${history.events.length === 1 ? "y" : "ies"}`}
+      </span>
+    </p>
+  );
+
+  if (history.events.length === 0) return label;
 
   const repeats = new Set(history.redelivered);
 
   return (
-    <ul className="history__list history__list--compact">
-      {history.events.map((event) => (
-        <HistoryRow
-          key={event.eventId}
-          event={event}
-          redelivered={repeats.has(event.eventId)}
-        />
-      ))}
-    </ul>
+    <>
+      {label}
+      <ul className="history__list history__list--compact">
+        {history.events.map((event) => (
+          <HistoryRow
+            key={event.eventId}
+            event={event}
+            redelivered={repeats.has(event.eventId)}
+          />
+        ))}
+      </ul>
+    </>
   );
 };

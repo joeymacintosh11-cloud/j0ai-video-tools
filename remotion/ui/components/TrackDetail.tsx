@@ -187,9 +187,6 @@ export const TrackDetail: React.FC<{
 
           {/* When this last went out, which the marks above cannot say: they
               describe the destination's current contents, not its past. */}
-          <p className="exports__intent">
-            <span className="exports__intentlabel">Recent</span>
-          </p>
           <TrackDeliveryHistory slug={track.slug} />
 
           <div className="form__actions">

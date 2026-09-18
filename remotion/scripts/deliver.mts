@@ -183,6 +183,14 @@ runCli("delivering exports", async () => {
         ? `✓ ${outcome.destinationRelativePath}`
         : `✗ ${outcome.slug} / ${outcome.presetId}: ${outcome.message ?? outcome.status}`,
     );
+
+    // The copy landed and its receipt is committed, so this is a warning and
+    // not a failure — but a delivery missing from the log is worth knowing
+    // about, and reconciling is what puts it right.
+    if (outcome.historyProblem !== null) {
+      console.log(`  ! not recorded in the delivery log — ${outcome.historyProblem}`);
+      console.log(`    Recover it with: npm run delivery-history-reconcile`);
+    }
   }
 
   if (failed.length > 0) {

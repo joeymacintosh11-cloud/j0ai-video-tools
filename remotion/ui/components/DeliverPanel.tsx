@@ -149,7 +149,11 @@ const ScopedDeliverPanel: React.FC<DeliverPanelProps> = ({ label, tracks, disabl
                   <span className="exportmissing__preset">{outcome.label}</span>
                   <span className="exportmissing__path">
                     {outcome.status === "delivered"
-                      ? outcome.destinationRelativePath
+                      ? /* A copy that landed but was not recorded is still a
+                           copy that landed, so it says both. */
+                        (outcome.historyProblem === null
+                          ? outcome.destinationRelativePath
+                          : `${outcome.destinationRelativePath} — not recorded in the delivery log`)
                       : (outcome.message ?? outcome.status)}
                   </span>
                 </li>
