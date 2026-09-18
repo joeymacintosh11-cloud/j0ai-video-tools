@@ -253,7 +253,10 @@ test("a current export is copied to the destination, leaving the original alone"
     outcome.destinationRelativePath,
     `${f.slug}/${f.slug}-youtube-16x9.mp4`,
   );
+  // The video, plus the destination's append-only delivery log. Nothing else
+  // is ever written there.
   assert.deepEqual(await files(root), [
+    "delivery-log.jsonl",
     `${f.slug}/${f.slug}-youtube-16x9.mp4`,
   ]);
   assert.deepEqual(
@@ -465,10 +468,17 @@ test("delivery writes a receipt that matches the current export", async (t) => {
     path.dirname(deliveryReceiptPath(f.slug, "youtube-16x9")),
     trackOutputLocation(f.slug, "youtube-16x9").dir,
   );
+  // A receipt is never written to the destination, which may be a folder other
+  // people look at. The delivery log is the one deliberate exception, because
+  // a record of what went out belongs with what went out.
   assert.equal(
-    (await files(root)).some((name) => name.endsWith(".json")),
+    (await files(root)).some((name) => name.endsWith(".delivery.json")),
     false,
-    "no bookkeeping files are dropped into the destination",
+    "no receipt is dropped into the destination",
+  );
+  assert.deepEqual(
+    (await files(root)).filter((name) => !name.endsWith(".mp4")),
+    ["delivery-log.jsonl"],
   );
 });
 
@@ -608,6 +618,7 @@ test("several formats of one track each deliver to their own file", async (t) =>
   assert.deepEqual(await files(root), [
     `Multi Format/${f.slug}-square-1x1.mp4`,
     `Multi Format/${f.slug}-youtube-16x9.mp4`,
+    "delivery-log.jsonl",
   ]);
 });
 

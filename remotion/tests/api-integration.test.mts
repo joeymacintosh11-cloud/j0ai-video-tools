@@ -454,6 +454,54 @@ test("delivery requests name tracks, never paths", async (t) => {
   assert.equal(traversal.body.error.code, "INVALID_SLUG");
 });
 
+test("delivery history validates every filter and bounds the response", async (t) => {
+  const { base } = await api(t);
+
+  const get = async (query: string) => {
+    const response = await fetch(`${base}/api/delivery-history${query}`);
+    return { status: response.status, body: await response.json() };
+  };
+
+  // Every parameter is checked before the log is touched, so a typo is a 400
+  // rather than a silently ignored filter or an unbounded answer.
+  for (const query of [
+    "?limit=0",
+    "?limit=501",
+    "?limit=lots",
+    "?limit=1.5",
+    "?order=sideways",
+    "?from=last%20tuesday",
+    "?to=nonsense",
+    "?track=../../etc",
+    `?preset=${"x".repeat(80)}`,
+  ]) {
+    const refused = await get(query);
+    assert.equal(refused.status, 400, query);
+    assert.match(refused.body.error.code, /INVALID_REQUEST|INVALID_SLUG/, query);
+  }
+
+  // The bound is reported, so a client knows the answer is a page.
+  const defaulted = await get("");
+  assert.equal(defaulted.status, 200);
+  assert.equal(defaulted.body.data.limit, 50);
+  assert.equal(Array.isArray(defaulted.body.data.events), true);
+
+  // A relative period is accepted as well as an ISO instant.
+  assert.equal((await get("?from=7d&order=oldest&limit=5")).status, 200);
+  assert.equal((await get("?from=2026-09-01T00:00:00.000Z")).status, 200);
+
+  // Read-only: the collection takes GET, and reconcile takes POST, and
+  // nothing here accepts a path.
+  const wrongMethod = await fetch(`${base}/api/delivery-history`, { method: "POST" });
+  assert.equal(wrongMethod.status, 404);
+  const reconcileGet = await fetch(`${base}/api/delivery-history/reconcile`);
+  assert.equal(reconcileGet.status, 404);
+  const reconciled = await fetch(`${base}/api/delivery-history/reconcile`, {
+    method: "POST",
+  });
+  assert.equal(reconciled.status, 200);
+});
+
 test("a render refused for a locked target answers 409, not a queued job", async (t) => {
   const { acquireRenderTargetLock, inspectRenderTargetLock } = await import(
     "../services/render/renderLock.ts"
