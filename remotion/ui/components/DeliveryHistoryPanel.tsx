@@ -4,6 +4,7 @@ import type {
   DeliveryHistoryView,
   DeliveryLogEvent,
 } from "../../src/domain/api/views.ts";
+import { DELIVERY_LOG_STATUS_NOTES } from "../../src/domain/delivery/deliveryHistory.ts";
 import {
   formatBundleTimestamp,
   formatBytes,
@@ -319,6 +320,20 @@ export const TrackDeliveryHistory: React.FC<{ readonly slug: string }> = ({
 
   if (history === null || history.root === null) return null;
 
+  // A damaged log must not look like a complete answer here either, even
+  // though this view is only ever a few rows of one track. It says so briefly
+  // and points at the full view, which carries the explanation.
+  const damage =
+    history.status === "complete" || history.status === "missing" ? null : (
+      <p className="note note--warning">
+        <span className="note__message">
+          {DELIVERY_LOG_STATUS_NOTES[history.status] ??
+            "The delivery log could not be read in full."}{" "}
+          These rows may be incomplete.
+        </span>
+      </p>
+    );
+
   // The label lives here rather than in the section, so nothing is left
   // hanging above an empty list when there is no destination to read.
   const label = (
@@ -334,13 +349,21 @@ export const TrackDeliveryHistory: React.FC<{ readonly slug: string }> = ({
     </p>
   );
 
-  if (history.events.length === 0) return label;
+  if (history.events.length === 0) {
+    return (
+      <>
+        {label}
+        {damage}
+      </>
+    );
+  }
 
   const repeats = new Set(history.redelivered);
 
   return (
     <>
       {label}
+      {damage}
       <ul className="history__list history__list--compact">
         {history.events.map((event) => (
           <HistoryRow

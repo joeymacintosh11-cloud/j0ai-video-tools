@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import {
   DELIVERY_HISTORY_DEFAULT_LIMIT,
+  isSeriousLogDamage,
   redeliveredEventIds,
   selectDeliveryHistory,
   summarizeDeliveryHistory,
@@ -229,8 +230,9 @@ export const reconcileDeliveryHistory = async ({
   const read = readDeliveryLog(root);
 
   // Appending onto damage would bury it. A truncated tail is repaired on
-  // request; anything worse is for someone to look at first.
-  if (read.status === "corrupt" || read.status === "unsupported") {
+  // request, and a duplicate is reported rather than fatal; anything worse is
+  // for someone to look at first.
+  if (isSeriousLogDamage(read.status)) {
     return {
       root,
       rootProblem: problem,

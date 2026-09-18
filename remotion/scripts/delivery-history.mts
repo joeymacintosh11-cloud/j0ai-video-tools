@@ -9,6 +9,7 @@ import {
 } from "../src/domain/delivery/deliveryHistory.ts";
 import {
   readDeliveryLog,
+  releaseDeliveryLogLock,
   repairDeliveryLogTail,
   writeDeliveryReport,
 } from "../services/delivery/deliveryHistoryLog.ts";
@@ -49,6 +50,7 @@ const printUsage = () => {
       "  --report          Also write delivery-report.md to the destination",
       "  --reconcile       Append events for receipts that have none",
       "  --repair-tail     Drop an incomplete final line, and nothing else",
+      "  --release-lock    Clear an append lock no live process here holds",
       "",
       "History is append-only: nothing here deletes or rewrites an event.",
       "",
@@ -92,6 +94,7 @@ const parseArgs = (argv: string[]) => {
     report: flags.includes("--report"),
     reconcile: flags.includes("--reconcile"),
     repairTail: flags.includes("--repair-tail"),
+    releaseLock: flags.includes("--release-lock"),
     help: flags.includes("--help"),
   };
 };
@@ -133,6 +136,28 @@ runCli("reading delivery history", async () => {
   }
 
   const settings = await readDeliverySettings();
+
+  if (options.releaseLock) {
+    const { root } = await queryDeliveryHistory({ settings, filter: { limit: 1 } });
+
+    if (root === null) {
+      throw new TrackError(
+        trackIssue("INVALID_REQUEST", "No export destination is configured."),
+      );
+    }
+
+    const released = await releaseDeliveryLogLock(root);
+
+    if (!released.released) {
+      throw new TrackError(
+        trackIssue("INVALID_REQUEST", released.problem ?? "The lock was not cleared."),
+      );
+    }
+
+    console.log(`✓ Cleared the delivery log's append lock.`);
+    if (released.problem !== null) console.log(`  ${released.problem}`);
+    return;
+  }
 
   if (options.repairTail) {
     const { root } = await queryDeliveryHistory({ settings, filter: { limit: 1 } });
