@@ -74,6 +74,11 @@ export type TrackSummaryView = {
   readonly analysisPresent: boolean;
   readonly analysisUpToDate: boolean;
   readonly renderPresent: boolean;
+  /**
+   * Per-format export state, in preset order — the one place this lives, so the
+   * track list and the detail panel read exactly the same thing.
+   */
+  readonly exports: readonly RenderOutputView[];
 };
 
 /** GET /api/tracks/:slug, and the response to create/metadata updates. */
@@ -98,8 +103,6 @@ export type TrackDetailView = TrackSummaryView & {
   readonly render: {
     /** True when any format has been rendered for this track. */
     readonly present: boolean;
-    /** One entry per export format, in preset order. */
-    readonly outputs: readonly RenderOutputView[];
     /** A render made before presets existed still sits at out/<slug>.mp4. */
     readonly legacyPresent: boolean;
     /** The default format's output; kept for callers predating presets. */

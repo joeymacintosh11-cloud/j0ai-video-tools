@@ -4,6 +4,8 @@ import type {
   ApiResponse,
   CreateRenderBatchBody,
   CreateRenderBatchView,
+  ExportMissingBody,
+  ExportMissingView,
   CreateTrackBody,
   HealthView,
   PrepareTrackView,
@@ -258,6 +260,22 @@ export const cancelRenderBatch = (
     `/api/render-batches/${encodeURIComponent(batchId)}/cancel`,
     "POST",
   );
+
+/**
+ * Queues only the exports the given tracks do not already have.
+ *
+ * With `dryRun` the same plan comes back without anything being queued, which
+ * is what lets the UI show a summary before committing.
+ */
+export const exportMissing = (
+  tracks: readonly string[],
+  presets: readonly RenderPresetId[],
+  dryRun: boolean,
+): Promise<ExportMissingView> => {
+  const body: ExportMissingBody = { tracks, presets, dryRun };
+
+  return jsonRequest<ExportMissingView>("/api/export-missing", "POST", body);
+};
 
 /** SSE endpoint for a batch's aggregate; consumed with EventSource. */
 export const renderBatchEventsUrl = (batchId: string): string =>

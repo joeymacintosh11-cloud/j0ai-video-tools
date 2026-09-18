@@ -239,7 +239,7 @@ export const RenderPanel: React.FC<{
         ) : null}
 
         {!active
-          ? track.render.outputs
+          ? track.exports
               .filter((output) => output.present)
               .map((output) => (
                 <button

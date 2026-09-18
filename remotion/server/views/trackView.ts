@@ -21,6 +21,12 @@ import {
 
 export const toTrackSummaryView = (
   inspection: TrackInspection,
+  /**
+   * Work in flight, keyed "<slug>::<presetId>". Passed in rather than read from
+   * the render manager here, so this stays a pure mapping and the queue stays
+   * the caller's concern. Omitted means "nothing in flight".
+   */
+  inFlight: ReadonlyMap<string, "queued" | "active"> = new Map(),
 ): TrackSummaryView => ({
   slug: inspection.slug,
   // Falls back to the draft's title so a track that is not yet valid still
@@ -36,6 +42,22 @@ export const toTrackSummaryView = (
   analysisPresent: inspection.facts.analysisExists,
   analysisUpToDate: inspection.facts.analysisUpToDate,
   renderPresent: inspection.facts.outputExists,
+  exports: trackExportCoverage(inspection.slug).map((facts) => {
+    const state = inFlight.get(`${inspection.slug}::${facts.presetId}`);
+
+    return {
+      presetId: facts.presetId,
+      label: facts.label,
+      outputLabel: facts.outputLabel,
+      outputPath: facts.rendered ? facts.outputPath : null,
+      present: facts.rendered,
+      bytes: facts.bytes,
+      modifiedAt: facts.modifiedAt,
+      empty: facts.empty,
+      queued: state === "queued",
+      active: state === "active",
+    };
+  }),
 });
 
 export const toTrackDetailView = (
@@ -55,10 +77,8 @@ export const toTrackDetailView = (
   const defaultPresent = inspection.facts.renderedPresets.includes(
     DEFAULT_RENDER_PRESET_ID,
   );
-  const coverage = trackExportCoverage(inspection.slug);
-
   return {
-    ...toTrackSummaryView(inspection),
+    ...toTrackSummaryView(inspection, inFlight),
     metadata: inspection.metadata,
     metadataDraft: inspection.metadataDraft,
     metadataRevision: inspection.metadataRevision,
@@ -71,24 +91,6 @@ export const toTrackDetailView = (
     },
     render: {
       present: inspection.facts.outputExists,
-      // Per-format outputs. The UI reads this; the three fields below stay for
-      // callers written before presets existed.
-      outputs: coverage.map((facts) => {
-        const state = inFlight.get(`${inspection.slug}::${facts.presetId}`);
-
-        return {
-          presetId: facts.presetId,
-          label: facts.label,
-          outputLabel: facts.outputLabel,
-          outputPath: facts.rendered ? facts.outputPath : null,
-          present: facts.rendered,
-          bytes: facts.bytes,
-          modifiedAt: facts.modifiedAt,
-          empty: facts.empty,
-          queued: state === "queued",
-          active: state === "active",
-        };
-      }),
       legacyPresent: inspection.facts.legacyOutputExists,
       /** The default format's output, or the pre-preset file if that is what exists. */
       outputLabel: defaultOutput.label,

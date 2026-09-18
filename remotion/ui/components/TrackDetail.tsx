@@ -3,6 +3,8 @@ import type { TrackDetailView } from "../../src/domain/api/views.ts";
 import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 import { publicAssetUrl } from "../api/assetUrl.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
+import { ExportMissingPanel } from "./ExportMissingPanel.tsx";
+import { ExportStatus } from "./ExportStatus.tsx";
 import { AssetDropZone } from "./AssetDropZone.tsx";
 import { MetadataForm } from "./MetadataForm.tsx";
 import { PrepareActions } from "./PrepareActions.tsx";
@@ -106,6 +108,19 @@ export const TrackDetail: React.FC<{
           slug={track.slug}
           presetId={formats[0] ?? "youtube-16x9"}
           canPreview={track.metadataValid && track.coverPresent && track.audioPresent}
+        />
+      </section>
+
+      <section className="section">
+        <h3 className="section__title">Exports</h3>
+        <ExportStatus exports={track.exports} />
+        <ExportMissingPanel
+          label="Export missing"
+          tracks={[track.slug]}
+          formats={formats}
+          disabled={!track.validation.ok}
+          onQueued={onBatchStarted}
+          onChanged={onChanged}
         />
       </section>
 

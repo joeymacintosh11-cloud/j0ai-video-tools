@@ -39,8 +39,14 @@ export const handleListTracks = async (
   response: ServerResponse,
 ): Promise<void> => {
   const tracks = await listTracks();
+  const inFlight = renderManager.inFlightTargets();
 
-  sendOk(response, tracks.map(toTrackSummaryView));
+  // Explicit arrow: passing the function directly would hand map's index
+  // argument to the inFlight parameter.
+  sendOk(
+    response,
+    tracks.map((inspection) => toTrackSummaryView(inspection, inFlight)),
+  );
 };
 
 export const handleGetTrack = async (
@@ -201,7 +207,7 @@ export const handleValidateTrack = async (
     slug,
     status: inspection.status,
     validation: inspection.validation,
-    assets: toTrackSummaryView(inspection),
+    assets: toTrackSummaryView(inspection, renderManager.inFlightTargets()),
   };
 
   sendOk(response, payload);

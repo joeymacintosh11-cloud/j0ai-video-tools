@@ -6,6 +6,7 @@ import {
 import { createRenderBatch, getTrack, listTracks } from "./api/client.ts";
 import { ApiRequestError } from "./api/client.ts";
 import { ErrorBanner } from "./components/ErrorBanner.tsx";
+import { ExportMissingPanel } from "./components/ExportMissingPanel.tsx";
 import { FormatPicker } from "./components/FormatPicker.tsx";
 import { NewTrackPanel } from "./components/NewTrackPanel.tsx";
 import { QueueDrawer } from "./components/QueueDrawer.tsx";
@@ -164,6 +165,16 @@ export const App: React.FC = () => {
             >
               Add to render queue
             </button>
+            <ExportMissingPanel
+              label="Export missing for selected"
+              tracks={checked}
+              formats={formats}
+              onQueued={(id) => {
+                setBatchId(id);
+                setChecked([]);
+              }}
+              onChanged={refreshAll}
+            />
           </>
         ) : (
           <span className="muted">

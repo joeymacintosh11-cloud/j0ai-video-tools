@@ -102,7 +102,7 @@ export const AssetChecklist: React.FC<{ readonly track: TrackDetailView }> = ({
         combined row claimed the default format existed whenever any render did,
         which was wrong as soon as there was more than one format.
       */}
-      {track.render.outputs.map((output) => (
+      {track.exports.map((output) => (
         <Row
           key={output.presetId}
           name={output.label}

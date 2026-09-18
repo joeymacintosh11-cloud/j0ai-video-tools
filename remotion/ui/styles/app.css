@@ -1253,3 +1253,148 @@ body {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------- *
+ * Per-format export status
+ * ---------------------------------------------------------------- */
+
+.exports {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.exports--compact {
+  gap: 5px;
+}
+
+.export {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.export__label {
+  font-family: var(--font-label);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.export__mark {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.export--done .export__mark {
+  color: var(--status-ready);
+}
+.export--active .export__mark {
+  color: var(--warm-cream);
+}
+.export--queued .export__mark {
+  color: var(--vintage-gold);
+}
+.export--empty .export__mark {
+  color: var(--status-invalid);
+}
+.export--missing .export__mark {
+  color: var(--text-faint);
+}
+
+/* In a compact row the marks alone carry the meaning, so keep them aligned. */
+.exports--compact .export__mark {
+  width: 9px;
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------- *
+ * Export what's missing
+ * ---------------------------------------------------------------- */
+
+.exportmissing {
+  display: grid;
+  gap: 8px;
+}
+
+.exportmissing__done {
+  font-family: var(--font-label);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--status-ready);
+}
+
+.exportmissing__plan {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--vintage-gold);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  max-width: 720px;
+}
+
+.exportmissing__counts {
+  margin: 0;
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.exportmissing__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.exportmissing__list li {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) 110px minmax(120px, 2fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.exportmissing__slug {
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exportmissing__preset {
+  font-family: var(--font-label);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vintage-gold);
+}
+
+.exportmissing__path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+/* In the toolbar the panel sits inline with the other actions. */
+.app__toolbar .exportmissing {
+  display: contents;
+}
+
+@media (max-width: 860px) {
+  .exportmissing__list li {
+    grid-template-columns: 1fr auto;
+  }
+
+  .exportmissing__path {
+    display: none;
+  }
+}
