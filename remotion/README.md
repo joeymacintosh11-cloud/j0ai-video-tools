@@ -524,6 +524,54 @@ state, not a timestamp, so touching the file cannot make it look current.
 a successful delivery. Off unless you turn it on, and a bundle that fails to
 write never affects the files that were delivered.
 
+### Delivery history
+
+A release bundle says what a track ships *now*. It cannot say what went out last
+Tuesday, so each destination also keeps an append-only log of deliveries as they
+happen:
+
+```
+Toshi Exports/
+  delivery-log.jsonl
+  Ghetto Geek/
+    ...
+```
+
+One JSON object per line, one line per delivered file. Each event records the
+track and the format **as they were at the time**, the delivered file's path
+relative to the destination, its size, and the fingerprint of the export it came
+from. Renaming a track later does not rewrite what history says shipped, and no
+event ever carries an absolute path.
+
+Open **History** in the header for the destination as a whole, or read a track's
+last few deliveries in its own Delivery section. From the terminal:
+
+```console
+npm run delivery-history
+npm run delivery-history -- --track ghetto-geek
+npm run delivery-history -- --preset square-1x1 --since 7d
+npm run delivery-history -- --since 30d --limit 100 --oldest
+npm run delivery-history -- --since 7d --report
+```
+
+`--report` writes `delivery-report.md` at the destination — a plain summary of a
+chosen range, regenerated each time.
+
+**Nothing but a completed delivery is an event.** Rendering, cancelling, a failed
+copy and writing a release bundle never add one. A re-delivery does, and is
+marked as such. The log is written after the copy is published and its receipt
+committed, so an event can never describe a file that is not there — and if the
+log itself cannot be written, the delivery still succeeded and says
+"not recorded in the delivery log" rather than pretending to have failed.
+`npm run delivery-history-reconcile` puts that right from the receipts, marking
+anything it reconstructs as such.
+
+**If the log is damaged** it says so, with line numbers, and still shows what it
+could read. A crash can only ever damage the last line; that one case is
+repairable with `npm run delivery-history -- --repair-tail`, which drops the
+incomplete fragment and refuses to touch anything else. Nothing deletes or
+rewrites an event.
+
 ```console
 curl -X POST http://127.0.0.1:4600/api/render-batches \
   -H 'content-type: application/json' \
@@ -660,6 +708,8 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | POST | `/api/delivery/deliver` | Plan/copy current exports; `{"tracks":[...]}` or `{"catalogue":true}`, optional `dryRun` |
 | POST | `/api/delivery/reveal` | Show the destination in Finder (macOS); takes a slug, never a path |
 | POST | `/api/release-bundles` | Write release.json/release.md; `{"tracks":[...]}` or `{"catalogue":true}`, optional `dryRun`/`force` |
+| GET | `/api/delivery-history` | Read the destination's delivery log; `track`, `preset`, `from`, `to`, `limit`, `order` |
+| POST | `/api/delivery-history/reconcile` | Append events for deliveries whose receipts exist but were never recorded |
 
 Successful responses are `{"ok":true,"data":...}`. Failures are
 `{"ok":false,"error":{"code","message","path?"}}`, where `code` is the shared

@@ -3142,6 +3142,405 @@ receipts and the delivery service unchanged, needs no new concepts, and is
 append-only so it has none of the two-file atomicity awkwardness. Keep it
 bounded, and keep it out of git.
 
+## 42. Current State — Append-Only Delivery History (2026-09-18)
+
+Every delivery to a destination is now recorded as it happens. No composition,
+layout, presets, brand sources, final audio routing, render concurrency,
+locking, delivery or release-bundle behaviour changed. No dependencies were
+added.
+
+### 42.1 What it is, and what it is not
+
+```text
+Toshi Exports/
+├── delivery-log.jsonl        ← history: events, append-only
+├── delivery-report.md        ← optional, regenerated on request
+└── Probe Beat/
+    ├── zz-probe-youtube-16x9.mp4
+    ├── release.json          ← current state of this track
+    └── release.md
+```
+
+| | Release bundle | Delivery log |
+|---|---|---|
+| Question | what does this track ship? | what went out, and when? |
+| Scope | one track | the whole destination |
+| Shape | current state, recomputed | events, appended once |
+| Rewritten | every time it changes | never |
+
+They share types and helpers and neither is the other's source of truth. A
+missing or damaged log changes nothing about delivery state, which is derived
+from receipts and manifests; a release bundle never reads or writes an event.
+Verified by damaging the log and regenerating a bundle to the identical
+`bundleId`.
+
+### 42.2 Why JSON Lines
+
+Appending one line is a single write with no read of what came before, so a
+growing history never has to be rewritten and an append cannot rewrite an
+earlier event even by accident — which is the property an append-only record
+needs. A crash can damage at most the final line, it is readable by anything,
+and it can be streamed if it ever outgrows a single read. A single JSON array
+would fail all four: every append would rewrite the whole history.
+
+### 42.3 Event schema
+
+```json
+{
+  "schemaVersion": 1,
+  "eventId": "9940b96c-7835-414d-84dc-cf4293449047",
+  "kind": "delivery",
+  "source": "delivery",
+  "deliveredAt": "2026-09-18T19:00:54.951Z",
+  "track": { "slug": "zz-probe", "title": "Probe Beat", "artist": "Toshi",
+             "key": "F Minor", "bpm": 100, "subtitle": "…" },
+  "preset": { "id": "square-1x1", "label": "Square 1:1",
+              "width": 1080, "height": 1080, "fps": 30 },
+  "path": "Probe Beat/zz-probe-square-1x1.mp4",
+  "bytes": 363466,
+  "exportFingerprint": "<sha256>",
+  "deliveryId": "<sha256>"
+}
+```
+
+`src/domain/delivery/deliveryHistory.ts` is browser-safe and holds the shape,
+the validation rules, the filters, the summaries and the report rendering.
+
+- **A snapshot, not a reference.** The track and the format are recorded as they
+  were. Renaming a track, changing its BPM, or retiring a preset does not reach
+  back into what history says shipped. `preset.id` is a plain string for the
+  same reason: an event must stay readable after the preset it names has gone.
+- **No absolute path.** The log sits at the destination root, so `path` is
+  relative to it and the machine-local root is never repeated. Asserted by a
+  test that greps the written file, and confirmed by hand.
+- **`eventId`** is a `crypto.randomUUID()` — unique per appended event, never an
+  index or a line number.
+- **`deliveryId`** is a SHA-256 over the *receipt*: slug, preset, path,
+  timestamp, size, the delivered file's mtime, the export fingerprint and the
+  canonical file's identity. It is the identity of one completed delivery.
+- **`source`** is `delivery` or `reconciled` (§42.9).
+- **Only a completed delivery is an event.** Rendering, cancelling, a failed
+  copy, a failed receipt, or writing a release bundle never append one. A
+  re-delivery does, because "was this re-delivered?" is one of the questions
+  this exists to answer.
+
+### 42.4 Append strategy
+
+POSIX says a write to a descriptor opened with `O_APPEND` seeks to the end and
+writes with no intervening modification, and a sub-block write to a local
+filesystem does land whole in practice. "In practice" is not what an audit
+record deserves, so appends are serialized four ways:
+
+1. within this process, by `withFileMutation` on the log path;
+2. across processes, by exclusive `O_EXCL` creation of `.delivery-log.lock` at
+   the destination root;
+3. as one `write()` of one complete line to an `O_APPEND` descriptor, so an
+   append that somehow bypassed the lock still could not interleave;
+4. `fsync`ed before the lock is released, so a recorded event has reached the
+   disk before anything is told it was recorded.
+
+The lock is **per destination root** — two destinations never block each other,
+and nothing global is taken. It is held for one small write, never for a copy.
+Stale-lock recovery is the same one-sided policy as the render lock: only a dead
+PID *on this host* permits reclaiming, and a live or unreadable owner is left
+alone. Waiting is bounded at 5s with jittered retries, because the caller is a
+delivery that has already published its file and must be able to return.
+
+**Proven with real processes**, not an in-process mutex: six separate processes
+append eight events each, released together, and all 48 lines come back whole,
+unique and parseable. Two destinations run concurrently without interference.
+
+### 42.5 Crash and tail recovery
+
+An append is one write of one line ending in a newline, so a *final* line with
+no newline is an interrupted append. That distinction drives everything:
+
+| Status | Meaning |
+|---|---|
+| `missing` | no log at this destination yet — not a problem |
+| `complete` | every line parsed |
+| `recovered_tail` | only the final line was incomplete; every event before it is intact |
+| `unsupported` | at least one line came from a newer version of the tool |
+| `corrupt` | damage somewhere other than the final line, which a crash cannot cause |
+
+Every problem carries its 1-based line number. Readable events are always
+returned, so history is never lost to one bad line — but the status says plainly
+that something is wrong, and middle corruption is treated as the serious case.
+
+**`npm run delivery-history -- --repair-tail`** drops an incomplete final line
+and refuses everything else: it can only ever remove bytes that were already
+unparseable, it prints what it discarded, and it holds the append lock while it
+rewrites (an appender holding the old inode would otherwise write into an
+orphan). It is never automatic.
+
+**A bug found here.** Appending straight onto an unterminated line spliced the
+new event onto the fragment and lost it. An append now terminates the fragment
+first, so the event always lands whole — at the cost of the fragment becoming a
+mid-file malformed line and the log reading `corrupt`. That is the honest trade:
+nothing is lost and the damage is visible. Repairing promptly avoids it.
+
+### 42.6 Schema versioning
+
+Every event carries `schemaVersion`. A line declaring a *newer* version is
+reported as `unsupported` rather than as damage — it is well-formed, this
+version simply does not know it — earlier events stay readable, and nothing is
+rewritten. Reconciliation refuses to append onto an `unsupported` or `corrupt`
+log, because appending onto damage would bury it. A version of 0, a
+non-integer, or a missing one is malformed.
+
+### 42.7 Transaction boundary
+
+The order is fixed and never otherwise:
+
+1. the canonical export is current;
+2. the copy is published atomically at the destination;
+3. the delivery receipt is committed;
+4. **then** the event is appended.
+
+Recording is last because it is the only step that cannot undo anything. The
+converse is the real limitation and it is reported rather than hidden: a crash
+between 3 and 4, or a log that cannot be written, leaves a real delivery with no
+event. The delivery is still a delivery — the file is there and its receipt says
+so — so `DeliveryOutcome.historyProblem` carries the reason, the CLI prints it
+with the recovery command, and the delivery panel says "not recorded in the
+delivery log" beside the path. It is never turned into a failed delivery.
+
+Ordering with the rest: history is appended inside the per-target lock, after
+the receipt; release bundles are updated after every copy has finished and the
+lock is released. Nothing takes a render lock to write history.
+
+### 42.8 Duplicate prevention
+
+The duplicate check reads the log under the same lock the append is made under
+and compares `deliveryId`, so a retried completion step cannot record the same
+delivery twice. A genuine re-delivery writes a new receipt with a new timestamp
+and a new file mtime, so it is a different delivery and correctly gets its own
+event. Verified by replaying an identical completion.
+
+### 42.9 Reconciliation
+
+`npm run delivery-history-reconcile`, or `POST /api/delivery-history/reconcile`.
+Conservative by construction:
+
+- reads **receipts only**, never the destination's contents;
+- never invents a timestamp, a size or a fingerprint — all three are recorded on
+  the receipt;
+- skips a receipt naming a different destination, because a path is relative to
+  the root its log sits in;
+- **cannot** reconstruct metadata as it was at delivery time, because nothing
+  records that. A reconstructed event carries *current* metadata and is marked
+  `source: "reconciled"` (shown as "reconstructed" in the UI and the CLI) rather
+  than passed off as a contemporaneous record. A track whose metadata can no
+  longer be read is reported as unreconcilable instead of guessed at;
+- is idempotent, because `deliveryId` comes from the receipt.
+
+**It can only recover the most recent delivery per target**, since a receipt is
+overwritten by the next delivery of the same export. Earlier lost events are not
+recoverable, and that is stated rather than papered over.
+
+Verified end to end: a delivery made with the log unwritable, then reconciled to
+exactly one appended event, then reconciled again to none.
+
+### 42.10 Query service
+
+`server/services/deliveryHistory.ts`. Filters by track, format, `from`
+(inclusive) and `to` (exclusive), with a limit and an order. Adjacent ranges
+therefore never double-count. Sorting is by delivery time with append order as
+the tie-break, so two deliveries in the same millisecond keep the order they
+happened in.
+
+Summaries: total, today (since **local midnight**, which is what someone means
+by it), last 7 days, distinct tracks in the last 7 days, last delivery, and
+counts by track and by format. The summary is always of the **whole log** — "6
+deliveries today" is a fact about the destination, not about whatever is
+filtered. Re-deliveries are identified against the whole log too, because a page
+of recent events cannot tell whether something older came before it.
+
+The full-file read is encapsulated in `readDeliveryLog`, which hands back events
+and a status rather than a file handle, so a streaming reader can replace it
+without a single caller changing.
+
+### 42.11 API
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/delivery-history` | `track`, `preset`, `from`, `to`, `limit`, `order` |
+| POST | `/api/delivery-history/reconcile` | append events for receipts that have none |
+
+No path is accepted anywhere: the destination comes from stored settings, as it
+does for delivery and release bundles. Every parameter is validated before the
+log is touched, and the limit is bounded (default 50, max 500) whether or not
+one is given, so no request can ask for an unbounded response. `from` and `to`
+accept an ISO instant or a relative period (`7d`, `24h`).
+
+A `preset` filter is deliberately **not** checked against the known presets: an
+event records the format as it was, so filtering by one since renamed must still
+work. It is only ever compared against recorded strings, never used to build a
+path. A `track` filter is still validated as a slug.
+
+`DeliveryOutcomeView` gained `historyEventId` and `historyProblem`.
+
+### 42.12 CLI
+
+```console
+npm run delivery-history
+npm run delivery-history -- --track ghetto-geek
+npm run delivery-history -- --preset square-1x1 --since 7d
+npm run delivery-history -- --since 30d --limit 100 --oldest
+npm run delivery-history -- --since 7d --report
+npm run delivery-history -- --repair-tail
+npm run delivery-history-reconcile
+```
+
+Same query service as the API, so a filter means one thing in both places and
+there is no parsing or business logic in `scripts/`. `--report` writes
+`delivery-report.md` at the destination — a *view* of the range, regenerated in
+full each time and never read back.
+
+### 42.13 UI
+
+- **History** in the header (only once a destination exists) opens the view: the
+  destination's counts, three filters (track, format, period) and a
+  reverse-chronological list. No charts; there is nothing here to chart.
+- Each row shows time, track, format, size and the relative path, tagged
+  **re-delivered** where it is not the first time that track and format went
+  out, and **reconstructed** for a reconciled event.
+- The **track panel** shows its last five deliveries, answering "when did I last
+  ship this?" without repeating the global view's filters or summary.
+- A log that cannot be read whole says so in a warning with the line numbers,
+  and still lists what could be read. **Repair is CLI-only** — the file should be
+  looked at before it is rewritten.
+- **Reconcile with receipts** is the one write offered, and it only appends.
+- Phase 2C-B styling reused: the export list's grid, the existing status colours,
+  and the delivery badge's shape for the tags.
+
+### 42.14 Performance
+
+Measured on this machine, with events of ~500 bytes:
+
+| Log size | On disk | Read + filter + summarise |
+|---|---|---|
+| 100 events | 50 KiB | 0.24 ms |
+| 1 000 events | 501 KiB | 1.62 ms |
+| 5 000 events | 2.5 MiB | 7.55 ms |
+
+An append is **5.15 ms** on a small log and **9.41 ms** at 5 000 events —
+dominated by `fsync`, which is the point of it. It happens once per delivered
+file, after a copy that takes far longer.
+
+No watchers, no recursive destination scans, no video hashed or decoded, no
+Chromium, no new processes for an append, no new dependencies. Entirely absent
+when no destination is configured. Browsing does not read the log: history is
+only read when the history view is open or a track panel asks for its own last
+five.
+
+### 42.15 Tests (44 added, 280 total)
+
+`tests/delivery-history.test.mts` and `tests/history-process.mts` use real
+directories in a temp root and real forked processes, and always pass settings
+explicitly so nothing reads or writes the project's own `delivery.local.json`.
+
+Covers: a first delivery, a re-delivery, several formats; a failed copy and a
+failed receipt each recording nothing; a log that cannot be written leaving the
+delivery successful and saying so; unique ids and an exact key order; a metadata
+snapshot surviving later edits; a format recorded in full surviving the preset
+list; no absolute path; six concurrent processes and two independent
+destinations; an abandoned lock reclaimed and a live one refused; missing, empty,
+blank-only, truncated-tail, mid-file-malformed and future-schema logs; repair
+doing only the one safe thing; filtering by track, format and date; ordering,
+limits and the hard ceiling; summary counts and the local-midnight boundary;
+relative periods; re-delivery detection across the whole log; reconciliation
+appending once, being idempotent, and reporting what it cannot reconstruct;
+release-bundle independence under a corrupt log; the report being deterministic;
+and no temp files or locks left at the destination.
+
+One API-integration test covers every refused query shape, the reported bound,
+and the methods each route accepts. The CLI is tested on the two paths that do
+not depend on machine-local settings (`--help`, a bad `--limit`); the configured
+paths were exercised by hand, because a test that wrote `delivery.local.json`
+would race every other test in the suite.
+
+### 42.16 Verification performed
+
+- `npm run lint` (ESLint + TypeScript) clean; **280 tests pass**.
+- Vite production build passes (the pre-existing >500 kB advisory is unchanged).
+- `validate-track` and `prepare-track` on the probe exit 0; `git diff --check`
+  clean.
+- A real synthetic sequence: a 4-second probe rendered in 16:9, delivered,
+  modified at the destination and delivered again, then rendered and delivered
+  in 1:1 — **three events**, with the two 16:9 deliveries carrying distinct
+  `deliveryId`s. A failed delivery (read-only folder) added nothing. The release
+  bundle stayed current with the log deliberately corrupted, and regenerated to
+  the same `bundleId`.
+- Truncated tail detected with its line number, repaired, and the repair refused
+  a second time and on a mid-file-damaged log.
+- Reconciliation recovered a delivery made with the log unwritable, then added
+  nothing on a second run.
+- The API exercised for every filter, every refusal shape, the reported bound
+  and both methods. The UI driven in a real headless browser: the history view,
+  its filters, the re-delivered and reconstructed tags, the track panel's
+  compact list, the damage warning with its line number, and reconciling from
+  the panel.
+- **Ghetto Geek was not re-rendered and its assets were not touched.**
+- Final state: no leaked locks, no leftover fixtures, no temp files, no orphaned
+  workers or Chromium, and `delivery.local.json` back to not existing.
+
+### 42.17 Limitations
+
+- **A crash between committing a receipt and appending its event loses the
+  event.** Reconciliation recovers it, but only the most recent delivery per
+  target, because a receipt is overwritten by the next one.
+- **A reconstructed event's track snapshot is current metadata**, not metadata as
+  it was. Marked `source: "reconciled"` rather than guessed at silently.
+- **Appending after a truncated tail escalates the log to `corrupt`.** Nothing is
+  lost and it is visible; repairing the tail first avoids it.
+- **`--repair-tail` handles only an incomplete final line.** Damage anywhere else
+  is deliberately left for someone to look at.
+- **The duplicate check reads the whole log on every append**, so append cost
+  grows with history. 9.4 ms at 5 000 events; the read is encapsulated so a tail
+  scan can replace it.
+- **The whole log is read for a query.** Fine at this scale, and behind one
+  function so streaming can replace it.
+- **`.delivery-log.lock` is a hidden file at the destination**, briefly. A lock
+  from another host, or one whose contents cannot be read, is never reclaimed —
+  a stuck lock costs a warning on a delivery that already succeeded.
+- **No retention policy, by design.** An append-only audit log should not
+  silently discard events, and the log is small: ~500 bytes per delivery, so a
+  thousand deliveries is half a megabyte. If it ever matters, archive by moving
+  the file aside rather than truncating it.
+- **History is per destination.** Changing the destination root leaves the old
+  log describing what went to the old place, which is correct but means there is
+  no single lifetime view.
+- **The log is not encrypted or signed**, and is not intended as tamper-proof: it
+  is a local record in a folder the user owns.
+
+### 42.18 Commits
+
+- `efef757` — the event, its snapshot semantics and the reading rules.
+- `86d4e1c` — safe append, read, repair and the report writer.
+- `1127cf2` — recording a delivery once it is genuinely a delivery.
+- `e479d09` — API, CLI and the client.
+- `13bcc32` — UI: history view, track panel, tags, warnings.
+- `b0ab5e7` — tests against real files and real processes.
+- `c75830b` — surfacing "delivered but not recorded".
+- Documentation follow-up: this section.
+
+All commits are local only. **Do not push without a new instruction.**
+
+### 42.19 Recommended next major feature (not started)
+
+**Destination health and drift detection.** The tool now knows what should ship
+(intent), what has been rendered (manifests), what was copied (receipts), what a
+folder says about itself (bundles) and what went out (history) — all from its own
+records. What it has never done is look at the destination and ask whether it
+still holds what those records claim: a file deleted by a sync client, a folder
+renamed by hand, a stray export from a preset no longer intended. One
+`stat`-only sweep per track folder, no hashing, reporting drift as a list of
+"this is at the destination and should not be" and "this should be and is not",
+with no automatic deletion — the user decides. It reuses every existing record,
+needs no new persisted state, and closes the one remaining gap between what the
+tool believes and what is actually on the disk.
+
 ---
 
 *End of handoff. If anything in this document conflicts with the live
