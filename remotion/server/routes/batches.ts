@@ -61,12 +61,13 @@ export const handleCreateBatch = async (
   response: ServerResponse,
 ): Promise<void> => {
   const targets = readTargets(await readJsonBody(request));
-  const { batch, skipped } = renderManager.startBatch(targets);
+  const { batch, skipped, locked } = renderManager.startBatch(targets);
 
   const payload: CreateRenderBatchView = {
     batchId: batch.id,
     batch,
     skipped,
+    locked,
   };
 
   sendOk(response, payload);

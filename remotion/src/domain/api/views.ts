@@ -437,6 +437,12 @@ export type ExportMissingView = {
   readonly skippedExisting: readonly PlannedTargetView[];
   readonly skippedQueued: readonly PlannedTargetView[];
   readonly skippedActive: readonly PlannedTargetView[];
+  /**
+   * Targets another process holds a render lock on, left out of the batch.
+   * Reported separately from the queue skips because the answer is different:
+   * nothing here is being rendered by this server.
+   */
+  readonly lockedElsewhere: readonly PlannedTargetView[];
   readonly invalid: readonly InvalidTrackView[];
   /** True when every requested export already exists or is already on its way. */
   readonly nothingToDo: boolean;
@@ -448,6 +454,8 @@ export type CreateRenderBatchView = {
   readonly batch: RenderBatchView;
   /** Targets already queued or running, which were not queued again. */
   readonly skipped: readonly RenderTarget[];
+  /** Targets another process is rendering, which were not queued either. */
+  readonly locked: readonly RenderTarget[];
 };
 
 /** GET /api/renders/:jobId/logs */

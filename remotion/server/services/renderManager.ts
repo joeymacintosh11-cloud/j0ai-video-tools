@@ -13,6 +13,10 @@ import type {
   RenderTarget,
 } from "../../src/domain/api/views.ts";
 import {
+  inspectRenderTargetLock,
+  type RenderLockState,
+} from "../../services/render/renderLock.ts";
+import {
   isTerminalStatus,
   type RenderJobError,
   type RenderJobLogEntry,
@@ -121,6 +125,33 @@ class RenderManager {
     }
   }
 
+  /**
+   * Whether another process is rendering this target right now.
+   *
+   * A courtesy check, not the authority: the lock is actually taken inside the
+   * render itself, by the worker process that will publish the file. Checking
+   * here means a request that cannot possibly succeed is refused immediately,
+   * instead of queueing a job that starts a worker only to fail. A lock that
+   * appears between this check and the worker's acquisition is still caught
+   * there, which is why this being advisory is safe.
+   *
+   * This server's own renders never show up here — the worker child holds the
+   * lock, and in-memory deduplication has already rejected those.
+   */
+  private lockedElsewhere(
+    slug: string,
+    presetId: RenderPresetId,
+  ): RenderLockState | null {
+    try {
+      const state = inspectRenderTargetLock(slug, presetId);
+      return state.state === "free" ? null : state;
+    } catch {
+      // Never let a lock-directory problem stop a render from being queued;
+      // the authoritative acquisition will report it properly.
+      return null;
+    }
+  }
+
   /** Creates and queues one job. Callers have already validated their input. */
   private enqueue(
     slug: string,
@@ -178,6 +209,22 @@ class RenderManager {
       );
     }
 
+    const locked = this.lockedElsewhere(slug, presetId);
+    if (locked) {
+      throw new TrackError(
+        trackIssue(
+          "RENDER_TARGET_LOCKED",
+          locked.state === "held"
+            ? `Track "${slug}" is already rendering ${presetId} in another process ` +
+              `(pid ${locked.owner.pid}${locked.owner.jobId ? `, job ${locked.owner.jobId}` : ""}, ` +
+              `started ${locked.owner.createdAt}). Wait for it to finish rather than rendering the same file twice.`
+            : `Track "${slug}" has a render lock for ${presetId} that could not be read, ` +
+              `so it is being left alone. Clear it with \`npm run render-locks -- --release ${slug} ${presetId}\` ` +
+              `once you are certain nothing is rendering it.`,
+        ),
+      );
+    }
+
     const job = this.enqueue(slug, presetId, null);
     this.drainQueue();
 
@@ -195,6 +242,7 @@ class RenderManager {
   startBatch(targets: readonly RenderTarget[]): {
     readonly batch: RenderBatchView;
     readonly skipped: readonly RenderTarget[];
+    readonly locked: readonly RenderTarget[];
   } {
     this.assertAccepting();
 
@@ -219,6 +267,7 @@ class RenderManager {
     };
 
     const skipped: RenderTarget[] = [];
+    const locked: RenderTarget[] = [];
     const seen = new Set<string>();
 
     for (const { slug, presetId } of resolved) {
@@ -231,6 +280,14 @@ class RenderManager {
       }
       seen.add(key);
 
+      // A target another process holds is reported and left out rather than
+      // failing the whole batch: one contended format should not stop the other
+      // forty-nine from queueing.
+      if (this.lockedElsewhere(slug, presetId)) {
+        locked.push({ slug, preset: presetId });
+        continue;
+      }
+
       const job = this.enqueue(slug, presetId, batch.id);
       batch.jobIds.push(job.id);
     }
@@ -238,7 +295,7 @@ class RenderManager {
     this.batches.set(batch.id, batch);
     this.drainQueue();
 
-    return { batch: this.toBatchView(batch), skipped };
+    return { batch: this.toBatchView(batch), skipped, locked };
   }
 
   getBatch(batchId: string): RenderBatchView {
@@ -516,7 +573,7 @@ class RenderManager {
     };
 
     try {
-      child = fork(WORKER_PATH, [job.slug, job.presetId], {
+      child = fork(WORKER_PATH, [job.slug, job.presetId, job.id], {
         stdio: ["ignore", "pipe", "pipe", "ipc"],
       });
     } catch (error) {

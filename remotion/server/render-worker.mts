@@ -38,6 +38,9 @@ if (!slug) {
 
 // Absent means the default format, so an older caller still works.
 const presetId = assertRenderPresetId(process.argv[3]);
+// Recorded in the render target lock so contention can name the job. Optional:
+// a worker started without one still renders.
+const jobId = process.argv[4] ?? null;
 
 const { cancelSignal, cancel } = makeCancelSignal();
 let cancelRequested = false;
@@ -73,6 +76,7 @@ const main = async (): Promise<void> => {
     props,
     presetId,
     cancelSignal,
+    jobId,
     onPhase: (phase) => {
       if (phase === "bundling") {
         log("Bundling Remotion project.");

@@ -9,6 +9,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { fingerprintInputs } from "../tracks/exportManifest.ts";
 import { publishExport } from "./publishExport.ts";
+import { withRenderTargetLock } from "./renderLock.ts";
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
 import { COMPOSITION_ID } from "../../src/domain/video/compositionConfig.ts";
 import {
@@ -46,6 +47,8 @@ export type RenderTrackVideoOptions = {
   /** Format to render; defaults to 16:9, matching the pre-preset behaviour. */
   readonly presetId?: RenderPresetId;
   readonly cancelSignal?: CancelSignal;
+  /** Recorded in the target lock, so contention can name the job holding it. */
+  readonly jobId?: string | null;
   readonly onPhase?: (phase: RenderPhase) => void;
   readonly onResolved?: (info: RenderResolvedInfo) => void;
   readonly onProgress?: (update: RenderProgressUpdate) => void;
@@ -53,18 +56,7 @@ export type RenderTrackVideoOptions = {
 
 export type RenderTrackVideoResult = RenderResolvedInfo;
 
-/**
- * Renders a prepared track to out/<slug>/<preset>.mp4.
- *
- * Shared by the render-track CLI and the API's render worker so there is
- * exactly one place that knows how this project encodes video. The caller
- * supplies props (from prepareTrack) and gets real progress via callbacks —
- * nothing here logs or decides exit codes.
- *
- * Encoding settings are deliberately identical to what the CLI has always
- * used; changing them would change render output.
- */
-export const renderTrackVideo = async ({
+const renderToTarget = async ({
   slug,
   props,
   presetId = DEFAULT_RENDER_PRESET_ID,
@@ -176,3 +168,32 @@ export const renderTrackVideo = async ({
     await rm(bundleLocation, { recursive: true, force: true });
   }
 };
+
+/**
+ * Renders a prepared track to out/<slug>/<preset>.mp4.
+ *
+ * Shared by the render-track CLI and the API's render worker so there is
+ * exactly one place that knows how this project encodes video. The caller
+ * supplies props (from prepareTrack) and gets real progress via callbacks —
+ * nothing here logs or decides exit codes.
+ *
+ * Encoding settings are deliberately identical to what the CLI has always
+ * used; changing them would change render output.
+ *
+ * The target lock is taken here rather than at either call site, because this
+ * is the one place both the CLI and the render worker pass through: whatever
+ * starts a render, exactly one process can be producing and publishing a given
+ * slug+preset. It covers bundling too, so a second process fails fast instead
+ * of spending seconds on a bundle it will not be allowed to publish. A
+ * RENDER_TARGET_LOCKED error reaches the CLI as a non-zero exit and the API as
+ * a structured job failure.
+ */
+export const renderTrackVideo = async (
+  options: RenderTrackVideoOptions,
+): Promise<RenderTrackVideoResult> =>
+  withRenderTargetLock(
+    options.slug,
+    options.presetId ?? DEFAULT_RENDER_PRESET_ID,
+    () => renderToTarget(options),
+    { jobId: options.jobId ?? null },
+  );

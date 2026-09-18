@@ -41,6 +41,7 @@
     "render-track": "node scripts/render-track.mts",
     "render-missing": "node scripts/render-missing.mts",
     "render-catalogue-missing": "node scripts/render-missing.mts --all-tracks",
+    "render-locks": "node scripts/render-locks.mts",
     "test": "node --test tests/*.test.mts",
     "render-all-formats": "node scripts/render-track.mts --all-formats"
   }

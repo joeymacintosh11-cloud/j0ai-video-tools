@@ -22,7 +22,8 @@ export type TrackErrorCode =
   | "RENDER_JOB_NOT_FOUND"
   | "RENDER_BATCH_NOT_FOUND"
   | "RENDER_NOT_CANCELLABLE"
-  | "RENDER_ALREADY_ACTIVE";
+  | "RENDER_ALREADY_ACTIVE"
+  | "RENDER_TARGET_LOCKED";
 
 export type TrackIssue = {
   readonly code: TrackErrorCode;

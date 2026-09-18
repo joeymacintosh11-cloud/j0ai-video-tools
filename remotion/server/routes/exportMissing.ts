@@ -149,6 +149,7 @@ export const handleExportMissing = async (
       batchId: null,
       dryRun,
       queued: [],
+      lockedElsewhere: [],
       nothingToDo: selected.length === 0,
     };
 
@@ -156,11 +157,14 @@ export const handleExportMissing = async (
     return;
   }
 
-  const { batch } = renderManager.startBatch(
+  const { batch, locked } = renderManager.startBatch(
     toRenderTargets({ ...plan, selected }),
   );
   const queuedKeys = new Set(
     batch.jobs.map((job) => `${job.slug}::${job.presetId}`),
+  );
+  const lockedKeys = new Set(
+    locked.map((target) => `${target.slug}::${target.preset}`),
   );
 
   const payload: ExportMissingView = {
@@ -169,6 +173,11 @@ export const handleExportMissing = async (
     dryRun: false,
     queued: selected.filter((target) =>
       queuedKeys.has(`${target.slug}::${target.presetId}`),
+    ),
+    // Named so the UI can say "another process is rendering this" rather than
+    // silently dropping a target the user asked for.
+    lockedElsewhere: selected.filter((target) =>
+      lockedKeys.has(`${target.slug}::${target.presetId}`),
     ),
     nothingToDo: false,
   };
