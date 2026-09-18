@@ -55,6 +55,24 @@ export const assertDeliveryRootFile = (
     refuse(`Refusing a path outside the export destination ${root}.`);
   }
 
+  // A bookkeeping file that is a symlink would have every write to it land
+  // wherever it points — outside the destination, and possibly on top of
+  // something that matters. The delivered-video path is fenced the same way
+  // (its parent must be a real directory), and appends additionally pass
+  // O_NOFOLLOW so nothing can be swapped in after this check.
+  try {
+    const stat = lstatSync(file);
+    if (!stat.isFile()) {
+      refuse(
+        `${file} must be a regular file, not a link or a directory. Move it aside before continuing.`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof TrackError) throw error;
+    // Not created yet is fine; the caller creates it inside the root.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
   return file;
 };
 

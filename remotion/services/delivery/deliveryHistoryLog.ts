@@ -1,7 +1,18 @@
 import { randomInt, randomUUID } from "node:crypto";
-import { closeSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fsyncSync,
+  linkSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { open } from "node:fs/promises";
 import { hostname } from "node:os";
+import path from "node:path";
 import {
   DELIVERY_LOG_FILENAME,
   DELIVERY_REPORT_FILENAME,
@@ -42,9 +53,18 @@ import {
  *      `.delivery-log.lock` at the destination root;
  *   3. written as one `write()` of one complete line to an `O_APPEND`
  *      descriptor, so even an append that somehow bypassed the lock could not
- *      interleave with another;
- *   4. `fsync`ed before the lock is released, so a recorded event has reached
- *      the disk before anything is told it was recorded.
+ *      interleave with another. POSIX permits a short write, and Node does not
+ *      loop, so the byte count is checked and the remainder written — still
+ *      under the lock, so the continuation lands immediately after its own
+ *      prefix and the line is whole;
+ *   4. `fsync`ed before the lock is released — the file's data and its size,
+ *      and the containing directory as well on the append that creates the
+ *      file, so a recorded event has reached the disk before anything is told
+ *      it was recorded.
+ *
+ * What is *not* claimed: that a crash cannot lose the event being written. It
+ * can, right up until the fsync returns, and that is why the reader treats an
+ * unterminated final line as recoverable rather than as damage.
  *
  * The lock is per destination root, so two different destinations never block
  * each other and nothing global is ever taken. It is held for one small write,
@@ -130,6 +150,113 @@ const clearAbandoned = (file: string): boolean => {
   }
 };
 
+/**
+ * Publishes the lock complete, or not at all.
+ *
+ * The metadata is written to a private temp file and `fsync`ed, then `link`ed
+ * into place — which fails with EEXIST if someone already holds the lock, so it
+ * is still the exclusive-creation primitive. Writing *into* the lock file after
+ * creating it, as this used to, left a window in which being killed published
+ * an empty lock: unreadable, therefore never reclaimable, therefore a
+ * destination whose history could never be appended to again. There is no such
+ * window now, so "unreadable" means real corruption and is treated as such.
+ */
+const publishLock = (file: string, token: string): void => {
+  const temporary = `${file}.${randomUUID()}.tmp`;
+
+  try {
+    const descriptor = openSync(temporary, "wx");
+    try {
+      writeSync(
+        descriptor,
+        JSON.stringify({
+          pid: process.pid,
+          hostname: hostname(),
+          token,
+          createdAt: new Date().toISOString(),
+        } satisfies LockOwner),
+      );
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+
+    linkSync(temporary, file);
+  } finally {
+    // Never leaves its own temp file behind, on any path.
+    try {
+      unlinkSync(temporary);
+    } catch {
+      // Never created, or already gone.
+    }
+  }
+};
+
+export type ReleaseDeliveryLogLockResult = {
+  readonly released: boolean;
+  readonly problem: string | null;
+};
+
+/**
+ * Clears the append lock when asked to, and only then.
+ *
+ * Acquisition never clears an unreadable lock: that is the one place ownership
+ * changes hands, and guessing there is what would admit two appenders. But a
+ * lock nothing can explain would otherwise stop this destination's history
+ * being recorded forever, so there is an operator path — the same shape as
+ * `releaseRenderTargetLock`. It refuses a lock a live local process holds, and
+ * refuses one from another host, where it cannot know.
+ */
+export const releaseDeliveryLogLock = async (
+  root: string,
+): Promise<ReleaseDeliveryLogLockResult> => {
+  const file = lockPath(root);
+
+  return withFileMutation(file, async () => {
+    const owner = readOwner(file);
+
+    if (owner === null) {
+      try {
+        unlinkSync(file);
+        return {
+          released: true,
+          problem:
+            "The lock could not be read, so it was cleared. Nothing can have been holding it.",
+        };
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ENOENT"
+          ? { released: false, problem: "There is no delivery log lock to clear." }
+          : { released: false, problem: (error as Error).message };
+      }
+    }
+
+    if (owner.hostname !== hostname()) {
+      return {
+        released: false,
+        problem: `The lock is held by ${owner.hostname}, so this machine cannot tell whether it is still alive. Clear it from there.`,
+      };
+    }
+
+    if (isAlive(owner.pid)) {
+      return {
+        released: false,
+        problem: `Process ${owner.pid} on this machine still holds the lock. Wait for it, or stop it first.`,
+      };
+    }
+
+    try {
+      // Re-read, so a lock legitimately taken since is never removed.
+      if (readOwner(file)?.token !== owner.token) {
+        return { released: false, problem: "The lock changed hands; nothing was cleared." };
+      }
+      unlinkSync(file);
+      return { released: true, problem: null };
+    } catch (error) {
+      return { released: false, problem: (error as Error).message };
+    }
+  });
+};
+
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -152,20 +279,7 @@ const withAppendLock = async <T>(
 
   while (!held) {
     try {
-      const descriptor = openSync(file, "wx");
-      try {
-        writeSync(
-          descriptor,
-          JSON.stringify({
-            pid: process.pid,
-            hostname: hostname(),
-            token,
-            createdAt: new Date().toISOString(),
-          } satisfies LockOwner),
-        );
-      } finally {
-        closeSync(descriptor);
-      }
+      publishLock(file, token);
       held = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -177,7 +291,8 @@ const withAppendLock = async <T>(
           trackIssue(
             "INVALID_REQUEST",
             `The delivery log at ${root} is locked by another process and did not ` +
-              `free up within ${LOCK_TIMEOUT_MS / 1000}s.`,
+              `free up within ${LOCK_TIMEOUT_MS / 1000}s. If nothing is running, ` +
+              `clear it with: npm run delivery-history -- --release-lock`,
           ),
         );
       }
@@ -218,12 +333,84 @@ export const readDeliveryLog = (root: string): DeliveryLogRead => {
     text = readFileSync(file, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { status: "missing", events: [], problems: [], lines: 0 };
+      return {
+        status: "missing",
+        events: [],
+        problems: [],
+        lines: 0,
+        endsWithNewline: true,
+      };
     }
     throw error;
   }
 
   return parseDeliveryLog(text);
+};
+
+/**
+ * Writes one complete line to the end of the log, durably.
+ *
+ * `O_NOFOLLOW` so a symlink swapped in where the log belongs is refused rather
+ * than followed out of the destination; `O_APPEND` so the write goes to the end
+ * whatever else has happened to the file.
+ *
+ * POSIX allows `write()` to write fewer bytes than asked, and Node does not
+ * loop, so the count is checked. Continuing is safe and correct here precisely
+ * because the append lock is held: nothing else can write between the prefix
+ * and its remainder, so the two land adjacent and the line is whole. A write
+ * that makes no progress at all is a failure rather than an infinite loop.
+ */
+const appendLine = async (file: string, line: string): Promise<void> => {
+  const bytes = Buffer.from(line, "utf8");
+  // Node accepts a numeric flag set, which is the only way to ask for
+  // O_NOFOLLOW. O_NOFOLLOW is POSIX; fall back to plain append if absent.
+  const flags =
+    constants.O_WRONLY |
+    constants.O_CREAT |
+    constants.O_APPEND |
+    (constants.O_NOFOLLOW ?? 0);
+  const created = !existsSync(file);
+  const handle = await open(file, flags, 0o644);
+
+  try {
+    let written = 0;
+    while (written < bytes.length) {
+      const result = await handle.write(bytes, written, bytes.length - written);
+
+      if (result.bytesWritten <= 0) {
+        throw new Error(
+          `Wrote only ${written} of ${bytes.length} bytes to ${file} and then stopped making progress.`,
+        );
+      }
+
+      written += result.bytesWritten;
+    }
+
+    await handle.sync();
+  } finally {
+    // Best effort, and after the sync: the event is already durable by this
+    // point, so a close that fails must not be reported as "not recorded".
+    try {
+      await handle.close();
+    } catch {
+      // The descriptor is going away with this operation regardless.
+    }
+  }
+
+  // fsync on the file makes its data and size durable, but not the directory
+  // entry that first named it. Without this, the very first append to a
+  // destination could be reported as recorded and then vanish entirely.
+  if (created) {
+    const directory = await open(path.dirname(file), constants.O_RDONLY);
+    try {
+      await directory.sync();
+    } catch {
+      // Not every filesystem allows fsync on a directory; the file's own sync
+      // has already happened either way.
+    } finally {
+      await directory.close().catch(() => undefined);
+    }
+  }
 };
 
 export type AppendDeliveryLogResult = {
@@ -275,27 +462,17 @@ export const appendDeliveryLogEvent = async (
           return { appended: false, duplicate: true, problem: null };
         }
 
-        const needsNewline = existing.problems.some(
-          (problem) => problem.kind === "truncated",
-        );
+        // The leading newline matters, and it is decided by whether the file
+        // is *terminated* — not by whether a problem was found. A final line
+        // can be unterminated and still parse perfectly well (a short write
+        // that stopped on the closing brace, or an editor that stripped the
+        // newline), and appending straight onto one spliced the new event onto
+        // it and destroyed both. Terminating first means the new event always
+        // lands whole on a line of its own.
+        const needsNewline = !existing.endsWithNewline;
+        const line = `${needsNewline ? "\n" : ""}${JSON.stringify(event)}\n`;
 
-        // One write of one complete line to an O_APPEND descriptor, then fsync:
-        // the event is whole on disk before this returns, or it is absent.
-        //
-        // The leading newline matters. A hard crash can leave the log ending in
-        // an incomplete line, and appending straight onto that would splice the
-        // new event onto the fragment and lose it. Terminating the fragment
-        // first means the new event always lands whole on a line of its own —
-        // at the cost of the fragment becoming a mid-file malformed line, which
-        // is reported as corruption rather than quietly tidied away. Repairing
-        // the tail (see repairDeliveryLogTail) is the operator's call.
-        const handle = await open(file, "a");
-        try {
-          await handle.write(`${needsNewline ? "\n" : ""}${JSON.stringify(event)}\n`);
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
+        await appendLine(file, line);
 
         return { appended: true, duplicate: false, problem: null };
       }),
@@ -335,7 +512,23 @@ export const repairDeliveryLogTail = async (
 
   return withFileMutation(file, () =>
     withAppendLock(root, async () => {
-      const text = readFileSync(file, "utf8");
+      let text: string;
+      try {
+        text = readFileSync(file, "utf8");
+      } catch (error) {
+        // A destination with no history yet is not an error to repair; every
+        // other read failure is reported as itself rather than as a throw,
+        // because this runs from a CLI that should say what is wrong.
+        return {
+          repaired: false,
+          discarded: null,
+          problem:
+            (error as NodeJS.ErrnoException).code === "ENOENT"
+              ? "There is no delivery log at this destination yet, so there is nothing to repair."
+              : `The delivery log could not be read: ${(error as Error).message}`,
+        };
+      }
+
       const read = parseDeliveryLog(text);
 
       if (read.status !== "recovered_tail") {

@@ -127,8 +127,17 @@ export const deliveryIdText = (input: DeliveryIdInput): string =>
  * - malformed:   not parseable, or not a delivery event of a version we know.
  * - unsupported: written by a newer version of the tool than this one.
  * - truncated:   an incomplete final line, which a crash mid-append can leave.
+ * - duplicate:   an event whose id, or whose delivery's id, appears earlier in
+ *                the log. Nothing this tool does produces one, so it means the
+ *                log has been edited or appended to by something else — and
+ *                reporting it is the difference between a log that is healthy
+ *                and one that merely parses.
  */
-export type DeliveryLogProblemKind = "malformed" | "unsupported" | "truncated";
+export type DeliveryLogProblemKind =
+  | "malformed"
+  | "unsupported"
+  | "truncated"
+  | "duplicate";
 
 export type DeliveryLogProblem = {
   /** 1-based, so it matches what an editor shows. */
@@ -144,6 +153,10 @@ export type DeliveryLogProblem = {
  *                   is intact, and `--repair-tail` can drop the fragment.
  * - unsupported:    at least one line came from a newer version of the tool.
  *                   Earlier events are still readable; nothing is rewritten.
+ * - duplicated:     every line parsed, but an event or a delivery appears more
+ *                   than once. Reads and queries still work, so this is not
+ *                   damage — but it is not health either, and saying "complete"
+ *                   would be a lie.
  * - corrupt:        damage somewhere other than the final line. Treated as the
  *                   serious case, because a crash cannot cause it.
  */
@@ -152,6 +165,7 @@ export type DeliveryLogStatus =
   | "complete"
   | "recovered_tail"
   | "unsupported"
+  | "duplicated"
   | "corrupt";
 
 export type DeliveryLogRead = {
@@ -161,6 +175,16 @@ export type DeliveryLogRead = {
   readonly problems: readonly DeliveryLogProblem[];
   /** Lines considered, including blank and unparseable ones. */
   readonly lines: number;
+  /**
+   * Whether the file ends in a newline — i.e. whether the last line is
+   * terminated. An appender must know this and nothing else: appending onto an
+   * unterminated line splices the new event onto it and loses both. It is
+   * deliberately not inferred from whether a *problem* was found, because a
+   * final line can be unterminated and still parse perfectly well.
+   *
+   * True for a missing or empty log, since there is nothing to terminate.
+   */
+  readonly endsWithNewline: boolean;
 };
 
 export type ParsedDeliveryLogLine =
@@ -308,24 +332,66 @@ export const parseDeliveryLog = (text: string): DeliveryLogRead => {
     });
   });
 
+  // Nothing this tool writes can produce a repeat: an append checks for one
+  // under the same lock it writes under. A repeat therefore means the log was
+  // edited, merged, or written by something else, and a reader that called that
+  // "complete" would be vouching for a log it has not actually checked.
+  const seenEvents = new Set<string>();
+  const seenDeliveries = new Set<string>();
+
+  events.forEach((event, index) => {
+    const repeatedEvent = seenEvents.has(event.eventId);
+    const repeatedDelivery = seenDeliveries.has(event.deliveryId);
+
+    seenEvents.add(event.eventId);
+    seenDeliveries.add(event.deliveryId);
+
+    if (!repeatedEvent && !repeatedDelivery) return;
+
+    problems.push({
+      // Approximate: the position among parsed events, which is the line number
+      // only when nothing ahead of it failed to parse. Named as an event index
+      // in the message so it cannot be mistaken for an exact line.
+      line: index + 1,
+      kind: "duplicate",
+      message: repeatedEvent
+        ? `event ${index + 1} repeats eventId ${event.eventId}`
+        : `event ${index + 1} repeats deliveryId ${event.deliveryId}`,
+    });
+  });
+
   const status: DeliveryLogStatus = problems.some((p) => p.kind === "malformed")
     ? "corrupt"
     : problems.some((p) => p.kind === "unsupported")
       ? "unsupported"
       : problems.some((p) => p.kind === "truncated")
         ? "recovered_tail"
-        : "complete";
+        : problems.some((p) => p.kind === "duplicate")
+          ? "duplicated"
+          : "complete";
 
-  return { status, events, problems, lines: rows.length };
+  return { status, events, problems, lines: rows.length, endsWithNewline };
 };
 
-/** A log whose damage is not simply an interrupted final append. */
+/**
+ * A log that must not be appended to until someone has looked at it.
+ *
+ * `corrupt` and `unsupported` qualify: appending onto damage buries it, and
+ * appending onto a log written by a newer version risks writing something that
+ * version cannot read back. `recovered_tail` does not — an interrupted append
+ * is the expected aftermath of a crash and is handled. Nor does `duplicated`:
+ * a repeat is worth reporting, but it makes nothing unsafe to add to.
+ */
 export const isSeriousLogDamage = (status: DeliveryLogStatus): boolean =>
   status === "corrupt" || status === "unsupported";
 
 export const DELIVERY_LOG_STATUS_NOTES: Record<DeliveryLogStatus, string | null> = {
   missing: null,
   complete: null,
+  duplicated:
+    "The delivery log contains an event, or a delivery, more than once. Nothing " +
+    "this tool does produces a repeat, so the log has been edited or appended " +
+    "to by something else. Every event was read and nothing has been changed.",
   recovered_tail:
     "The last line of the delivery log is incomplete, which is what an interrupted " +
     "append leaves behind. Every event before it was read. Run " +
@@ -390,8 +456,16 @@ export const selectDeliveryHistory = (
 ): DeliveryHistorySelection => {
   const from = filter.from ? Date.parse(filter.from) : null;
   const to = filter.to ? Date.parse(filter.to) : null;
+  // A nonsense limit falls back to the default rather than to zero. Callers
+  // validate their own input — the API refuses anything out of range outright —
+  // but a NaN reaching here used to return an empty page while still reporting
+  // a non-zero match count, which reads exactly like "nothing was delivered".
+  const requested = filter.limit;
   const limit = Math.min(
-    Math.max(filter.limit ?? DELIVERY_HISTORY_DEFAULT_LIMIT, 1),
+    Math.max(
+      Number.isFinite(requested) ? Math.floor(requested as number) : DELIVERY_HISTORY_DEFAULT_LIMIT,
+      1,
+    ),
     DELIVERY_HISTORY_MAX_LIMIT,
   );
 
