@@ -10,6 +10,9 @@ import type {
   CreateTrackBody,
   DeliverBody,
   DeliverView,
+  DeliveryHistoryQuery,
+  DeliveryHistoryReconcileView,
+  DeliveryHistoryView,
   DeliveryRevealBody,
   DeliveryRevealView,
   DeliverySettingsBody,
@@ -369,6 +372,42 @@ export const generateReleaseBundles = (
 
   return jsonRequest<ReleaseBundlesView>("/api/release-bundles", "POST", body);
 };
+
+/* ------------------------------------------------------------------ *
+ * Delivery history
+ * ------------------------------------------------------------------ */
+
+/**
+ * Reads the destination's append-only delivery history.
+ *
+ * Every filter is applied server-side, and the response is always bounded — the
+ * UI never receives a whole log and never filters one itself.
+ */
+export const getDeliveryHistory = (
+  query: DeliveryHistoryQuery = {},
+): Promise<DeliveryHistoryView> => {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && `${value}`.length > 0) {
+      params.set(key, `${value}`);
+    }
+  }
+
+  const search = params.toString();
+
+  return request<DeliveryHistoryView>(
+    `/api/delivery-history${search ? `?${search}` : ""}`,
+  );
+};
+
+/** Appends events for deliveries whose receipts exist but were never logged. */
+export const reconcileDeliveryHistory = (): Promise<DeliveryHistoryReconcileView> =>
+  jsonRequest<DeliveryHistoryReconcileView>(
+    "/api/delivery-history/reconcile",
+    "POST",
+    {},
+  );
 
 /** SSE endpoint for a batch's aggregate; consumed with EventSource. */
 export const renderBatchEventsUrl = (batchId: string): string =>

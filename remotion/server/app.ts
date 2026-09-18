@@ -9,6 +9,10 @@ import {
   handleRevealDelivery,
   handleUpdateDeliverySettings,
 } from "./routes/delivery.ts";
+import {
+  handleGetDeliveryHistory,
+  handleReconcileDeliveryHistory,
+} from "./routes/deliveryHistory.ts";
 import { handleExportMissing } from "./routes/exportMissing.ts";
 import { handleReleaseBundles } from "./routes/releaseBundles.ts";
 import {
@@ -156,6 +160,20 @@ const route = async (
     }
     if (second === "reveal" && third === undefined && method === "POST") {
       await handleRevealDelivery(request, response);
+      return;
+    }
+
+    sendNotFound(response, "Endpoint");
+    return;
+  }
+
+  if (collection === "delivery-history") {
+    if (second === undefined && method === "GET") {
+      await handleGetDeliveryHistory(request, response);
+      return;
+    }
+    if (second === "reconcile" && third === undefined && method === "POST") {
+      await handleReconcileDeliveryHistory(response);
       return;
     }
 
