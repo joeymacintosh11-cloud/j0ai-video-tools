@@ -3,8 +3,15 @@ import {
   DEFAULT_RENDER_PRESET_ID,
   type RenderPresetId,
 } from "../src/domain/video/renderPresets.ts";
-import { createRenderBatch, getTrack, listTracks } from "./api/client.ts";
+import {
+  createRenderBatch,
+  getDeliverySettings,
+  getTrack,
+  listTracks,
+} from "./api/client.ts";
 import { ApiRequestError } from "./api/client.ts";
+import { DeliverPanel } from "./components/DeliverPanel.tsx";
+import { DeliverySettingsPanel } from "./components/DeliverySettingsPanel.tsx";
 import { ErrorBanner } from "./components/ErrorBanner.tsx";
 import { ExportMissingPanel } from "./components/ExportMissingPanel.tsx";
 import { FormatPicker } from "./components/FormatPicker.tsx";
@@ -23,6 +30,7 @@ export const App: React.FC = () => {
   // keeps you on the track you were looking at.
   const [selectedSlug, setSelectedSlug] = useState<string | null>(slugFromHash);
   const [creating, setCreating] = useState(false);
+  const [showingSettings, setShowingSettings] = useState(false);
 
   /**
    * Which formats to render. Shared by the single-track Render button and by
@@ -53,6 +61,7 @@ export const App: React.FC = () => {
   }, []);
 
   const tracks = useAsync(listTracks, []);
+  const delivery = useAsync(getDeliverySettings, []);
   const detail = useAsync(
     useCallback(
       () => (selectedSlug ? getTrack(selectedSlug) : Promise.resolve(null)),
@@ -74,10 +83,13 @@ export const App: React.FC = () => {
   const { reload: reloadTracks } = tracks;
   const { reload: reloadDetail } = detail;
 
+  const { reload: reloadDelivery } = delivery;
+
   const refreshAll = useCallback(() => {
     reloadTracks();
     reloadDetail();
-  }, [reloadTracks, reloadDetail]);
+    reloadDelivery();
+  }, [reloadTracks, reloadDetail, reloadDelivery]);
 
   useWindowFocus(refreshAll);
 
@@ -133,6 +145,13 @@ export const App: React.FC = () => {
         <button
           type="button"
           className="button button--quiet"
+          onClick={() => setShowingSettings((previous) => !previous)}
+        >
+          {showingSettings ? "Close settings" : "Delivery"}
+        </button>
+        <button
+          type="button"
+          className="button button--quiet"
           onClick={refreshAll}
         >
           Refresh
@@ -151,6 +170,16 @@ export const App: React.FC = () => {
           onQueued={setBatchId}
           onChanged={refreshAll}
         />
+
+        {/* Only offered once a destination exists; there is nothing to
+            deliver to before that, and the settings panel says so. */}
+        {delivery.data?.root === null ? null : (
+          <DeliverPanel
+            label="Deliver current catalogue exports"
+            tracks={null}
+            onChanged={refreshAll}
+          />
+        )}
       </div>
 
       <div className="app__toolbar app__toolbar--selection">
@@ -218,6 +247,17 @@ export const App: React.FC = () => {
         {detail.error ? (
           <div style={{ padding: 20 }}>
             <ErrorBanner error={detail.error} title="Could not load track" />
+          </div>
+        ) : showingSettings ? (
+          <div className="detail">
+            {delivery.data ? (
+              <DeliverySettingsPanel
+                settings={delivery.data}
+                onChanged={refreshAll}
+              />
+            ) : (
+              <div className="placeholder">Loading…</div>
+            )}
           </div>
         ) : creating ? (
           <div className="detail">

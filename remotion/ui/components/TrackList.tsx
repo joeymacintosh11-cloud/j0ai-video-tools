@@ -1,4 +1,5 @@
 import type { TrackSummaryView } from "../../src/domain/api/views.ts";
+import { DeliverySummary } from "./DeliveryStatus.tsx";
 import { ExportStatus } from "./ExportStatus.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
 
@@ -60,6 +61,7 @@ export const TrackList: React.FC<{
             <span className="tracklist__meta">
               <StatusBadge status={track.status} />
               <ExportStatus exports={track.exports} compact />
+              <DeliverySummary exports={track.exports} />
             </span>
           </button>
         </div>

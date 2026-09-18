@@ -8,6 +8,12 @@ import type {
   ExportMissingBody,
   ExportMissingView,
   CreateTrackBody,
+  DeliverBody,
+  DeliverView,
+  DeliveryRevealBody,
+  DeliveryRevealView,
+  DeliverySettingsBody,
+  DeliverySettingsView,
   HealthView,
   PrepareTrackView,
   RenderBatchView,
@@ -282,6 +288,60 @@ export const exportMissing = (
   };
 
   return jsonRequest<ExportMissingView>("/api/export-missing", "POST", body);
+};
+
+/* ------------------------------------------------------------------ *
+ * Local delivery
+ * ------------------------------------------------------------------ */
+
+export const getDeliverySettings = (): Promise<DeliverySettingsView> =>
+  request<DeliverySettingsView>("/api/delivery/settings");
+
+/**
+ * The one call that accepts a destination path, and the server validates it
+ * before storing. Every delivery afterwards names tracks and formats only.
+ */
+export const updateDeliverySettings = (
+  patch: DeliverySettingsBody,
+): Promise<DeliverySettingsView> =>
+  request<DeliverySettingsView>("/api/delivery/settings", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+
+/**
+ * Copies current exports to the destination.
+ *
+ * `tracks` of null covers the whole catalogue. With `dryRun` the plan comes
+ * back with nothing copied, which is what lets the UI show what would happen
+ * before it happens.
+ */
+export const deliverExports = (
+  tracks: readonly string[] | null,
+  presets: readonly RenderPresetId[] | null,
+  dryRun: boolean,
+): Promise<DeliverView> => {
+  const body: DeliverBody = {
+    ...(tracks === null ? { catalogue: true } : { tracks }),
+    ...(presets === null ? {} : { presets }),
+    dryRun,
+  };
+
+  return jsonRequest<DeliverView>("/api/delivery/deliver", "POST", body);
+};
+
+/** Shows the destination in Finder. Sends a slug and format, never a path. */
+export const revealDelivery = (
+  slug?: string,
+  preset?: RenderPresetId,
+): Promise<DeliveryRevealView> => {
+  const body: DeliveryRevealBody = {
+    ...(slug === undefined ? {} : { slug }),
+    ...(preset === undefined ? {} : { preset }),
+  };
+
+  return jsonRequest<DeliveryRevealView>("/api/delivery/reveal", "POST", body);
 };
 
 /** SSE endpoint for a batch's aggregate; consumed with EventSource. */

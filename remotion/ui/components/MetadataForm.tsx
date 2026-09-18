@@ -21,6 +21,8 @@ type Fields = {
   readonly subtitle: string;
   /** Always a concrete list here: an undeclared track shows what it resolves to. */
   readonly exportPresets: readonly RenderPresetId[];
+  /** Empty means "use the slug", which is what the placeholder shows. */
+  readonly deliveryFolder: string;
 };
 
 /**
@@ -39,6 +41,7 @@ const toFields = (track: TrackDetailView): Fields => {
     // An undeclared track shows the formats it is treated as intending, so what
     // the boxes say is what "export missing" will actually do.
     exportPresets: resolveExportPresets(track.exportPresets),
+    deliveryFolder: track.deliveryFolder ?? "",
   };
 };
 
@@ -49,6 +52,7 @@ const toPatch = (fields: Fields): TrackMetadataPatch => ({
   bpm: fields.bpm.trim() === "" ? null : Number(fields.bpm),
   subtitle: fields.subtitle.trim(),
   exportPresets: fields.exportPresets,
+  deliveryFolder: fields.deliveryFolder.trim(),
 });
 
 const sameFields = (a: Fields, b: Fields): boolean =>
@@ -57,6 +61,7 @@ const sameFields = (a: Fields, b: Fields): boolean =>
   a.key === b.key &&
   a.bpm === b.bpm &&
   a.subtitle === b.subtitle &&
+  a.deliveryFolder === b.deliveryFolder &&
   a.exportPresets.length === b.exportPresets.length &&
   a.exportPresets.every((id, index) => id === b.exportPresets[index]);
 
@@ -267,6 +272,15 @@ export const MetadataForm: React.FC<{
         value={fields.subtitle}
         onChange={update("subtitle")}
         hint="Optional — shown under the title in the video."
+        disabled={saving}
+      />
+
+      <Field
+        label="Delivery folder"
+        value={fields.deliveryFolder}
+        onChange={update("deliveryFolder")}
+        placeholder={track.slug}
+        hint="Optional — the folder this track's exports are delivered into. Defaults to the track's folder name."
         disabled={saving}
       />
 

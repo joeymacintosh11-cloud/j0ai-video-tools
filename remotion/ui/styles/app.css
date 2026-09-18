@@ -1453,3 +1453,87 @@ body {
 .export--stale { color: var(--vintage-gold); }
 .export__note { font-size: 0.75rem; font-weight: 400; }
 .exports:not(.exports--compact) { flex-wrap: wrap; }
+
+/* ---------------------------------------------------------------- *
+ * Local delivery
+ *
+ * Reuses the export row's shape and the existing status colours, so
+ * "delivered" reads as the same kind of fact as "current" without
+ * introducing a second visual language for it.
+ * ---------------------------------------------------------------- */
+
+.deliveries {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.deliveries--compact {
+  gap: 5px;
+}
+
+.delivery {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.delivery__label {
+  font-family: var(--font-label);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.delivery__mark {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.delivery__note {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.delivery--delivered .delivery__mark {
+  color: var(--status-ready);
+}
+.delivery--pending .delivery__mark {
+  color: var(--text-faint);
+}
+.delivery--outdated .delivery__mark {
+  color: var(--vintage-gold);
+}
+.delivery--failed .delivery__mark {
+  color: var(--status-invalid);
+}
+.delivery--not_configured {
+  opacity: 0.4;
+}
+
+/* One badge per track row, answering "is anything waiting to go out?" without
+   doubling the marks already there for export freshness. */
+.deliverybadge {
+  font-family: var(--font-label);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.deliverybadge--delivered {
+  color: var(--status-ready);
+  background: var(--ready-wash);
+}
+
+.deliverybadge--waiting {
+  color: var(--vintage-gold);
+  background: var(--gold-wash);
+}

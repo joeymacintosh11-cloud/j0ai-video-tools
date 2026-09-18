@@ -2,7 +2,11 @@ import { useState } from "react";
 import type { TrackDetailView } from "../../src/domain/api/views.ts";
 import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 import { publicAssetUrl } from "../api/assetUrl.ts";
+import { deliveryFolderFor } from "../../src/domain/delivery/deliveryPaths.ts";
+import { revealDelivery } from "../api/client.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
+import { DeliverPanel } from "./DeliverPanel.tsx";
+import { DeliveryStatus } from "./DeliveryStatus.tsx";
 import { ExportMissingPanel } from "./ExportMissingPanel.tsx";
 import { ExportStatus } from "./ExportStatus.tsx";
 import { AssetDropZone } from "./AssetDropZone.tsx";
@@ -37,6 +41,12 @@ export const TrackDetail: React.FC<{
   // Bumped only when an upload succeeds, so the cover's URL changes exactly
   // when the file behind it did.
   const [assetVersion, setAssetVersion] = useState(0);
+
+  // Delivery is only shown once a destination exists; before that there is
+  // nothing to say, and the Delivery settings panel is where that is set.
+  const configuredDestination = track.exports.some(
+    (output) => output.delivery.status !== "not_configured",
+  );
 
   // What this track says it ships in, as opposed to what it has rendered. The
   // two are shown separately on purpose.
@@ -140,6 +150,42 @@ export const TrackDetail: React.FC<{
           onChanged={onChanged}
         />
       </section>
+
+      {/* Delivery is its own section, below exports: a copy at the
+          destination is downstream of a finished export, never a substitute
+          for one. */}
+      {configuredDestination ? (
+        <section className="section">
+          <h3 className="section__title">Delivery</h3>
+          <p className="exports__intent">
+            <span className="exports__intentlabel">Folder</span>
+            {deliveryFolderFor(track.slug, track.deliveryFolder)}
+            {track.deliveryFolder === null ? (
+              <span className="muted"> — from the slug; set one in Track info</span>
+            ) : null}
+          </p>
+          <DeliveryStatus exports={track.exports} />
+          <div className="form__actions">
+            <DeliverPanel
+              label="Deliver current exports"
+              tracks={[track.slug]}
+              disabled={!track.validation.ok}
+              onChanged={onChanged}
+            />
+            <button
+              className="button button--quiet"
+              type="button"
+              onClick={() =>
+                void revealDelivery(track.slug, formats[0]).catch(
+                  () => undefined,
+                )
+              }
+            >
+              Reveal destination
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="section">
         <h3 className="section__title">Render</h3>
