@@ -1,4 +1,4 @@
-import { LAYOUTS, type InfoLayout } from "./layouts";
+import { LAYOUTS, titleFontSize, type InfoLayout } from "./layouts";
 import { COLORS, FONTS } from "./theme";
 
 type Props = {
@@ -68,6 +68,8 @@ export const TrackInfo: React.FC<Props> = ({
   layout = LAYOUTS.landscape.info,
 }) => {
   const centred = layout.align === "center";
+  // Steps down only once a title is long enough to overflow its canvas.
+  const titleSize = titleFontSize(layout, title);
 
   return (
     <div
@@ -97,7 +99,7 @@ export const TrackInfo: React.FC<Props> = ({
           marginTop: layout.titleMarginTop,
           maxWidth: layout.titleMaxWidth,
           fontFamily: FONTS.headline,
-          fontSize: layout.titleFontSize,
+          fontSize: titleSize,
           lineHeight: 0.9,
           color: COLORS.warmCream,
           textTransform: "uppercase",

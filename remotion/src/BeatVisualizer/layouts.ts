@@ -25,9 +25,24 @@ export type BeatVisualizerLayout = {
  * Type sizes for TrackInfo. The landscape numbers are the component's own
  * defaults, so passing this through changes nothing for 16:9.
  */
+export type TitleSizeStep = {
+  /** Longest title, in characters, that still uses this size. */
+  readonly maxChars: number;
+  readonly fontSize: number;
+};
+
 export type InfoLayout = {
   readonly artistFontSize: number;
+  /** Size for a title short enough not to need stepping down. */
   readonly titleFontSize: number;
+  /**
+   * Larger titles wrap onto more lines, and past a point the extra lines push
+   * the waveform out of frame entirely — which is what a 45-character title did
+   * to the landscape layout. Stepping the size down keeps a long title inside
+   * its canvas. The first step is the untouched base size, so every title short
+   * enough to have always fitted renders exactly as it did.
+   */
+  readonly titleSizeSteps: readonly TitleSizeStep[];
   readonly titleMaxWidth: number;
   readonly titleMarginTop: number;
   readonly subtitleFontSize: number;
@@ -36,6 +51,19 @@ export type InfoLayout = {
   readonly statValueFontSize: number;
   readonly statGap: number;
   readonly align: "left" | "center";
+};
+
+/**
+ * The size to draw a title at, given how long it is.
+ *
+ * Short titles keep the layout's base size, so existing output is unaffected.
+ */
+export const titleFontSize = (layout: InfoLayout, title: string): number => {
+  const step = layout.titleSizeSteps.find(
+    (candidate) => title.length <= candidate.maxChars,
+  );
+
+  return step?.fontSize ?? layout.titleFontSize;
 };
 
 export const LAYOUTS: Record<RenderLayout, BeatVisualizerLayout> = {
@@ -50,6 +78,12 @@ export const LAYOUTS: Record<RenderLayout, BeatVisualizerLayout> = {
     info: {
       artistFontSize: 26,
       titleFontSize: 158,
+      titleSizeSteps: [
+        { maxChars: 18, fontSize: 158 },
+        { maxChars: 30, fontSize: 116 },
+        { maxChars: 46, fontSize: 84 },
+        { maxChars: Number.POSITIVE_INFINITY, fontSize: 64 },
+      ],
       titleMaxWidth: 940,
       titleMarginTop: 20,
       subtitleFontSize: 22,
@@ -72,7 +106,13 @@ export const LAYOUTS: Record<RenderLayout, BeatVisualizerLayout> = {
     info: {
       artistFontSize: 30,
       titleFontSize: 132,
-      titleMaxWidth: 936,
+      titleSizeSteps: [
+        { maxChars: 18, fontSize: 132 },
+        { maxChars: 30, fontSize: 104 },
+        { maxChars: 46, fontSize: 82 },
+        { maxChars: Number.POSITIVE_INFINITY, fontSize: 66 },
+      ],
+      titleMaxWidth: 860,
       titleMarginTop: 22,
       subtitleFontSize: 26,
       subtitleMaxWidth: 840,
@@ -95,7 +135,13 @@ export const LAYOUTS: Record<RenderLayout, BeatVisualizerLayout> = {
     info: {
       artistFontSize: 22,
       titleFontSize: 84,
-      titleMaxWidth: 952,
+      titleSizeSteps: [
+        { maxChars: 18, fontSize: 84 },
+        { maxChars: 30, fontSize: 66 },
+        { maxChars: 46, fontSize: 52 },
+        { maxChars: Number.POSITIVE_INFINITY, fontSize: 44 },
+      ],
+      titleMaxWidth: 860,
       titleMarginTop: 12,
       subtitleFontSize: 19,
       subtitleMaxWidth: 820,
