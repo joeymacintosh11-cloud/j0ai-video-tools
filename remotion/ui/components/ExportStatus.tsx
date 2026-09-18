@@ -4,8 +4,7 @@ import type { RenderOutputView } from "../../src/domain/api/views.ts";
 /**
  * Per-format export state for one track, as a compact row of marks.
  *
- * A tick means the file is on disk — the only thing that actually counts as an
- * export. Work in flight is shown distinctly so a render in progress does not
+ * A tick means the export has a matching manifest and is current. Work in flight is shown distinctly so a render in progress does not
  * read as a finished file.
  *
  * Intent is a separate axis from all of that: a format this track does not ship

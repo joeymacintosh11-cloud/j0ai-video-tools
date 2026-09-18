@@ -156,8 +156,8 @@ export type CreateTrackBody = {
 /**
  * One export format's state for a track.
  *
- * `present` is the filesystem answer and the one that decides whether an export
- * needs making. `queued` and `active` describe work in flight, which lives in
+ * `present` reports a nonempty file; `freshness` decides whether it still
+ * matches its inputs. `status` overlays validation and queue state. `queued` and `active` describe work in flight, which lives in
  * the server's memory and is forgotten on restart — so they inform the UI but
  * never stand in for a finished file.
  */
@@ -410,18 +410,12 @@ export type ExportMissingBody = {
 };
 
 /**
- * POST /api/export-missing
- *
- * `missing` is what needs rendering, and is filled in whether or not anything
- * was queued — that is what makes a dry run useful as a preview. `queued` is
- * what was actually enqueued, so it is empty on a dry run and equal to
- * `missing` otherwise. The three `skipped*` lists say why the rest needed no
- * work: the file already exists, a render is already waiting, or one is running
- * now.
- *
- * `intendedTargets` is every export these tracks are meant to ship, whatever
- * its state — so it is the sum of `missing` and the three `skipped*` lists, and
- * it is what "21 intended exports" in a summary counts.
+ * POST /api/export-missing.
+ * `missing`, `stale` and `current` report disk state outside work in flight.
+ * `selected` is the work requested by this mode; `queued` is what was actually
+ * enqueued and is empty on dry runs. `skippedExisting` remains the compatibility
+ * presence list (current or stale), not a count of verified current exports.
+ * `intendedTargets` includes every renderable track/format pair considered.
  */
 export type ExportMissingView = {
   readonly mode: ExportMode;

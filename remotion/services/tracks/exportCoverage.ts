@@ -19,7 +19,7 @@ import {
 import { trackLocations, trackOutputLocation } from "./trackLocations.ts";
 
 /**
- * What a track has actually exported, read from disk.
+ * Export presence and input freshness, read from disk and sidecar manifests.
  *
  * The filesystem is the source of truth for finished renders — not the job
  * history, which lives in memory and is forgotten on restart. Everything that

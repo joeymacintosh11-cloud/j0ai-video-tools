@@ -249,11 +249,12 @@ that is already queued or running skips it rather than duplicating the work.
 Batch progress is the average of the renders' real progress, so a batch
 containing a failure settles below 100% — the counts next to it say why.
 
-### Exporting only what is missing
+### Export freshness and re-exporting
 
-Each track row shows a mark per format: a tick once the file is on disk, and
-distinct marks for queued, rendering, and a zero-byte file left behind by an
-interrupted render.
+Each track row shows a mark per format: a tick for a **current** export, a
+warning for a **stale** export, and separate missing, queued and rendering
+states. The detail panel explains stale reasons. A zero-byte file is missing,
+not a finished export. Invalid track inputs are reported separately.
 
 A format the track does not ship in is dimmed with its own mark, so "we are not
 making this one" never reads as "this one is missing".
@@ -266,9 +267,35 @@ action works for every ticked track at once, and **Export missing for
 catalogue** covers every track, each on its own intended formats — a track that
 ships only in 16:9 is never queued for vertical just because another track is.
 
-A finished export is never overwritten automatically. To redo one, delete the
-file and render again. A zero-byte file does not count as an export and will be
-made again.
+**Re-export stale** selects existing exports whose inputs changed. **Export
+missing + stale** covers both. These actions exist for a track, selected tracks,
+and the catalogue. Each uses the same two-step plan/confirm flow, respects
+per-track intent and skips current or in-flight exports. One confirmation lists
+all replacements; there are no per-file dialogs. The ordinary Render controls
+remain available for an explicit render of any chosen format.
+
+Every successful render now writes two files:
+
+```text
+out/<slug>/<preset>.mp4
+out/<slug>/<preset>.manifest.json
+```
+
+The manifest records hashes of rendered metadata, cover, original `beat.wav`,
+render-relevant preset settings, and the versioned visualizer/shared brand
+assets. Changes make the export stale. Regenerating `analysis.wav`, changing
+`exportPresets`, UI styling, logs or documentation does not.
+
+Existing nonempty per-format MP4s without manifests show **Stale — earlier
+export, no manifest**. Nothing is migrated, deleted or rendered automatically.
+The older `out/<slug>.mp4` file remains an unverified earlier export; new renders
+still use per-format paths and never touch it.
+
+Replacement rendering uses a private staging directory. Only a successful,
+nonempty MP4 and complete manifest are published. Failure or cancellation keeps
+the previous pair. Publication errors roll back the video; an abrupt process/OS
+crash between the two atomic renames is detected as `output_changed`, not
+silently reported current. See handoff §38 for recovery and cache limits.
 
 ```console
 # Plan without queueing anything
@@ -293,7 +320,20 @@ is required — the catalogue has to be asked for outright, so a request that
 merely forgot its `tracks` array is an error rather than a catalogue-wide
 queue. The response reports `intendedTargets`, `missing`, `queued`,
 `skippedExisting`, `skippedQueued`, `skippedActive`, `invalid`, `tracks` and a
-`nothingToDo` flag; `queued` is empty on a dry run while `missing` is not.
+`nothingToDo` flag. The optional `mode` is `missing` (default), `stale`, or
+`missing-and-stale`. Additive fields `current`, `stale` and `selected` describe
+freshness and work selected by that mode. `queued` is what was actually queued;
+it remains empty on a dry run. `skippedExisting` is the backward-compatible
+presence list (current **or** stale); use `current` for verified freshness.
+
+```console
+curl -X POST http://127.0.0.1:4600/api/export-missing \
+  -H 'content-type: application/json' \
+  -d '{"catalogue":true,"mode":"missing-and-stale","dryRun":true}'
+```
+
+Review the returned replacement list, then send the same request with
+`dryRun:false` to queue it. Planning is refreshed at execution time.
 
 The same thing from the terminal, which renders directly rather than queueing:
 
@@ -301,9 +341,15 @@ The same thing from the terminal, which renders directly rather than queueing:
 npm run render-missing -- ghetto-geek --dry-run
 npm run render-missing -- ghetto-geek
 npm run render-catalogue-missing
+npm run render-missing -- ghetto-geek --mode stale --dry-run
+npm run render-missing -- ghetto-geek --mode stale --replace
+npm run render-catalogue-missing -- --mode missing-and-stale --dry-run
+npm run render-catalogue-missing -- --mode missing-and-stale --replace
 ```
 
-These use the same planner as the API, and render one format after another. A
+These use the same planner as the API, and render one format after another.
+A stale replacement requires `--replace` unless `--dry-run` is set. Existing
+commands keep their default behavior; `render-track` also writes manifests. A
 separate process cannot see a running server's queue, so use the app or the
 CLI for a given track, not both at once.
 
@@ -324,9 +370,9 @@ curl -N http://127.0.0.1:4600/api/render-batches/<batchId>/events
 curl -X POST http://127.0.0.1:4600/api/render-batches/<batchId>/cancel
 ```
 
-A track can only have one render in flight. Asking for a second while one is
+A track/format pair can only have one render in flight. Asking for a second while one is
 queued or running is refused with `RENDER_ALREADY_ACTIVE` (409), since both
-would take the single slot in turn and write the same `out/<slug>.mp4`. The UI
+would take the single slot in turn and write the same `out/<slug>/<preset>.mp4`. The UI
 recovers the running job from the server on load, so reloading the page or
 switching tracks re-attaches to a render in progress rather than offering to
 start another.
@@ -361,7 +407,8 @@ services/               Node only. The single owner of filesystem, ffmpeg and
   tracks/               trackLocations · inspectTrack · listTracks ·
                         createTrack · updateTrackMetadata · prepareTrackAudio ·
                         prepareTrack · buildTrackProps · audioDuration
-  render/               renderTrackVideo — the one place that encodes video
+  render/               renderTrackVideo · publishExport — staged video/manifest publication
+  tracks/               exportCoverage · exportManifest — freshness and cached fingerprints
 
 src/BeatVisualizer/     The composition. Props in, pixels out.
 
@@ -429,13 +476,13 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | POST | `/api/tracks/:slug/prepare` | Validate + refresh `analysis.wav` |
 | GET | `/api/tracks/:slug/preview` | Composition config + `inputProps` + duration |
 | POST | `/api/tracks/:slug/render` | Start a render, returns a job id immediately; optional `{"preset":"..."}` |
-| POST | `/api/tracks/:slug/reveal` | Show `out/<slug>.mp4` in Finder (macOS) |
+| POST | `/api/tracks/:slug/reveal` | Show the selected format in Finder (macOS) |
 | GET | `/api/renders` | All render jobs, newest first |
 | GET | `/api/renders/:jobId` | Job status and progress |
 | GET | `/api/renders/:jobId/events` | Live progress (Server-Sent Events) |
 | GET | `/api/renders/:jobId/logs` | Recent log lines for the job |
 | POST | `/api/renders/:jobId/cancel` | Cancel a queued or running render |
-| POST | `/api/export-missing` | Queue only the exports a track intends and does not have |
+| POST | `/api/export-missing` | Plan/queue missing or stale intended exports (optional `mode`) |
 | POST | `/api/render-batches` | Queue many track/format pairs at once |
 | GET | `/api/render-batches` | All batches, newest first |
 | GET | `/api/render-batches/:batchId` | Batch totals, progress and member jobs |

@@ -91,12 +91,12 @@ const readPresets = (
 };
 
 /**
- * Queues only the exports a set of tracks does not already have.
+ * Queues only missing/stale exports selected by the requested mode.
  *
  * With `dryRun` the same plan comes back without anything being queued, which
  * is what lets a UI show "3 missing, 2 already rendered" before committing.
  *
- * When nothing is missing this is a successful no-op: no batch is created, and
+ * When nothing is selected this is a successful no-op: no batch is created, and
  * `nothingToDo` says so. Creating an empty batch would just be noise in the
  * queue and in the batch list.
  */

@@ -19,8 +19,8 @@ in §23a rather than silently corrected.
 ## 0. Read this first
 
 **Sections 1–34 describe the project as it stood at the end of Phase 2B.**
-**§35 covers multi-format export and batching; §36 covers export-what's-missing
-and is the newest.**
+**§38 (stale exports / re-export detection) is the newest state.**
+§35–37 cover formats, batching, export-missing and per-track intent.
 Phases 2C-A, 2C-B, a stability hardening pass and a multi-format/batch feature
 set have all landed since. Where an older section disagrees with the code, the
 code wins — and **§35 onwards is the current state**. Read §35 before acting on
@@ -1836,6 +1836,242 @@ coverage and the planner unchanged and needs no new concepts, only a
 destination in metadata and a copy step after a successful render.
 
 Not started.
+
+
+## 38. Current State — Stale Export / Re-export Detection (2026-09-18)
+
+**This section supersedes existence-only coverage and the “delete to re-export”
+limitation in §36–37.** No composition, layout, presets, brand sources, final
+audio routing or render concurrency changed. No dependencies were added.
+
+### 38.1 Persisted contract
+
+Each successful render writes alongside the existing format path:
+
+```text
+out/<slug>/<preset-id>.mp4
+out/<slug>/<preset-id>.manifest.json
+```
+
+Manifest schema (the hashes below are illustrative placeholders):
+
+```json
+{
+  "schemaVersion": 1,
+  "slug": "ghetto-geek",
+  "presetId": "youtube-16x9",
+  "renderedAt": "2026-09-18T12:00:00.000Z",
+  "inputFingerprint": "<sha256>",
+  "inputs": {
+    "metadata": "<sha256>",
+    "cover": "<sha256>",
+    "audio": "<sha256>",
+    "preset": "<sha256>",
+    "visualizer": "<sha256>"
+  },
+  "output": {"bytes": 12345, "mtimeMs": 1234567890, "ino": 12345}
+}
+```
+
+`services/tracks/exportManifest.ts` owns hashing, manifest parsing and input
+comparison. `src/domain/video/exportFreshness.ts` is browser-safe: version
+constants, modes, freshness/reason types and user-facing reason labels.
+`trackOutputLocation()` owns the manifest path as well as the MP4 path.
+
+Schema version validates the persisted format. **`VISUALIZER_VERSION` currently
+`toshi-1` is the explicit render/template version. Bump it whenever a meaningful
+composition/layout/font/encoding change should invalidate old exports.** Restart
+the API after changing render code or presets; it is not a hot-reloaded service.
+UI-only styling, README edits and unrelated source files require no bump.
+
+### 38.2 Fingerprinting and exact render inputs
+
+- Metadata hash: title, artist, musical key, BPM, subtitle (absent and empty
+  subtitle normalize together). Only values actually passed to the composition
+  are used. `exportPresets` describes intent, not pixels, and is excluded.
+- Cover and original beat: SHA-256 content hashes.
+- Preset: id, width, height, fps, layout and aspect ratio. Label-only changes
+  do not change the render fingerprint.
+- Visualizer: explicit template version plus the content hashes of the two
+  actual brand assets (logo and badge). Unused brand files are excluded.
+- `analysis.wav` is derived, so is deliberately excluded. It remains the
+  waveform source, while original `beat.wav` remains the audible source.
+
+For **recording a render**, hash the copied assets under the Remotion bundle's
+`public/`, not the live source directory at completion. Metadata comes from the
+exact input props supplied to the render. Editing live track files while a
+render runs therefore makes its eventual export stale instead of certifying
+new inputs that were never rendered. The pinned bundler copies public files by
+default; do not enable `symlinkPublicDir` without revisiting this assumption.
+
+For **browsing**, source content hashes are cached in process by path + device,
+inode, size, mtime and ctime. Cache is bounded at 256 file entries. File reads
+use a 1 MiB buffer rather than loading a large WAV into RAM. Stats are checked
+every time and before/after hashing; no database or persisted cache is added.
+Missing/legacy outputs require no expensive source hashing. Inspection's old
+presence flags remain cheap, separate from full freshness checks in views/plans.
+
+Tradeoff: first reads (or cache eviction/restart/changed stats) hash synchronously
+and can briefly occupy the API event loop. A very large catalogue exceeding the
+cache may rehash across refreshes. This implementation targets the current small
+local catalogue; benchmark before expanding it. It trusts normal filesystem stat
+identity, not adversarial editing with perfectly restored metadata. MP4 integrity
+is a size/mtime/inode check, not a full media decode or video content hash.
+
+### 38.3 Coverage/status semantics
+
+`trackExportCoverage` remains the one coverage service. Its presence fields are
+backward-compatible, with additive `freshness` and `staleReasons`:
+
+- `missing`: no nonempty regular MP4; includes zero-byte leftovers.
+- `current`: a valid matching manifest, matching source inputs and matching
+  output identity.
+- `stale`: an MP4 exists but inputs changed, its manifest is absent/invalid, or
+  its output identity changed externally.
+- `invalid`: inputs cannot establish freshness; normal validation explains
+  missing/invalid track data.
+
+Typed reasons: `metadata_changed`, `cover_changed`, `audio_changed`,
+`preset_changed`, `visualizer_changed`, `manifest_missing`, `manifest_invalid`,
+`output_changed`. Multiple reasons are retained.
+
+API `RenderOutputView` adds the same fields plus `status`: active/queued work
+wins as `rendering`/`queued`, otherwise invalid track validation wins, otherwise
+freshness. **`present` does not mean current.** `intended` remains independent.
+History retention or a server restart cannot make a disk export disappear.
+
+### 38.4 Legacy policy
+
+No migration. Existing nonempty per-format MP4s without manifests are
+`stale / manifest_missing`, remain revealable and are skipped by default
+missing-only planning. Re-exporting explicitly creates the first manifest.
+The older single-file `out/<slug>.mp4` is still displayed as an unverified
+legacy file. It is not attributed to a preset and is never touched.
+Ghetto Geek's existing exports were deliberately left unchanged during this work.
+
+### 38.5 Replacement publication, failure and cancellation
+
+`services/render/publishExport.ts` stages in a unique `.render-*` directory
+inside the output directory. The shared `renderTrackVideo` sends Remotion there,
+closes its browser, checks cancellation, verifies a nonempty regular MP4 and
+writes a complete staged manifest. Only then does publication start.
+
+Before the two atomic renames, hard links preserve the previous video/manifest
+without copying their bytes. The short commit section is synchronous: a
+cooperative cancellation cannot interrupt its two renames. If manifest rename
+fails, the previous video is restored; its manifest has remained in place.
+Staging is removed on success/failure/cancel. A rollback failure retains recovery
+files and reports the directory instead of deleting the only recoverable copy.
+
+**OS/process crashes are not a two-file transaction.** A crash between the two
+renames can leave a new MP4 with an old manifest; output identity mismatch makes
+that stale, never current. A `.render-*` directory may remain after a hard kill.
+Do not auto-delete it: inspect `previous.mp4`/`previous.manifest.json` for manual
+recovery, stop all writers, restore the pair if needed. No automatic cleanup of
+unknown directories or source assets was added. This is not fsync/power-loss
+transaction durability. Existing SIGKILL/Chromium limitations still apply.
+
+`renderTrackVideo` is still the sole encoding call site for CLI and API. It now
+cleans up its own completed bundle directory after the render. H.264, JPEG,
+concurrency 3, dynamic audio duration, one browser and existing progress callbacks
+are unchanged. The manager, worker IPC protocol and SSE layer did not change.
+
+### 38.6 Planner/API extension
+
+Same endpoint: `POST /api/export-missing`; no redundant endpoint introduced.
+
+```json
+{"catalogue":true,"mode":"missing-and-stale","dryRun":true}
+```
+
+Modes: `missing` (omitted default, old behavior), `stale`, `missing-and-stale`.
+The planner adds `mode`, `current`, `stale`, `selected`. `missing` still reports
+missing work; `selected` is the subset for this mode. `queued` is actual enqueue
+results, always empty for a dry run. `skippedExisting` remains the compatibility
+presence list (current or stale); never use it to count current exports.
+
+Queue/active targets are skipped before disk freshness. Per-track intent and
+explicit preset overrides work as before. Catalogue plans preserve each track's
+own formats. Current outputs are never selected. Invalid tracks are reported
+rather than queued. A final live queue check handles a second request arriving
+while asynchronous inspection ran; concurrent requests cannot create duplicate
+jobs or an empty no-op batch. No selected work -> `batchId:null` success.
+
+Dry-run plans are not reservations: execution rereads disk/queue state. The mode
+and scope are the explicit operation; a newly stale target in that scope can be
+included when confirming. No persistent plan token/state layer was added.
+
+### 38.7 UI and CLI
+
+Existing export status/checklist components show current, stale with reasons,
+missing, queued/rendering and invalid. The original Toshi CSS is retained with a
+small stale-color/text addition. Existing panel now offers all three actions for
+single tracks, selections and the catalogue. One plan summary lists new outputs
+and replacements, explicitly says previous exports survive until success, then
+one confirmation queues the batch. No dialogs per file.
+
+```console
+npm run render-missing -- ghetto-geek --mode stale --dry-run
+npm run render-missing -- ghetto-geek --mode stale --replace
+npm run render-catalogue-missing -- --mode missing-and-stale --dry-run
+npm run render-catalogue-missing -- --mode missing-and-stale --replace
+```
+
+The CLI reuses the exact API planner. Replacement execution requires `--replace`
+unless dry-running. Existing CLI invocations keep missing-only defaults;
+`render-track` remains an explicit render and now writes manifests automatically.
+No new package scripts or packages were necessary.
+
+**Known existing cross-process limitation:** CLI and API queues do not share a
+lock. Do not simultaneously render the same track/format via both. Publication
+has an in-process lock, not a cross-process lock. Normal UI renders remain
+single-slot and deduplicated.
+
+### 38.8 Verification and performance
+
+- `npm run lint` (ESLint + TypeScript), 135 tests, and Vite production build pass.
+  Vite still reports the existing >500 kB bundle advisory; no dependency was added.
+- `validate-track -- ghetto-geek` and `prepare-track -- ghetto-geek` pass; analysis
+  was already up to date. No source assets or existing MP4s were changed.
+- 38 added tests: `tests/export-freshness.test.mts` and additions to API tests.
+  Cover success/current, each rendered metadata field, cover/WAV mutations,
+  analysis/unrelated/intent exclusions, preset/schema changes, absent/empty/
+  legacy/corrupt/incompatible manifests, output identity, all planner modes,
+  catalogue intent, active/queued dedup, failed/cancelled/empty replacements,
+  publication rollback, input editing during render, cached reads and CLI consent.
+- A disposable real three-second, 24-bit source probe rendered **90 square frames
+  in 3.37 seconds**, wrote a matching current manifest, then had its replacement
+  cancelled after frames began. Previous MP4 and manifest remained byte-identical;
+  edited metadata was reported stale. Probe assets/output were removed afterward.
+- Browser inspection confirmed visible stale/reason labels and all three actions
+  on the existing responsive Toshi layout. Confirmation/execution semantics also
+  exercised by API tests; no full Ghetto Geek render was triggered.
+- Ghetto Geek's cold source fingerprint: **19.47 ms**. Mean of 100 warm source
+  fingerprints: **0.017 ms**. Mean of 100 current catalogue plans (one real track,
+  legacy outputs): **0.094 ms**. These are small-catalogue measurements, not a
+  promise for hundreds of large tracks. Warm checks stat files, do not read WAVs.
+- Final cleanup: no regression fixture directories, render workers or headless
+  Chromium remained. Temporary verification API/Vite processes were stopped.
+- Composition/layout/preset/audio-preprocessing/worker/manager files have no diff
+  from `14190e7`. No intentional pixel/audio output change. Full-track timing and
+  decoded-video hash were not rerun; prior reference remains historical evidence.
+
+Commits for this milestone:
+
+- `4bc1641` — manifest/fingerprint model, safe publication, coverage/planner/API
+  foundation and 34 regression cases.
+- `256a89a` — UI/CLI re-export workflow, API concurrency check and four more tests.
+- Documentation follow-up: `Document export freshness, safe replacement and verification`.
+
+All commits are local only. **Do not push without a new instruction.**
+
+### 38.9 Recommended next major feature (not started)
+
+**Export destinations / post-render delivery**, as previously proposed, with
+explicit local destination selection and copying only successfully published
+current pairs. Keep destination handling separate from the canonical render and
+manifest pair. Before implementing, decide replacement policy and how delivery
+status differs from export freshness. No cloud API is required.
 
 ---
 

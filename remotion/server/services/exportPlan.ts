@@ -19,7 +19,7 @@ import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
 import { listTracks } from "../../services/tracks/listTracks.ts";
 
 /**
- * Works out which exports a set of tracks is actually missing.
+ * Plans missing and/or stale exports, defaulting to missing-only compatibility.
  *
  * Which formats a track *should* have comes from its own metadata, so a
  * catalogue-wide run plans each track's declared intent rather than flattening
@@ -34,7 +34,7 @@ import { listTracks } from "../../services/tracks/listTracks.ts";
  * running right now. A track that cannot be rendered at all is reported with
  * the reason rather than silently dropped.
  *
- * The filesystem decides what already exists — never the job history, which is
+ * The filesystem and sidecar manifests decide freshness — never job history, which is
  * in memory and forgotten on restart. A finished export whose job record has
  * been trimmed is still an export.
  */
@@ -250,7 +250,7 @@ export const planMissingExports = async (
   };
 };
 
-/** The plan's missing targets, in the shape startBatch takes. */
+/** The mode-selected targets, in the shape startBatch takes. */
 export const toRenderTargets = (plan: ExportPlan): readonly RenderTarget[] =>
   plan.selected.map((target) => ({
     slug: target.slug,
