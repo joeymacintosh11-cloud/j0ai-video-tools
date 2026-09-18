@@ -39,6 +39,8 @@
     "prepare-track": "node scripts/prepare-track.mts",
     "validate-track": "node scripts/render-track.mts --validate-only",
     "render-track": "node scripts/render-track.mts",
+    "render-missing": "node scripts/render-missing.mts",
+    "render-catalogue-missing": "node scripts/render-missing.mts --all-tracks",
     "test": "node --test tests/*.test.mts",
     "render-all-formats": "node scripts/render-track.mts --all-formats"
   }
