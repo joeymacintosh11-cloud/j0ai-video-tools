@@ -22,6 +22,43 @@ export const directoryIdentity = (directory: string): string => {
 };
 
 /**
+ * The absolute path of one bookkeeping file at the destination root itself.
+ *
+ * The delivery log lives at the root rather than inside a track folder, because
+ * it is a record of the destination as a whole. It still goes through the same
+ * fencing a delivered video does: a single plain filename, no separators, no
+ * traversal, and a root that is still the resolved directory it was configured
+ * as.
+ */
+export const assertDeliveryRootFile = (
+  root: string,
+  filename: string,
+): string => {
+  if (
+    filename.length === 0 ||
+    filename !== path.basename(filename) ||
+    filename === "." ||
+    filename === ".."
+  ) {
+    refuse(`Refusing "${filename}" as a file name at the export destination.`);
+  }
+
+  // The stored root is resolved, so anything else means it moved or was
+  // replaced since it was configured.
+  if (realpathSync(root) !== root) {
+    refuse(`The export destination ${root} changed.`);
+  }
+
+  const file = path.resolve(root, filename);
+
+  if (path.dirname(file) !== root) {
+    refuse(`Refusing a path outside the export destination ${root}.`);
+  }
+
+  return file;
+};
+
+/**
  * The absolute destination for one delivered file, constrained to the root.
  *
  * Used for reads, reveals and status. Copying additionally pins its working
