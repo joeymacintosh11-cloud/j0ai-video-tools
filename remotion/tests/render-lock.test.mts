@@ -271,11 +271,9 @@ test("a malformed lock is left alone rather than guessed at", async (t) => {
     );
   }
 
-  // The explicit recovery path is what clears it.
-  assert.equal(releaseRenderTargetLock("zz-track", "square-1x1", { root }), true);
-  assert.doesNotThrow(() =>
-    acquireRenderTargetLock("zz-track", "square-1x1", { root }),
-  );
+  // Unknown owners require offline repair, never online revocation.
+  assert.throws(() => releaseRenderTargetLock("zz-track", "square-1x1", { root }),
+    { code: "RENDER_TARGET_LOCKED" });
 });
 
 test("explicit release takes a target, never a path", async (t) => {
@@ -288,7 +286,9 @@ test("explicit release takes a target, never a path", async (t) => {
   );
 
   acquireRenderTargetLock("zz-track", "square-1x1", { root, ...otherLiveProcess });
-  assert.equal(releaseRenderTargetLock("zz-track", "square-1x1", { root }), true);
+  assert.throws(() => releaseRenderTargetLock("zz-track", "square-1x1", { root, isAlive: () => true }),
+    { code: "RENDER_TARGET_LOCKED" });
+  assert.equal(releaseRenderTargetLock("zz-track", "square-1x1", { root, isAlive: () => false }), true);
 
   for (const slug of ["../../etc/passwd", "..", "/absolute", "with/slash", ""]) {
     assert.throws(

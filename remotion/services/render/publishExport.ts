@@ -5,7 +5,7 @@ import {
   createExportManifest,
   type ExportInputs,
 } from "../tracks/exportManifest.ts";
-import { withFileMutation } from "../tracks/atomicFile.ts";
+import { withRenderTargetLock, type RenderTargetLock } from "./renderLock.ts";
 import { trackOutputLocation } from "../tracks/trackLocations.ts";
 import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 
@@ -19,7 +19,12 @@ export const publishExport = async (
   inputs: ExportInputs,
   produce: (stagedVideo: string) => Promise<void>,
   checkCancelled: () => void = () => {},
+  lock?: RenderTargetLock,
 ): Promise<void> => {
+  if (!lock) return withRenderTargetLock(slug, presetId, (owned) =>
+    publishExport(slug, presetId, inputs, produce, checkCancelled, owned));
+  if (lock.slug !== slug || lock.presetId !== presetId) throw new Error("Wrong publication lock target.");
+  lock.assertOwned();
   const output = trackOutputLocation(slug, presetId);
   await mkdir(output.dir, { recursive: true });
   const staging = await mkdtemp(path.join(output.dir, ".render-"));
@@ -34,7 +39,7 @@ export const publishExport = async (
     await writeFile(manifest, `${JSON.stringify(record, null, 2)}\n`, {
       flag: "wx",
     });
-    await withFileMutation(output.path, async () => {
+    lock.commit(() => {
       checkCancelled();
       const oldVideo = path.join(staging, "previous.mp4");
       const oldManifest = path.join(staging, "previous.manifest.json");
@@ -44,11 +49,14 @@ export const publishExport = async (
       if (hadManifest) linkSync(output.manifest, oldManifest);
       let videoPublished = false;
       try {
+        lock.assertOwned();
         renameSync(video, output.path);
         videoPublished = true;
+        lock.assertOwned();
         renameSync(manifest, output.manifest);
       } catch (error) {
         try {
+          lock.assertOwned();
           if (videoPublished) {
             if (hadVideo) renameSync(oldVideo, output.path);
             else unlinkSync(output.path);

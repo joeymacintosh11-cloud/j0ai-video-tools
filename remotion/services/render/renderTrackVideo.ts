@@ -11,7 +11,7 @@ import { deliverAfterRender } from "../delivery/autoDeliver.ts";
 import type { DeliveryOutcome } from "../delivery/deliverExport.ts";
 import { fingerprintInputs } from "../tracks/exportManifest.ts";
 import { publishExport } from "./publishExport.ts";
-import { withRenderTargetLock } from "./renderLock.ts";
+import { withRenderTargetLock, type RenderTargetLock } from "./renderLock.ts";
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
 import { COMPOSITION_ID } from "../../src/domain/video/compositionConfig.ts";
 import {
@@ -68,7 +68,7 @@ const renderToTarget = async ({
   onPhase,
   onResolved,
   onProgress,
-}: RenderTrackVideoOptions): Promise<RenderTrackVideoResult> => {
+}: RenderTrackVideoOptions, lock: RenderTargetLock): Promise<RenderTrackVideoResult> => {
   let cancelled = false;
   cancelSignal?.(() => {
     cancelled = true;
@@ -163,6 +163,7 @@ const renderToTarget = async ({
           await closeBrowser();
         },
         checkCancelled,
+        lock,
       );
       return resolved;
     } finally {
@@ -204,7 +205,7 @@ export const renderTrackVideo = async (
   const result = await withRenderTargetLock(
     options.slug,
     presetId,
-    () => renderToTarget(options),
+    (lock) => renderToTarget(options, lock),
     { jobId: options.jobId ?? null },
   );
 
