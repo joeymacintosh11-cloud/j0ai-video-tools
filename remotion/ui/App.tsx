@@ -11,6 +11,7 @@ import {
 } from "./api/client.ts";
 import { ApiRequestError } from "./api/client.ts";
 import { DeliverPanel } from "./components/DeliverPanel.tsx";
+import { DeliveryHistoryPanel } from "./components/DeliveryHistoryPanel.tsx";
 import { DeliverySettingsPanel } from "./components/DeliverySettingsPanel.tsx";
 import { ReleaseBundlePanel } from "./components/ReleaseBundlePanel.tsx";
 import { ErrorBanner } from "./components/ErrorBanner.tsx";
@@ -32,6 +33,7 @@ export const App: React.FC = () => {
   const [selectedSlug, setSelectedSlug] = useState<string | null>(slugFromHash);
   const [creating, setCreating] = useState(false);
   const [showingSettings, setShowingSettings] = useState(false);
+  const [showingHistory, setShowingHistory] = useState(false);
 
   /**
    * Which formats to render. Shared by the single-track Render button and by
@@ -146,10 +148,27 @@ export const App: React.FC = () => {
         <button
           type="button"
           className="button button--quiet"
-          onClick={() => setShowingSettings((previous) => !previous)}
+          onClick={() => {
+            setShowingSettings((previous) => !previous);
+            setShowingHistory(false);
+          }}
         >
           {showingSettings ? "Close settings" : "Delivery"}
         </button>
+        {/* Only once there is a destination: before that nothing can have
+            been delivered, and the settings panel is where that is set. */}
+        {delivery.data?.root === null ? null : (
+          <button
+            type="button"
+            className="button button--quiet"
+            onClick={() => {
+              setShowingHistory((previous) => !previous);
+              setShowingSettings(false);
+            }}
+          >
+            {showingHistory ? "Close history" : "History"}
+          </button>
+        )}
         <button
           type="button"
           className="button button--quiet"
@@ -255,6 +274,18 @@ export const App: React.FC = () => {
         {detail.error ? (
           <div style={{ padding: 20 }}>
             <ErrorBanner error={detail.error} title="Could not load track" />
+          </div>
+        ) : showingHistory ? (
+          <div className="detail">
+            <section className="section">
+              <h3 className="section__title">Delivery history</h3>
+              <p className="muted">
+                Every delivery to this destination, as it happened. Recorded in{" "}
+                <code>delivery-log.jsonl</code> beside the delivered folders and
+                never rewritten.
+              </p>
+              <DeliveryHistoryPanel onChanged={refreshAll} />
+            </section>
           </div>
         ) : showingSettings ? (
           <div className="detail">

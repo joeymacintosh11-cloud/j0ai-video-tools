@@ -733,6 +733,12 @@ export type DeliveryHistoryView = {
   readonly summary: DeliveryHistorySummary;
   /** Tracks appearing anywhere in the log, for a filter list. */
   readonly knownTracks: readonly { readonly slug: string; readonly title: string }[];
+  /**
+   * Ids of returned events that are not the first time that track and format
+   * went out. Decided against the whole log, because a page of recent events
+   * cannot tell whether something older came before it.
+   */
+  readonly redelivered: readonly string[];
 };
 
 /**

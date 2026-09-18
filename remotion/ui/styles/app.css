@@ -1576,3 +1576,123 @@ body {
   color: var(--text-faint);
   opacity: 0.6;
 }
+
+/* ---------------------------------------------------------------- *
+ * Delivery history
+ *
+ * Reuses the export list's grid and the existing status colours. History is
+ * a plain reverse-chronological list on purpose: it answers "what went out,
+ * and when" and there is nothing there to chart.
+ * ---------------------------------------------------------------- */
+
+.history {
+  display: grid;
+  gap: 14px;
+}
+
+.history__summary {
+  margin: 0;
+  font-family: var(--font-label);
+  font-size: 14px;
+  color: var(--text);
+}
+
+.history__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+
+/* A label above a narrow control, so three filters and a button sit on one
+   row without the full-width stacking the form fields use. */
+.field--inline {
+  min-width: 150px;
+}
+
+.field--inline .field__input {
+  font-size: 13px;
+  padding: 6px 9px;
+}
+
+.history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.history__row {
+  display: grid;
+  grid-template-columns: 120px minmax(90px, 1fr) 110px 74px minmax(120px, 2fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  font-family: var(--font-label);
+  font-size: 13px;
+}
+
+.history__when {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.history__track {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history__preset,
+.history__bytes {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.history__path {
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history__tag {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+  color: var(--vintage-gold);
+  background: var(--gold-wash);
+}
+
+/* Reconstructed from a receipt rather than recorded as it happened, so it
+   reads as a weaker claim than the rest of the row. */
+.history__tag--reconstructed {
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+}
+
+.history__list--compact .history__row {
+  grid-template-columns: 120px minmax(90px, 1fr) 110px 74px auto;
+  font-size: 12px;
+}
+
+.history__list--compact .history__path {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .history__row {
+    grid-template-columns: 110px minmax(80px, 1fr) auto;
+  }
+
+  .history__bytes,
+  .history__path {
+    display: none;
+  }
+}

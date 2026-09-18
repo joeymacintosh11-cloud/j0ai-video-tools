@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import {
   DELIVERY_HISTORY_DEFAULT_LIMIT,
+  redeliveredEventIds,
   selectDeliveryHistory,
   summarizeDeliveryHistory,
   type DeliveryHistoryFilter,
@@ -58,6 +59,8 @@ export type DeliveryHistoryResult = {
   readonly summary: DeliveryHistorySummary;
   /** Every track slug that appears anywhere in the log, for a filter list. */
   readonly knownTracks: readonly { readonly slug: string; readonly title: string }[];
+  /** Ids of returned events that are not the first delivery of their format. */
+  readonly redelivered: readonly string[];
 };
 
 const EMPTY_SUMMARY: DeliveryHistorySummary = {
@@ -102,6 +105,7 @@ export const queryDeliveryHistory = async ({
       matched: 0,
       summary: EMPTY_SUMMARY,
       knownTracks: [],
+      redelivered: [],
     };
   }
 
@@ -111,6 +115,8 @@ export const queryDeliveryHistory = async ({
     ...filter,
   });
   const summary = summarizeDeliveryHistory(read.events, now);
+  // Against the whole log, not the page: a page cannot see what preceded it.
+  const repeats = redeliveredEventIds(read.events);
 
   return {
     root,
@@ -124,6 +130,9 @@ export const queryDeliveryHistory = async ({
       slug: key,
       title: label,
     })),
+    redelivered: selection.events
+      .filter((event) => repeats.has(event.eventId))
+      .map((event) => event.eventId),
   };
 };
 

@@ -6,6 +6,7 @@ import { deliveryFolderFor } from "../../src/domain/delivery/deliveryPaths.ts";
 import { revealDelivery } from "../api/client.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
 import { DeliverPanel } from "./DeliverPanel.tsx";
+import { TrackDeliveryHistory } from "./DeliveryHistoryPanel.tsx";
 import { DeliveryStatus } from "./DeliveryStatus.tsx";
 import {
   ReleaseBundleBadge,
@@ -183,6 +184,13 @@ export const TrackDetail: React.FC<{
                   `${track.releaseBundle.missing} missing`}
             </span>
           </p>
+
+          {/* When this last went out, which the marks above cannot say: they
+              describe the destination's current contents, not its past. */}
+          <p className="exports__intent">
+            <span className="exports__intentlabel">Recent</span>
+          </p>
+          <TrackDeliveryHistory slug={track.slug} />
 
           <div className="form__actions">
             <DeliverPanel

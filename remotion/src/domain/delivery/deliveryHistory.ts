@@ -417,6 +417,33 @@ export const selectDeliveryHistory = (
   };
 };
 
+/**
+ * Which events are not the first time that track and format went out.
+ *
+ * "Was this re-delivered?" is one of the questions this record exists to
+ * answer, and it can only be answered against the whole log: a page of recent
+ * events cannot tell whether something older came before it. Computed over
+ * every event and returned as a set of ids, so the persisted shape of an event
+ * never has to carry a fact derived from its neighbours.
+ */
+export const redeliveredEventIds = (
+  events: readonly DeliveryLogEvent[],
+): ReadonlySet<string> => {
+  const first = new Map<string, string>();
+  const repeats = new Set<string>();
+
+  for (const event of [...events].sort(
+    (a, b) => Date.parse(a.deliveredAt) - Date.parse(b.deliveredAt),
+  )) {
+    const key = `${event.track.slug}|${event.preset.id}`;
+
+    if (first.has(key)) repeats.add(event.eventId);
+    else first.set(key, event.eventId);
+  }
+
+  return repeats;
+};
+
 /* ------------------------------------------------------------------ *
  * Summaries
  * ------------------------------------------------------------------ */

@@ -130,6 +130,7 @@ export const handleGetDeliveryHistory = async (
     limit,
     summary: result.summary,
     knownTracks: result.knownTracks,
+    redelivered: result.redelivered,
   };
 
   sendOk(response, payload);
