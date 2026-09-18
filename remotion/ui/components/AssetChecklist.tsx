@@ -1,11 +1,17 @@
 import type { TrackDetailView } from "../../src/domain/api/views.ts";
 
-type RowState = "present" | "missing" | "stale";
+/**
+ * "skipped" is not a problem: the file is absent because the track does not
+ * ship in that format, so marking it ✗ alongside a genuinely missing cover
+ * would be reporting a decision as a fault.
+ */
+type RowState = "present" | "missing" | "stale" | "skipped";
 
 const MARKS: Record<RowState, string> = {
   present: "✓",
   missing: "✗",
   stale: "!",
+  skipped: "◦",
 };
 
 const Row: React.FC<{
@@ -106,9 +112,17 @@ export const AssetChecklist: React.FC<{ readonly track: TrackDetailView }> = ({
         <Row
           key={output.presetId}
           name={output.label}
-          state={output.present ? "present" : "missing"}
+          state={
+            output.present ? "present" : output.intended ? "missing" : "skipped"
+          }
           path={output.outputLabel}
-          note={output.present ? undefined : "not rendered yet"}
+          note={
+            output.present
+              ? undefined
+              : output.intended
+                ? "not rendered yet"
+                : "not an intended format"
+          }
         />
       ))}
 

@@ -79,6 +79,14 @@ export type TrackSummaryView = {
    * track list and the detail panel read exactly the same thing.
    */
   readonly exports: readonly RenderOutputView[];
+  /**
+   * The formats this track declares it ships in, or null when it declares
+   * none. Null is not "no formats": an undeclared track is treated as intending
+   * every format, which is what each export's `intended` already reflects. The
+   * distinction is kept so the UI can say "not declared yet" rather than
+   * showing an intent the user never chose.
+   */
+  readonly exportPresets: readonly RenderPresetId[] | null;
 };
 
 /** GET /api/tracks/:slug, and the response to create/metadata updates. */
@@ -163,6 +171,12 @@ export type RenderOutputView = {
   readonly queued: boolean;
   /** A job for this track and format is preparing or rendering now. */
   readonly active: boolean;
+  /**
+   * This track is meant to ship in this format. Intent is separate from every
+   * other flag here: a format can be intended and missing, or rendered without
+   * being intended, and the two say different things.
+   */
+  readonly intended: boolean;
 };
 
 /** The two files a client may upload into a track. */

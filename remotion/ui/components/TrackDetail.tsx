@@ -38,6 +38,13 @@ export const TrackDetail: React.FC<{
   // when the file behind it did.
   const [assetVersion, setAssetVersion] = useState(0);
 
+  // What this track says it ships in, as opposed to what it has rendered. The
+  // two are shown separately on purpose.
+  const intendedLabels = track.exports
+    .filter((output) => output.intended)
+    .map((output) => output.label)
+    .join(" · ");
+
   const onUploaded = () => {
     setAssetVersion((previous) => previous + 1);
     onChanged();
@@ -113,11 +120,21 @@ export const TrackDetail: React.FC<{
 
       <section className="section">
         <h3 className="section__title">Exports</h3>
+        <p className="exports__intent">
+          <span className="exports__intentlabel">Intended</span>
+          {intendedLabels === "" ? "—" : intendedLabels}
+          {track.exportPresets === null ? (
+            <span className="muted">
+              {" "}
+              — not declared, so every format is assumed
+            </span>
+          ) : null}
+        </p>
         <ExportStatus exports={track.exports} />
         <ExportMissingPanel
           label="Export missing"
           tracks={[track.slug]}
-          formats={formats}
+          formats={null}
           disabled={!track.validation.ok}
           onQueued={onBatchStarted}
           onChanged={onChanged}

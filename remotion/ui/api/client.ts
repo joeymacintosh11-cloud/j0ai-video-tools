@@ -120,8 +120,11 @@ export const listTracks = (): Promise<readonly TrackSummaryView[]> =>
 export const getTrack = (slug: string): Promise<TrackDetailView> =>
   request<TrackDetailView>(`/api/tracks/${encodeURIComponent(slug)}`);
 
-export const createTrack = (title: string): Promise<TrackDetailView> => {
-  const body: CreateTrackBody = { title };
+export const createTrack = (
+  title: string,
+  exportPresets?: readonly RenderPresetId[],
+): Promise<TrackDetailView> => {
+  const body: CreateTrackBody = { title, exportPresets };
 
   return jsonRequest<TrackDetailView>("/api/tracks", "POST", body);
 };
@@ -264,15 +267,21 @@ export const cancelRenderBatch = (
 /**
  * Queues only the exports the given tracks do not already have.
  *
- * With `dryRun` the same plan comes back without anything being queued, which
- * is what lets the UI show a summary before committing.
+ * `tracks` of null covers the whole catalogue, and `presets` of null uses each
+ * track's own declared intent rather than one list for all of them. With
+ * `dryRun` the same plan comes back without anything being queued, which is
+ * what lets the UI show a summary before committing.
  */
 export const exportMissing = (
-  tracks: readonly string[],
-  presets: readonly RenderPresetId[],
+  tracks: readonly string[] | null,
+  presets: readonly RenderPresetId[] | null,
   dryRun: boolean,
 ): Promise<ExportMissingView> => {
-  const body: ExportMissingBody = { tracks, presets, dryRun };
+  const body: ExportMissingBody = {
+    ...(tracks === null ? { catalogue: true } : { tracks }),
+    ...(presets === null ? {} : { presets }),
+    dryRun,
+  };
 
   return jsonRequest<ExportMissingView>("/api/export-missing", "POST", body);
 };

@@ -161,6 +161,14 @@ body {
   padding-bottom: 0;
 }
 
+/* The selection row only appears with tracks ticked, so it reads as a
+   continuation of the row above rather than a second permanent bar. */
+.app__toolbar--selection {
+  background: var(--surface-1);
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
 .app__toolbar--error .banner {
   margin-bottom: 10px;
 }
@@ -170,6 +178,17 @@ body {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* In a form the picker is a field like any other, so its label matches the
+   others rather than the toolbar's. */
+.formats--field {
+  gap: 10px;
+}
+
+.formats--field .formats__label {
+  color: var(--vintage-gold);
+  width: 100%;
 }
 
 .formats__label {
@@ -570,6 +589,10 @@ body {
 .assets__mark--missing {
   color: var(--status-invalid);
 }
+.assets__mark--skipped {
+  color: var(--text-faint);
+}
+
 .assets__mark--stale {
   color: var(--olive-bright);
 }
@@ -1303,6 +1326,33 @@ body {
 }
 .export--missing .export__mark {
   color: var(--text-faint);
+}
+.export--unintended .export__mark {
+  color: var(--text-faint);
+}
+
+/* A format the track does not ship in is receded rather than marked as a
+   problem: not making it is a decision, not a gap. */
+.export--unintended {
+  opacity: 0.4;
+}
+
+/* What the track declares it ships in, above what it has actually rendered. */
+.exports__intent {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.exports__intentlabel {
+  font-family: var(--font-label);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--vintage-gold);
 }
 
 /* In a compact row the marks alone carry the meaning, so keep them aligned. */

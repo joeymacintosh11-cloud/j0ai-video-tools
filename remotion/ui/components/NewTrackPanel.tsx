@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { slugify } from "../../src/domain/tracks/slug.ts";
+import {
+  DEFAULT_RENDER_PRESET_ID,
+  type RenderPresetId,
+} from "../../src/domain/video/renderPresets.ts";
 import { ApiRequestError, createTrack } from "../api/client.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
+import { FormatPicker } from "./FormatPicker.tsx";
 
 /**
  * Creates a track folder from a title.
@@ -13,12 +18,19 @@ import { ErrorBanner } from "./ErrorBanner.tsx";
  * Only metadata.json is written here. Cover and audio are uploaded afterwards
  * on the track's own panel, which keeps creation from half-failing partway
  * through a multi-file sequence.
+ *
+ * The intended formats are chosen here rather than left to be edited into the
+ * JSON later, so a new beat declares what it ships in from the moment it
+ * exists. They stay editable afterwards in the track's metadata form.
  */
 export const NewTrackPanel: React.FC<{
   readonly onCreated: (slug: string) => void;
   readonly onCancel: () => void;
 }> = ({ onCreated, onCancel }) => {
   const [title, setTitle] = useState("");
+  const [exportPresets, setExportPresets] = useState<readonly RenderPresetId[]>(
+    [DEFAULT_RENDER_PRESET_ID],
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiRequestError | null>(null);
 
@@ -30,7 +42,7 @@ export const NewTrackPanel: React.FC<{
     setError(null);
 
     try {
-      const track = await createTrack(trimmed);
+      const track = await createTrack(trimmed, exportPresets);
 
       setTitle("");
       onCreated(track.slug);
@@ -76,6 +88,19 @@ export const NewTrackPanel: React.FC<{
             : "The folder name is derived from the title."}
         </span>
       </label>
+
+      <div className="field">
+        <FormatPicker
+          label="Intended exports"
+          className="formats--field"
+          selected={exportPresets}
+          disabled={busy}
+          onChange={setExportPresets}
+        />
+        <span className="field__hint">
+          Which formats this track is meant to ship in. Changeable later.
+        </span>
+      </div>
 
       <div className="form__actions">
         <button className="button" type="submit" disabled={busy || slug === ""}>

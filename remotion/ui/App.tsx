@@ -144,6 +144,16 @@ export const App: React.FC = () => {
 
         <span className="app__spacer" />
 
+        <ExportMissingPanel
+          label="Export missing for catalogue"
+          tracks={null}
+          formats={null}
+          onQueued={setBatchId}
+          onChanged={refreshAll}
+        />
+      </div>
+
+      <div className="app__toolbar app__toolbar--selection">
         {checked.length > 0 ? (
           <>
             <span className="actions__result">
@@ -168,7 +178,7 @@ export const App: React.FC = () => {
             <ExportMissingPanel
               label="Export missing for selected"
               tracks={checked}
-              formats={formats}
+              formats={null}
               onQueued={(id) => {
                 setBatchId(id);
                 setChecked([]);
@@ -178,7 +188,8 @@ export const App: React.FC = () => {
           </>
         ) : (
           <span className="muted">
-            Tick tracks to queue several at once, or render the open track below.
+            Tick tracks to queue several at once, or render the open track
+            below. Export missing uses each track&rsquo;s intended formats.
           </span>
         )}
       </div>

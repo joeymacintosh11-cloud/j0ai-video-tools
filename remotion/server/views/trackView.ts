@@ -4,7 +4,10 @@ import type {
 } from "../../src/domain/api/views.ts";
 import { publicLabel } from "../../src/domain/tracks/paths.ts";
 import type { TrackInspection } from "../../src/domain/tracks/types.ts";
-import { DEFAULT_RENDER_PRESET_ID } from "../../src/domain/video/renderPresets.ts";
+import {
+  DEFAULT_RENDER_PRESET_ID,
+  resolveExportPresets,
+} from "../../src/domain/video/renderPresets.ts";
 import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
 import {
   trackLocations,
@@ -27,38 +30,50 @@ export const toTrackSummaryView = (
    * the caller's concern. Omitted means "nothing in flight".
    */
   inFlight: ReadonlyMap<string, "queued" | "active"> = new Map(),
-): TrackSummaryView => ({
-  slug: inspection.slug,
-  // Falls back to the draft's title so a track that is not yet valid still
-  // shows the name it was created with, rather than its slug. An empty title
-  // stays null so callers can apply their own fallback.
-  title:
-    inspection.metadata?.title ?? (inspection.metadataDraft?.title || null),
-  status: inspection.status,
-  metadataPresent: inspection.facts.metadataExists,
-  metadataValid: inspection.metadata !== null,
-  coverPresent: inspection.facts.coverExists,
-  audioPresent: inspection.facts.beatExists,
-  analysisPresent: inspection.facts.analysisExists,
-  analysisUpToDate: inspection.facts.analysisUpToDate,
-  renderPresent: inspection.facts.outputExists,
-  exports: trackExportCoverage(inspection.slug).map((facts) => {
-    const state = inFlight.get(`${inspection.slug}::${facts.presetId}`);
+): TrackSummaryView => {
+  // Falls back to the draft so a track that is not yet renderable still reports
+  // the intent it was created with, exactly as its title does.
+  const declared =
+    inspection.metadata?.exportPresets ??
+    inspection.metadataDraft?.exportPresets ??
+    null;
+  const intended = new Set(resolveExportPresets(declared));
 
-    return {
-      presetId: facts.presetId,
-      label: facts.label,
-      outputLabel: facts.outputLabel,
-      outputPath: facts.rendered ? facts.outputPath : null,
-      present: facts.rendered,
-      bytes: facts.bytes,
-      modifiedAt: facts.modifiedAt,
-      empty: facts.empty,
-      queued: state === "queued",
-      active: state === "active",
-    };
-  }),
-});
+  return {
+    slug: inspection.slug,
+    // Falls back to the draft's title so a track that is not yet valid still
+    // shows the name it was created with, rather than its slug. An empty title
+    // stays null so callers can apply their own fallback.
+    title:
+      inspection.metadata?.title ?? (inspection.metadataDraft?.title || null),
+    status: inspection.status,
+    metadataPresent: inspection.facts.metadataExists,
+    metadataValid: inspection.metadata !== null,
+    coverPresent: inspection.facts.coverExists,
+    audioPresent: inspection.facts.beatExists,
+    analysisPresent: inspection.facts.analysisExists,
+    analysisUpToDate: inspection.facts.analysisUpToDate,
+    renderPresent: inspection.facts.outputExists,
+    exports: trackExportCoverage(inspection.slug).map((facts) => {
+      const state = inFlight.get(`${inspection.slug}::${facts.presetId}`);
+
+      return {
+        presetId: facts.presetId,
+        label: facts.label,
+        outputLabel: facts.outputLabel,
+        outputPath: facts.rendered ? facts.outputPath : null,
+        present: facts.rendered,
+        bytes: facts.bytes,
+        modifiedAt: facts.modifiedAt,
+        empty: facts.empty,
+        queued: state === "queued",
+        active: state === "active",
+        intended: intended.has(facts.presetId),
+      };
+    }),
+    exportPresets: declared,
+  };
+};
 
 export const toTrackDetailView = (
   inspection: TrackInspection,

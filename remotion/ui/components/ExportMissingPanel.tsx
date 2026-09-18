@@ -20,11 +20,18 @@ const asApiError = (cause: unknown): ApiRequestError =>
  * in the browser. Only the confirm actually enqueues. When nothing is missing
  * there is nothing to confirm, and it says so instead of offering a button that
  * would do nothing.
+ *
+ * One panel serves all three scopes: a single track, the ticked tracks, and the
+ * whole catalogue. `tracks` of null means the catalogue, and `formats` of null
+ * means each track's own declared intent — which is the ordinary case, since
+ * different tracks ship in different formats.
  */
 export const ExportMissingPanel: React.FC<{
   readonly label: string;
-  readonly tracks: readonly string[];
-  readonly formats: readonly RenderPresetId[];
+  /** Tracks to cover; null means every track in the catalogue. */
+  readonly tracks: readonly string[] | null;
+  /** Formats to force; null uses each track's declared intent. */
+  readonly formats: readonly RenderPresetId[] | null;
   readonly disabled?: boolean;
   readonly onQueued: (batchId: string) => void;
   readonly onChanged: () => void;
@@ -57,9 +64,13 @@ export const ExportMissingPanel: React.FC<{
     }
   };
 
+  const plural = (count: number, noun: string) =>
+    `${count} ${noun}${count === 1 ? "" : "s"}`;
+
   const counts = plan
     ? [
-        `${plan.missing.length} missing`,
+        plural(plan.tracks, "track"),
+        plural(plan.intendedTargets.length, "intended export"),
         `${plan.skippedExisting.length} already rendered`,
         plan.skippedQueued.length > 0
           ? `${plan.skippedQueued.length} already queued`
@@ -67,7 +78,10 @@ export const ExportMissingPanel: React.FC<{
         plan.skippedActive.length > 0
           ? `${plan.skippedActive.length} rendering now`
           : null,
-        plan.invalid.length > 0 ? `${plan.invalid.length} invalid` : null,
+        `${plan.missing.length} missing`,
+        plan.invalid.length > 0
+          ? plural(plan.invalid.length, "invalid track")
+          : null,
       ]
         .filter((part) => part !== null)
         .join(" · ")
@@ -81,8 +95,12 @@ export const ExportMissingPanel: React.FC<{
         <button
           className="button"
           type="button"
-          disabled={disabled || busy || tracks.length === 0}
-          title="Queue only the formats that have not been rendered yet"
+          disabled={disabled || busy || tracks?.length === 0}
+          title={
+            formats === null
+              ? "Queue each track's intended formats that have not been rendered yet"
+              : "Queue only the selected formats that have not been rendered yet"
+          }
           onClick={() => void run(true)}
         >
           {busy && plan === null ? "Checking…" : label}
@@ -92,7 +110,9 @@ export const ExportMissingPanel: React.FC<{
           <>
             {plan.nothingToDo ? (
               <span className="exportmissing__done">
-                All selected exports already exist
+                {plan.catalogue
+                  ? "Catalogue is fully exported"
+                  : "All intended exports already exist"}
               </span>
             ) : (
               <button

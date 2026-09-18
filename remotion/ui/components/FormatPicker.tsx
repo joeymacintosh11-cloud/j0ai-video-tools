@@ -7,16 +7,25 @@ import {
  * Which export formats to render.
  *
  * The options come from the shared preset module, so adding a format here
- * needs no UI change. One format stays selected at all times — an empty
- * selection would only produce a request the server would reject.
+ * needs no UI change, and the toolbar, the metadata editor and the new-track
+ * panel all label formats identically. One format stays selected at all times —
+ * an empty selection would only produce a request the server would reject, and
+ * an empty exportPresets is refused by metadata validation for the same reason.
  */
 export const FormatPicker: React.FC<{
   readonly selected: readonly RenderPresetId[];
   readonly onChange: (next: readonly RenderPresetId[]) => void;
   readonly disabled?: boolean;
-}> = ({ selected, onChange, disabled = false }) => (
-  <div className="formats" role="group" aria-label="Export formats">
-    <span className="formats__label">Formats</span>
+  /** Group label; the toolbar's wording by default. */
+  readonly label?: string;
+  readonly className?: string;
+}> = ({ selected, onChange, disabled = false, label = "Formats", className }) => (
+  <div
+    className={className ? `formats ${className}` : "formats"}
+    role="group"
+    aria-label={label}
+  >
+    <span className="formats__label">{label}</span>
 
     {RENDER_PRESET_LIST.map((preset) => {
       const checked = selected.includes(preset.id);

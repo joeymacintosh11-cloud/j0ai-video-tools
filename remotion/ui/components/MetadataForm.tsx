@@ -3,9 +3,14 @@ import type {
   TrackDetailView,
   TrackMetadataPatch,
 } from "../../src/domain/api/views.ts";
+import {
+  resolveExportPresets,
+  type RenderPresetId,
+} from "../../src/domain/video/renderPresets.ts";
 import { ApiRequestError, updateTrackMetadata } from "../api/client.ts";
 import { useStillCurrent } from "../hooks/useStillCurrent.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
+import { FormatPicker } from "./FormatPicker.tsx";
 import { decideSeed } from "./metadataSeed.ts";
 
 type Fields = {
@@ -14,6 +19,8 @@ type Fields = {
   readonly key: string;
   readonly bpm: string;
   readonly subtitle: string;
+  /** Always a concrete list here: an undeclared track shows what it resolves to. */
+  readonly exportPresets: readonly RenderPresetId[];
 };
 
 /**
@@ -29,6 +36,9 @@ const toFields = (track: TrackDetailView): Fields => {
     key: draft?.key ?? "",
     bpm: draft?.bpm === null || draft?.bpm === undefined ? "" : String(draft.bpm),
     subtitle: draft?.subtitle ?? "",
+    // An undeclared track shows the formats it is treated as intending, so what
+    // the boxes say is what "export missing" will actually do.
+    exportPresets: resolveExportPresets(track.exportPresets),
   };
 };
 
@@ -38,6 +48,7 @@ const toPatch = (fields: Fields): TrackMetadataPatch => ({
   key: fields.key.trim(),
   bpm: fields.bpm.trim() === "" ? null : Number(fields.bpm),
   subtitle: fields.subtitle.trim(),
+  exportPresets: fields.exportPresets,
 });
 
 const sameFields = (a: Fields, b: Fields): boolean =>
@@ -45,7 +56,9 @@ const sameFields = (a: Fields, b: Fields): boolean =>
   a.artist === b.artist &&
   a.key === b.key &&
   a.bpm === b.bpm &&
-  a.subtitle === b.subtitle;
+  a.subtitle === b.subtitle &&
+  a.exportPresets.length === b.exportPresets.length &&
+  a.exportPresets.every((id, index) => id === b.exportPresets[index]);
 
 const Field: React.FC<{
   readonly label: string;
@@ -143,12 +156,28 @@ export const MetadataForm: React.FC<{
     try {
       // Conditional on the revision this form was seeded from, so an edit made
       // elsewhere since then is reported as a conflict rather than overwritten.
-      await updateTrackMetadata(slug, toPatch(fields), seeded.current.revision);
+      const saved = await updateTrackMetadata(
+        slug,
+        toPatch(fields),
+        seeded.current.revision,
+      );
 
       if (!stillCurrent(slug)) {
         return;
       }
 
+      // Re-seed from the write's own response rather than waiting for the
+      // parent's refresh. Without this the form stayed dirty against its old
+      // baseline, so the refresh that follows a successful save arrived with a
+      // changed revision and an edit still in progress — which is exactly the
+      // shape of an external edit, and was reported to the user as a conflict
+      // with their own save. The response is the authoritative post-write
+      // state, so seeding from it leaves nothing to mistake.
+      const next = toFields(saved);
+
+      seeded.current = { slug, revision: saved.metadataRevision };
+      setInitial(next);
+      setFields(next);
       setSavedAt(Date.now());
       setExternallyChanged(false);
       // The parent re-reads the track, which re-seeds this form from disk.
@@ -240,6 +269,24 @@ export const MetadataForm: React.FC<{
         hint="Optional — shown under the title in the video."
         disabled={saving}
       />
+
+      <div className="field">
+        <FormatPicker
+          label="Intended exports"
+          className="formats--field"
+          selected={fields.exportPresets}
+          disabled={saving}
+          onChange={(next) => {
+            setFields((previous) => ({ ...previous, exportPresets: next }));
+            setSavedAt(null);
+          }}
+        />
+        <span className="field__hint">
+          {track.exportPresets === null
+            ? "Not declared yet, so every format is assumed. Saving records this choice in metadata.json."
+            : "Export missing queues only these formats for this track."}
+        </span>
+      </div>
 
       <div className="form__actions">
         <button className="button" type="submit" disabled={saving || !dirty}>
