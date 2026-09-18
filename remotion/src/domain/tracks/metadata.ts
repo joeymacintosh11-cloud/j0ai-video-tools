@@ -1,4 +1,10 @@
 import { TrackError, trackIssue, type TrackIssue } from "./errors.ts";
+import {
+  coerceExportPresetList,
+  DEFAULT_RENDER_PRESET_ID,
+  parseExportPresetList,
+  type RenderPresetId,
+} from "../video/renderPresets.ts";
 import type { TrackMetadata, TrackMetadataDraft } from "./types.ts";
 
 export const DEFAULT_ARTIST = "Toshi";
@@ -13,13 +19,23 @@ export type MetadataValidation = {
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The metadata.json a freshly scaffolded track starts with. */
-export const createDefaultMetadata = (title: string): TrackMetadataDraft => ({
+/**
+ * The metadata.json a freshly scaffolded track starts with.
+ *
+ * A new track declares the default format rather than nothing, so its intent is
+ * explicit from the moment it exists and never has to be guessed. Callers that
+ * know better — the New track panel, `new-track --presets` — pass their own.
+ */
+export const createDefaultMetadata = (
+  title: string,
+  exportPresets: readonly RenderPresetId[] = [DEFAULT_RENDER_PRESET_ID],
+): TrackMetadataDraft => ({
   title,
   artist: DEFAULT_ARTIST,
   key: "",
   bpm: null,
   subtitle: DEFAULT_SUBTITLE,
+  exportPresets,
 });
 
 /**
@@ -48,6 +64,7 @@ export const coerceMetadataDraft = (
         ? raw.bpm
         : null,
     subtitle: typeof raw.subtitle === "string" ? raw.subtitle : undefined,
+    exportPresets: coerceExportPresetList(raw.exportPresets),
   };
 };
 
@@ -61,6 +78,9 @@ export const serializeTrackMetadata = (
     key: metadata.key,
     bpm: metadata.bpm,
     subtitle: metadata.subtitle,
+    // Undefined is dropped by JSON.stringify, so an undeclared track keeps a
+    // file with no exportPresets key rather than gaining an empty one.
+    exportPresets: metadata.exportPresets,
   };
 
   return `${JSON.stringify(ordered, null, 2)}\n`;
@@ -134,6 +154,19 @@ export const validateTrackMetadata = (
     );
   }
 
+  // Undeclared is valid and means "every format"; declared is held to the
+  // shared registry, so an unknown or repeated id is a hard error rather than
+  // something quietly dropped.
+  const rawExportPresets = raw.exportPresets;
+  let exportPresets: readonly RenderPresetId[] | undefined;
+  if (rawExportPresets !== undefined) {
+    const { presets, problems } = parseExportPresetList(rawExportPresets);
+    for (const problem of problems) {
+      issues.push(trackIssue("METADATA_INVALID", `${source} ${problem}`, source));
+    }
+    exportPresets = presets ?? undefined;
+  }
+
   if (title === null || artist === null || key === null || bpm === null) {
     return { issues, metadata: null };
   }
@@ -150,6 +183,7 @@ export const validateTrackMetadata = (
       key,
       bpm,
       subtitle: typeof rawSubtitle === "string" ? rawSubtitle : undefined,
+      exportPresets,
     },
   };
 };

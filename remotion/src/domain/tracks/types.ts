@@ -9,6 +9,14 @@ export type TrackMetadata = {
   readonly key: string;
   readonly bpm: number;
   readonly subtitle?: string;
+  /**
+   * Which formats this track is meant to ship in.
+   *
+   * Absent means undeclared, which resolves to every supported format — see
+   * resolveExportPresets(). Stored in canonical preset order with no
+   * duplicates.
+   */
+  readonly exportPresets?: readonly RenderPresetId[];
 };
 
 /**
@@ -22,6 +30,14 @@ export type TrackMetadataDraft = {
   readonly key: string;
   readonly bpm: number | null;
   readonly subtitle?: string;
+  /**
+   * Which formats this track is meant to ship in.
+   *
+   * Absent means undeclared, which resolves to every supported format — see
+   * resolveExportPresets(). Stored in canonical preset order with no
+   * duplicates.
+   */
+  readonly exportPresets?: readonly RenderPresetId[];
 };
 
 /**

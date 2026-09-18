@@ -112,6 +112,9 @@ export const updateTrackMetadata = async (
         key: patch.key ?? current.key,
         bpm: patch.bpm === undefined ? current.bpm : patch.bpm,
         subtitle: patch.subtitle ?? current.subtitle,
+        // Left alone unless the patch names it: editing a title must not
+        // materialise an intent the track never declared.
+        exportPresets: patch.exportPresets ?? current.exportPresets,
       };
       const { issues, metadata } = validateTrackMetadata(merged, source);
       if (metadata === null) {

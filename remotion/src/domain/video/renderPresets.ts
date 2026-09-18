@@ -102,3 +102,117 @@ export const assertRenderPresetId = (value: unknown): RenderPresetId => {
 
   return value;
 };
+
+/* ------------------------------------------------------------------ *
+ * Declared export intent
+ * ------------------------------------------------------------------ */
+
+/**
+ * A track's `exportPresets` — which formats it is meant to ship in.
+ *
+ * The helpers below are the only place that knowledge lives. Metadata
+ * validation, the API, the planner, the CLI and the UI all go through them, so
+ * a new format needs no second list and no string union anywhere else.
+ */
+
+/** Canonical order, duplicates dropped. */
+export const canonicalPresetOrder = (
+  ids: Iterable<RenderPresetId>,
+): readonly RenderPresetId[] => {
+  const wanted = new Set(ids);
+
+  return RENDER_PRESET_IDS.filter((id) => wanted.has(id));
+};
+
+/**
+ * Strict read of a declared `exportPresets` list.
+ *
+ * Collects every problem rather than throwing at the first, so a metadata file
+ * with two bad entries reports both. Messages are written to be prefixed with
+ * the file they came from. `presets` is non-null only when there are none.
+ */
+export const parseExportPresetList = (
+  raw: unknown,
+): {
+  readonly presets: readonly RenderPresetId[] | null;
+  readonly problems: readonly string[];
+} => {
+  const expected = `Expected ids: ${RENDER_PRESET_IDS.join(", ")}.`;
+
+  if (!Array.isArray(raw)) {
+    return {
+      presets: null,
+      problems: [
+        `field "exportPresets" must be an array of format ids when present. ${expected}`,
+      ],
+    };
+  }
+
+  const problems: string[] = [];
+  const seen = new Set<RenderPresetId>();
+
+  // An empty list would mean "ship nowhere", which is far more likely to be a
+  // mistake than an intention. Leaving the field out is how you say
+  // "undeclared", and that is what an empty list is steered towards.
+  if (raw.length === 0) {
+    problems.push(
+      `field "exportPresets" must name at least one format, or be left out entirely to mean every format.`,
+    );
+  }
+
+  for (const value of raw) {
+    if (!isRenderPresetId(value)) {
+      problems.push(
+        `field "exportPresets" contains unknown format ${JSON.stringify(value)}. ${expected}`,
+      );
+      continue;
+    }
+
+    if (seen.has(value)) {
+      problems.push(
+        `field "exportPresets" lists ${JSON.stringify(value)} more than once.`,
+      );
+      continue;
+    }
+
+    seen.add(value);
+  }
+
+  return problems.length > 0
+    ? { presets: null, problems }
+    : { presets: canonicalPresetOrder(seen), problems };
+};
+
+/**
+ * Best-effort read, for prefilling an editor from a file that may not be valid.
+ *
+ * Unusable entries are dropped rather than reported — the strict parse above is
+ * what decides whether the file is acceptable. Undefined means "nothing usable
+ * was declared", which callers read as undeclared.
+ */
+export const coerceExportPresetList = (
+  raw: unknown,
+): readonly RenderPresetId[] | undefined => {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+
+  const usable = canonicalPresetOrder(raw.filter(isRenderPresetId));
+
+  return usable.length > 0 ? usable : undefined;
+};
+
+/**
+ * The formats a track should be exported in.
+ *
+ * An undeclared track resolves to every supported format, which is exactly what
+ * "export what's missing" meant before intent existed — so tracks written
+ * before this field arrived keep behaving as they always did, and nothing has
+ * to be migrated. Declaring the field is what narrows it.
+ */
+export const resolveExportPresets = (
+  declared: readonly RenderPresetId[] | null | undefined,
+): readonly RenderPresetId[] =>
+  declared && declared.length > 0
+    ? canonicalPresetOrder(declared)
+    : RENDER_PRESET_IDS;

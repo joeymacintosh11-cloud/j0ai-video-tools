@@ -8,6 +8,7 @@ import {
 import { trackDirLabel } from "../../src/domain/tracks/paths.ts";
 import { slugify } from "../../src/domain/tracks/slug.ts";
 import type { TrackMetadataDraft } from "../../src/domain/tracks/types.ts";
+import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 import { trackLocations, type TrackLocations } from "./trackLocations.ts";
 
 export type CreateTrackResult = {
@@ -26,6 +27,7 @@ export type CreateTrackResult = {
  */
 export const createTrack = async (
   title: string,
+  exportPresets?: readonly RenderPresetId[],
 ): Promise<CreateTrackResult> => {
   const trimmedTitle = title.trim();
 
@@ -59,7 +61,7 @@ export const createTrack = async (
     );
   }
 
-  const metadata = createDefaultMetadata(trimmedTitle);
+  const metadata = createDefaultMetadata(trimmedTitle, exportPresets);
 
   await mkdir(locations.trackDir, { recursive: true });
   await writeFile(locations.metadata, serializeTrackMetadata(metadata), {

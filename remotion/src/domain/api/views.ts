@@ -125,11 +125,19 @@ export type TrackMetadataPatch = {
   readonly key?: string;
   readonly bpm?: number | null;
   readonly subtitle?: string;
+  /**
+   * The formats this track is meant to ship in. Omitted leaves whatever the
+   * file already declares — including nothing, so saving an unrelated field
+   * never invents an intent the user did not choose.
+   */
+  readonly exportPresets?: readonly RenderPresetId[];
 };
 
 /** POST /api/tracks request body. */
 export type CreateTrackBody = {
   readonly title: string;
+  /** Intended formats for the new track. Omitted uses the default. */
+  readonly exportPresets?: readonly RenderPresetId[];
 };
 
 /**

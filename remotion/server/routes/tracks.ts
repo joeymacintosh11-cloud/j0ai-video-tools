@@ -12,7 +12,11 @@ import type {
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
-import { assertRenderPresetId } from "../../src/domain/video/renderPresets.ts";
+import {
+  assertRenderPresetId,
+  parseExportPresetList,
+  type RenderPresetId,
+} from "../../src/domain/video/renderPresets.ts";
 import {
   COMPOSITION_CONFIG,
   secondsToFrames,
@@ -85,10 +89,33 @@ export const handleCreateTrack = async (
     );
   }
 
-  const { slug } = await createTrack(title);
+  const { slug } = await createTrack(title, readExportPresets(body));
   const inspection = await inspectTrack(slug);
 
   sendOk(response, toTrackDetailView(inspection, renderManager.inFlightTargets()));
+};
+
+/**
+ * Reads a request-supplied `exportPresets`, or undefined when it is absent.
+ *
+ * Checked here as well as during metadata validation so an API caller gets a
+ * precise INVALID_REQUEST before any file is opened, rather than a write that
+ * is refused later on.
+ */
+const readExportPresets = (
+  body: Record<string, unknown>,
+): readonly RenderPresetId[] | undefined => {
+  if (body.exportPresets === undefined) {
+    return undefined;
+  }
+
+  const { presets, problems } = parseExportPresetList(body.exportPresets);
+
+  if (presets === null) {
+    throw new TrackError(trackIssue("INVALID_REQUEST", problems.join(" ")));
+  }
+
+  return presets;
 };
 
 const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch => {
@@ -115,11 +142,16 @@ const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch =>
     patch.bpm = body.bpm;
   }
 
+  const exportPresets = readExportPresets(body);
+  if (exportPresets !== undefined) {
+    patch.exportPresets = exportPresets;
+  }
+
   if (Object.keys(patch).length === 0) {
     throw new TrackError(
       trackIssue(
         "INVALID_REQUEST",
-        "Provide at least one of: title, artist, key, bpm, subtitle.",
+        "Provide at least one of: title, artist, key, bpm, subtitle, exportPresets.",
       ),
     );
   }
