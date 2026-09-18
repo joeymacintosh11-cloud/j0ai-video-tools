@@ -567,10 +567,18 @@ log itself cannot be written, the delivery still succeeded and says
 anything it reconstructs as such.
 
 **If the log is damaged** it says so, with line numbers, and still shows what it
-could read. A crash can only ever damage the last line; that one case is
-repairable with `npm run delivery-history -- --repair-tail`, which drops the
-incomplete fragment and refuses to touch anything else. Nothing deletes or
-rewrites an event.
+could read — a bad line never costs you the rest, and no view reports a damaged
+log as a complete answer. A crash can only ever damage the last line; that one
+case is repairable with `npm run delivery-history -- --repair-tail`, which drops
+the incomplete fragment and refuses to touch anything else. An event or a
+delivery appearing twice is reported too, since nothing this tool does can
+produce a repeat. Nothing deletes or rewrites an event.
+
+Appends are serialized by a small lock at the destination, so two deliveries
+finishing together cannot interleave. If a process is killed while holding it,
+`npm run delivery-history -- --release-lock` clears it — it refuses while a live
+process on this machine still holds it, and refuses a lock from another
+machine, where it cannot tell.
 
 ```console
 curl -X POST http://127.0.0.1:4600/api/render-batches \

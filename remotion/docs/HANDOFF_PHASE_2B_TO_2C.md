@@ -3541,6 +3541,335 @@ with no automatic deletion — the user decides. It reuses every existing record
 needs no new persisted state, and closes the one remaining gap between what the
 tool believes and what is actually on the disk.
 
+## 43. Audit and Hardening — Delivery History (2026-09-18)
+
+An audit of §42 rather than a new feature. No composition, layout, presets,
+render output, delivery or release-bundle behaviour changed, and no
+dependencies were added. **Seven defects were found and fixed**, one of them
+data loss that reported success. §42 remains accurate except where this section
+supersedes it.
+
+### 43.1 Findings
+
+| # | Severity | Finding |
+|---|---|---|
+| 1 | **Critical** | Appending to a log whose final line was unterminated destroyed that event *and* the new one, and returned `appended: true` |
+| 2 | **High** | The append lock could publish itself unreadable, permanently preventing any further history at that destination |
+| 3 | **High** | A short `write()` truncated the line silently |
+| 4 | **High** | The log or lock path could be a symlink, so writes landed outside the destination |
+| 5 | Medium | The first append to a destination was not durable (no directory fsync) |
+| 6 | Medium | A failed `close()` after a successful fsync was reported as a failed append |
+| 7 | Medium | A repeated event or delivery id in the log read as a healthy log |
+| 8 | Low | `repairDeliveryLogTail` threw a raw ENOENT when there was no log |
+| 9 | Low | A non-finite `limit` returned an empty page beside a non-zero match count |
+
+All nine are fixed. Each was reproduced first, and each has a regression test
+that fails without its fix.
+
+**1 — the critical one.** Whether to terminate the previous line was decided by
+whether the *reader had recorded a `truncated` problem*. But a final line can be
+unterminated and still parse perfectly well: a short write that stopped on the
+closing brace leaves one, and so does any editor that strips a trailing
+newline. In that state the log read as `complete`, no problem was recorded, the
+append wrote straight onto the end, and the result was one malformed line where
+two events used to be — the previous one and the new one both gone, with
+success reported. The decision now follows the only thing that matters, which is
+whether the file ends in a newline. `DeliveryLogRead.endsWithNewline` carries
+it, and it is deliberately *not* inferred from the problem list.
+
+**2.** The lock was created empty with `O_EXCL` and then written into, so a kill
+in between left a lock nothing could read. `readOwner` returned null,
+`clearAbandoned` therefore refused to touch it, and no delivery to that
+destination could ever be recorded again — a permanent silent degradation
+caused by exactly the kind of crash this subsystem exists to survive. The
+metadata is now staged in a temp file, fsynced, and `link()`ed into place:
+`link` still fails EEXIST if the lock is held, so it remains the
+exclusive-creation primitive, and a published lock is always complete. A
+failed stage leaves nothing behind.
+
+**3.** POSIX permits `write()` to write fewer bytes than requested, and Node's
+`fs.write` does not loop — it reports `bytesWritten` and returns. An unchecked
+count silently truncates the line. The count is checked and the remainder
+written, which is correct here *because the lock is held*: nothing else can
+write between a prefix and its remainder, so the two land adjacent. A write
+making no progress fails rather than looping. Verified by injection: thirty
+forced 10-byte writes, line still whole.
+
+**4.** `assertDeliveryRootFile` validated the *name* but never what was at the
+path, so a symlink at `<root>/delivery-log.jsonl` was followed and every
+appended event landed wherever it pointed. Reproduced writing into an unrelated
+file outside the destination. It now `lstat`s the target and refuses anything
+that is not a regular file, and the append passes `O_NOFOLLOW` so a link
+swapped in after the check is refused by the kernel rather than followed.
+
+**5.** `fsync` on a file makes its data and size durable but not the directory
+entry that first named it, so the very first append to a destination could be
+reported as recorded and then vanish with the whole file. The containing
+directory is synced on the append that creates the log. This makes the claim in
+§42.4 actually true rather than nearly true.
+
+**6.** `close()` ran in a `finally` whose rejection propagated, so a close
+failure after a successful write *and* fsync was reported as "not recorded" —
+sending the operator to reconcile an event already on disk. It is best-effort
+now, and only after the fsync.
+
+**7.** Nothing this tool writes can produce a repeat: the duplicate scan and the
+append share one lock. A repeat therefore means the log was edited, merged, or
+written by something else, and calling it `complete` vouched for a log that had
+not been checked. See §43.4.
+
+### 43.2 Append-lock guarantees
+
+What is guaranteed:
+
+- **Mutual exclusion while the lock is held.** `link()` into a name that already
+  exists fails with EEXIST on every POSIX filesystem, so exactly one appender
+  holds the lock at a time. Verified with real processes.
+- **A published lock is always readable.** There is no window in which an empty
+  or partial lock exists.
+- **A live owner is never displaced.** Reclaiming requires a dead PID *on this
+  host*; a foreign host and an unreadable lock are both left alone by
+  acquisition. One-sided, exactly as the render lock is.
+- **A displaced owner never removes its successor's lock.** Release re-reads the
+  lock and unlinks only if the token is still its own. Verified by planting a
+  successor's lock mid-append.
+- **Release never throws**, so a finished delivery is never turned into a
+  failure by its own bookkeeping.
+- **Per destination root**, so two destinations never contend, and nothing
+  global is taken.
+- **Bounded**: 5s with jittered retries, then it gives up and reports.
+
+What is *not* guaranteed:
+
+- **PID reuse can make a dead owner look alive.** The result is a stuck lock,
+  never two appenders — the safe direction. `npm run delivery-history --
+  --release-lock` is the operator path: it clears a lock that is unreadable, or
+  whose local owner is dead, and refuses a live local owner or a foreign host.
+- **A lock from another machine is never reclaimed automatically**, because this
+  machine cannot tell whether it is alive.
+- **The window between the destination-identity re-check and `open()` is not
+  fenced** by a pinned working directory the way the delivery copy is. It is two
+  syscalls wide, and `O_NOFOLLOW` covers the symlink case within it. Forking a
+  helper for one text append would be disproportionate.
+
+### 43.3 Crash and durability guarantees — stated exactly
+
+The ordering is: acquire lock → read for the duplicate scan → `open` with
+`O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW` → write the whole line, looping on a
+short write → `fsync` the file → `fsync` the directory if the file was just
+created → best-effort `close` → release the lock.
+
+| Crash point | Outcome |
+|---|---|
+| before `open` | nothing written; the delivery is unrecorded and reported so |
+| after `open`, before any write | an empty file may exist; reads as `missing`-equivalent (no events) |
+| mid-write | an unterminated final line: `recovered_tail`, every earlier event intact, repairable |
+| after write, before `fsync` | **the event may be lost entirely, or present, or partial.** Nothing is claimed here |
+| after `fsync` returns | the event is durable; a crash cannot remove it |
+| after `fsync`, before `close` | durable; the descriptor dies with the process |
+| after `fsync`, before lock release | durable, and the lock is left behind — recoverable by `--release-lock` |
+
+**What is deliberately not claimed:** that an append is atomic with respect to a
+crash. It is not, and cannot be, on a plain file. The guarantee is narrower and
+sufficient: *once the append returns success, the event has reached the disk*,
+and *any crash before that leaves either nothing or an unterminated final line*,
+which the reader treats as recoverable rather than as damage. The O_APPEND +
+lock combination guarantees non-interleaving between concurrent appenders; it
+guarantees nothing about power loss mid-write.
+
+`fsync` is also only as good as the hardware honours it; a drive that lies about
+flushing is outside anything this code can establish.
+
+### 43.4 Corruption semantics
+
+Six statuses, in precedence order — `corrupt` outranks `unsupported`, which
+outranks `recovered_tail`, which outranks `duplicated`, which outranks
+`complete`:
+
+| Status | Meaning | Events returned | Safe to append |
+|---|---|---|---|
+| `missing` | no log yet | none | yes |
+| `complete` | every line parsed, no repeats | all | yes |
+| `duplicated` | parsed, but an event or delivery appears twice | all | yes |
+| `recovered_tail` | only the final line is unterminated | all earlier | yes |
+| `unsupported` | a line from a newer schema version | all readable | **no** |
+| `corrupt` | damage somewhere other than the final line | all readable | **no** |
+
+`isSeriousLogDamage` is the single predicate for the last column, and
+reconciliation is its only caller — the answer cannot drift between places.
+
+**Readable history is always returned.** One bad line never costs the rest, and
+the status is what says something is wrong. Every problem carries a line number;
+a `duplicate` problem's number is the position among *parsed events*, which is
+the line number only when nothing ahead of it failed to parse, and its message
+says "event N" so it cannot be mistaken for an exact line.
+
+**Repair only ever drops an unterminated final line.** It refuses `complete`,
+`missing`, `duplicated`, `unsupported` and `corrupt`, prints what it discarded,
+holds the append lock while it rewrites, and reports rather than throwing when
+there is no log. Repeated repair is idempotent and never drops a valid event —
+tested three times over on the same log.
+
+**Appending after `recovered_tail`** terminates the fragment so the new event
+lands whole, which escalates the log to `corrupt`. That is the deliberate
+trade: nothing is lost and the damage is visible. Repairing first avoids it.
+
+### 43.5 Duplicate prevention
+
+The duplicate scan and the append happen under the same lock, so the check
+cannot go stale between them. `deliveryId` is a hash of the receipt, so:
+
+- a retried completion step is recognised and nothing is written;
+- **two processes completing the same delivery produce exactly one event** —
+  verified with real processes, one reporting `appended`, the other `duplicate`;
+- a genuine re-delivery has a new receipt, a new timestamp and a new file mtime,
+  so it is never suppressed;
+- reconciliation racing a live append is safe: reconciliation's pre-computed
+  set may be stale, but the per-append check under the lock is authoritative, so
+  the loser is counted as already recorded.
+
+### 43.6 Reconciliation limits (unchanged, restated precisely)
+
+What reconciliation **can** do: append an event for a receipt that has none,
+from the receipt alone, idempotently, marked `source: "reconciled"`.
+
+What it **cannot** do, and does not pretend to:
+
+- **Recover more than the latest delivery per target.** A receipt is overwritten
+  by the next delivery of the same export, so earlier lost events are gone.
+- **Reconstruct metadata as it was at delivery time.** Nothing records that. A
+  reconstructed event carries *current* metadata and is marked as reconstructed
+  in the log, the CLI and the UI. Its timestamp, size and fingerprint are the
+  real recorded ones.
+- **Find a receipt for a retired preset.** It enumerates `RENDER_PRESET_IDS`, so
+  a receipt whose preset no longer exists is invisible to it.
+- **Report a malformed receipt.** `readDeliveryReceipt` returns null for one and
+  it is skipped silently, so a corrupt receipt looks like no receipt.
+- **Append onto a `corrupt` or `unsupported` log.** It refuses, because
+  appending onto damage buries it.
+
+### 43.7 Query and date correctness
+
+Confirmed by test: `from` inclusive and `to` exclusive (so adjacent ranges never
+double-count, and `from === to` is empty); timezone-offset timestamps compare as
+the same instant as their UTC equivalents; a malformed `from`/`to` is ignored
+rather than matching nothing; ordering is by delivery time with append order as
+a deterministic tie-break; "today" is local midnight, which is correct across a
+DST shift because it is derived from local date components; summaries always
+describe the whole log and never the filtered page; re-delivery is decided
+against the whole log, not the returned page.
+
+Limits: the API refuses anything outside 1–500 outright. The domain clamps
+defensively — a non-finite limit now falls back to the default rather than
+returning an empty page, and out-of-range values clamp instead of inverting.
+
+### 43.8 Performance at scale
+
+Re-measured on this machine, events of ~600 bytes:
+
+| Events | On disk | Full read | Filter | Summary | Re-delivery scan | Append |
+|---|---|---|---|---|---|---|
+| 1 000 | 0.6 MiB | 1.0 ms | 0.3 ms | 0.3 ms | 0.2 ms | 9.4 ms |
+| 10 000 | 5.7 MiB | 10.6 ms | 2.7 ms | 1.7 ms | 2.2 ms | 18.1 ms |
+| 50 000 | 28.4 MiB | 55.8 ms | 12.9 ms | 8.6 ms | 11.3 ms | 65.7 ms |
+
+Linear, as a full read must be. 50 000 events is on the order of a century of
+daily deliveries; at that size an append costs 66 ms, once per delivered file,
+after a copy that takes seconds. **No optimisation was made**, deliberately.
+
+If it ever matters, the smallest safe improvement is to bound the duplicate scan
+to the tail of the log rather than all of it — a retried completion is always
+recent. It is not done now because it narrows a correctness property (a
+duplicate anywhere is currently caught) to buy performance nothing needs. An
+index or a database would be the wrong answer at any size this reaches.
+
+### 43.9 Failure states on each surface
+
+| State | API | CLI | UI |
+|---|---|---|---|
+| no destination | `root: null` + `rootProblem` | refuses, names `--set-root` | "nothing delivered from here yet" |
+| missing log | `status: "missing"` | "No deliveries have been recorded" | empty-state line |
+| `recovered_tail` | `statusNote` + problem lines | `!` note + line numbers | warning naming `--repair-tail` |
+| `duplicated` | `statusNote` + problem lines | `!` note + line numbers | warning, both views |
+| `unsupported` | `statusNote` | `!` note | warning |
+| `corrupt` | `statusNote` | `!` note | warning |
+| append failed after delivery | `historyProblem` on the outcome | `!` line + reconcile command | "not recorded in the delivery log" |
+| stuck lock | `historyProblem` | message names `--release-lock` | shown on the delivery outcome |
+| partial reconciliation | `unreconcilable[]` with reasons | one line per skipped receipt | counts including "could not be reconstructed" |
+
+The track panel previously showed its rows with no indication that the log
+behind them was damaged; it warns now. **No surface reports a damaged log as a
+successful, complete answer.**
+
+Repair and lock release stay CLI-only: both rewrite or remove something, and the
+file should be looked at first. The UI names the command instead of offering a
+button.
+
+### 43.10 Tests (21 added, 301 total)
+
+`tests/delivery-history-safety.test.mts`, with `tests/history-lock-process.mts`
+for a child that holds, repairs or appends on command.
+
+Failure injection where that is the only way to reach the defect: a patched
+`FileHandle` forces thirty short writes (line still whole) and a
+zero-progress write (fails rather than looping); a patched `close` rejects after
+a successful fsync (still reported as recorded); `writeSync` is made to fail
+during lock publication (no lock and no temp file left, destination still
+usable).
+
+Real processes where the claim is about processes: a live holder waited for and
+never stolen with a bounded wait; an owner displaced mid-write leaving its
+successor's lock alone; two processes completing the same delivery recording it
+once; a repairer racing an appender. That last has two correct outcomes
+depending on who wins, so it asserts the invariant — no valid event lost, the
+appended event present, and the only unparseable text still the original
+fragment — rather than one of them. Run six times to confirm both branches pass.
+
+Also: four shapes of unterminated tail, each preserving what preceded it; a
+symlinked log and a symlinked lock both refused with the target untouched; a
+directory where the log belongs; a destination whose identity changes while an
+append waits on the lock; repeated repair; duplicate event and delivery ids;
+corruption outranking duplication; the lock-release policy in all five states;
+and the limit and date edge cases.
+
+### 43.11 Remaining medium and low risks (documented, not fixed)
+
+- **A crash between the receipt commit and the append still loses the event.**
+  Unchanged and inherent; reconciliation recovers the latest per target.
+- **Append cost grows linearly with the log**, because the duplicate scan reads
+  all of it. Measured above; not optimised.
+- **The whole log is read for a query.** Behind one function so streaming can
+  replace it.
+- **The re-check-to-`open` window is not fenced by a pinned directory.** Two
+  syscalls wide; `O_NOFOLLOW` covers the symlink case.
+- **A `duplicate` problem's line number is an event index**, not an exact file
+  line, when something ahead of it failed to parse. Said so in the message.
+- **A malformed delivery receipt is skipped silently** by reconciliation and
+  looks like no receipt.
+- **Reconciliation cannot see receipts for retired presets.**
+- **PID reuse can wedge the lock** until `--release-lock` is run.
+- **`fsync` is trusted.** Hardware that lies about flushing defeats it.
+- **The log is not signed or tamper-proof.** It is a local record in a folder the
+  user owns; `duplicated` reports the one tampering signature that is cheap to
+  detect, not all of them.
+- **No retention**, by design.
+
+### 43.12 Commits
+
+- `a3ad0d6` — the seven append-path fixes: unterminated-line data loss, lock
+  publication, short writes, symlink fencing, first-append durability, close
+  handling, duplicate reporting, limit clamp.
+- `5b0d734` — surfacing: the track panel's damage warning, `--release-lock`, and
+  one shared "safe to append" predicate.
+- `8efdb98` — the regression tests and the two child processes.
+- Documentation follow-up: this section.
+
+All commits are local only. **Do not push without a new instruction.**
+
+### 43.13 Recommended next major feature (not started)
+
+Unchanged from §42.19: **destination health and drift detection**.
+
 ---
 
 *End of handoff. If anything in this document conflicts with the live
