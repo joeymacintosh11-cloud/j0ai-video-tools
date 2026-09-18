@@ -373,7 +373,10 @@ leaves the contended target out while queueing the rest.
 If a render is killed outright, its lock stays behind until the next render
 reclaims it — which happens automatically once the owning process is gone. A
 lock written by another machine, or one whose contents cannot be read, is never
-reclaimed automatically, because nothing here can prove it is dead:
+reclaimed automatically, because nothing here can prove it is dead. The same
+applies to the short-lived guard a render holds while ownership changes hands:
+a process killed inside that moment leaves one behind, and clearing it is the
+one thing the release command is allowed to do that a render never is:
 
 ```console
 npm run render-locks                                    # what is held, and why
@@ -432,6 +435,14 @@ you can re-render it first, rather than copying content that is already known to
 be out of date. Copies are published through a temp file and an atomic rename,
 so nobody watching that folder sees a partial video, and the previous copy
 survives until the new one is complete.
+
+A delivery holds that export's render lock while it runs, so the file it is
+copying cannot be replaced underneath it — and a delivery of something that is
+being rendered right now is refused with a message saying so rather than
+copying a half-replaced file. The copy itself runs in a helper pinned to the
+folder that was checked, so renaming or replacing that folder mid-copy cannot
+redirect it; if anything about the destination or the export changes while the
+copy is in flight, the staged file is discarded instead of published.
 
 Delivery freshness is tracked in a small receipt beside the export, so nothing
 has to hash a video to answer it:

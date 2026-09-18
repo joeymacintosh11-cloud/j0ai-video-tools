@@ -2462,7 +2462,14 @@ the project's own `delivery.local.json`.
 
 All commits are local only. **Do not push without a new instruction.**
 
-### 39.21 Recommended next major feature (not started)
+### 39.21 Superseded by §40
+
+§40 is a hardening pass over this milestone. Where the two disagree, §40 wins:
+the lock mechanism, recovery policy, delivery/publication coordination and
+analysis-audio publication all changed. The destination layout, configuration
+model, API surface, CLI commands and UI are unchanged.
+
+### 39.22 Recommended next major feature (not started)
 
 **A release bundle per track** — a manifest of what shipped where, generated
 alongside delivery: the delivered files, their formats, durations, byte sizes and
@@ -2471,6 +2478,310 @@ the track's destination folder. It answers "what did I send, in which formats,
 and when" without opening the folder, reuses the receipts and coverage already
 in place, and needs no new concepts — only a formatter and an opt-in setting.
 It would also give the destination folder something a collaborator can read.
+
+
+---
+
+## 40. Current State — Ownership, Delivery and Preparation Hardening (2026-09-18)
+
+**Supersedes §39's lock mechanism, recovery policy and delivery coordination.**
+No composition, layout, presets, brand sources, final audio routing or render
+concurrency changed. No dependencies were added. The destination layout,
+settings model, API paths, CLI commands and UI are as §39 describes them.
+
+### 40.1 What this pass inherited
+
+A previous session (Codex) began this hardening and stopped partway. What was
+already on disk and **correct**:
+
+- the guard-based lock rewrite, closing a real bug: reading a lock and then
+  renaming its path is not atomic, so a process that had read an abandoned lock
+  could destroy a *successor's* lock;
+- `assertOwned` / `commit` / `commitAsync` on the lock handle, and
+  `publishExport` fenced by the lock instead of an in-process mutex;
+- delivery taking the target lock, and re-reading live metadata after copying;
+- receipts recording the exact published file (`sourceOutput`), with the schema
+  version bumped to 2;
+- the pinned-working-directory copy helper, and its identity checks;
+- atomic publication of `analysis.wav`;
+- real-process lock regression tests, including displaced owners.
+
+What was **incomplete or wrong**, and was corrected here:
+
+1. **The mid-copy metadata test was broken and hung the whole suite.** Its
+   helper returns parsed metadata under the same name as the fixture's metadata
+   *path*, so `writeFileSync` was handed an object. The resulting exception was
+   thrown inside the IPC listener registered ahead of the copy helper's own,
+   which meant the staged-copy handler never ran: the helper waited for a
+   decision forever while delivery held the target lock. `npm test` never
+   finished.
+2. **Waiting on the copy helper was unbounded**, which is the same failure
+   without a test to trigger it: any helper that stopped answering would hold
+   the target lock until the process restarted.
+3. **An abandoned guard made a target permanently unusable**, including by the
+   manual recovery command, which needs the same guard.
+4. **`release()` could throw**, which would report a finished render as failed.
+5. The lock path's containment assertion had been dropped.
+6. `analysis.wav` staging files were not gitignored.
+7. `deliverExport` still accepted a `metadata` input that execution ignored, and
+   took a lock even when no destination was configured.
+
+### 40.2 Ownership invariant
+
+A process that no longer owns a target lock never deletes or replaces a
+successor's lock, and never publishes a video, a manifest or a receipt.
+
+Enforced by three things together:
+
+- **A guard file** (`<lock>.guard`) held across every mutation of a lock —
+  acquisition, recovery, release — and across publication. Ownership only ever
+  changes hands while it is held, so there is no read-then-act window.
+- **Token identity.** A lock records a random token; a release removes the file
+  only if the token *and* the file's dev/inode still match.
+- **`assertOwned()` immediately before each destructive step.** `publishExport`
+  re-checks before each of its two renames; delivery re-checks before the copy
+  is renamed into place and again before the receipt is written.
+
+The guard's metadata is written to a private file and `link`ed into place. Link
+is atomic and fails with `EEXIST`, so a guard is never visible without complete
+metadata — which is what makes "unreadable guard" a sound signal of corruption
+rather than of a live holder caught mid-write.
+
+`release()` never throws: it runs in a `finally` around real work, and a lock
+that cannot be removed is recoverable whereas a discarded result is not. A
+guard-release failure is surfaced only when the work itself succeeded, so it
+cannot mask the caller's real error.
+
+### 40.3 Recovery policy
+
+| Situation | Automatic | Manual (`render-locks -- --release`) |
+|---|---|---|
+| Lock owner dead on this host | reclaimed | released |
+| Lock owner running on this host | refused | refused |
+| Lock from another hostname | refused | refused |
+| Unreadable lock metadata | refused | refused |
+| Guard held by a running local process | refused | refused |
+| Guard whose holder is dead, foreign or unreadable | **refused** | **cleared** |
+
+Still one-sided, for the same reason as before: PID reuse can make a dead owner
+look alive — a stuck lock, recoverable by hand — but never make a live owner
+look dead, which would mean two renders publishing one file.
+
+Automatic acquisition never clears a guard. Guessing wrong in the one section
+where ownership changes hands is precisely what would admit two owners. The
+manual path may clear one, because the operator has asserted nothing is
+rendering, and because otherwise a process killed inside that section would
+brick the target forever. Recovery remains target-scoped: a slug and a preset,
+never a path.
+
+Residual, accepted: two operators running the manual repair simultaneously could
+both clear the same guard. It is a human-invoked action on a single-user local
+tool, and the liveness check runs first.
+
+### 40.4 Delivery coordination
+
+Delivery holds the target lock **for its whole duration**, not only for the
+commit. That is a deliberate choice over §39's narrower design:
+
+- the copy is bounded, and the lock is per-target, so unrelated work is
+  unaffected;
+- it removes the class of "the source moved while we were reading it" races
+  rather than detecting them afterwards;
+- canonical publication of the same export is excluded outright, which is
+  verified: `publishExport` attempted during a delivery is refused with
+  `RENDER_TARGET_LOCKED`.
+
+The copy and its receipt are published together under `commitAsync`, with
+ownership re-asserted on both sides, so a displaced owner cannot leave a receipt
+claiming a file it did not publish.
+
+After copying, and before publishing, delivery re-reads from disk: the manifest
+fingerprint, the canonical file's identity, the resolved destination root, and
+the destination path implied by **live** metadata. Any difference discards the
+staged copy as `source_changed`. A delivery of a target another process holds is
+reported as busy and writes nothing.
+
+Delivery with no destination configured takes no lock at all, so it cannot be
+refused merely because a render is running, and creates no lock file.
+
+### 40.5 Receipts identify the exact export
+
+A receipt records `sourceOutput` — the canonical file's bytes, mtime and inode —
+alongside the input fingerprint. A re-encode from identical inputs produces a
+different inode, so the destination copy is correctly reported as `outdated /
+export_changed` rather than as still matching.
+
+Schema version is **2**. A version-1 receipt is refused and reads as never
+delivered, which is recoverable by delivering again. There were no v1 receipts
+in the repository when this shipped.
+
+### 40.6 Directory-swap behaviour
+
+Destination writes happen in a helper process whose working directory is pinned
+to the validated folder. Node has no `openat`, and changing the server's own
+working directory is not an option, so a short-lived child is the only way to
+make writes resolve through a kernel-held reference to the directory that was
+checked. Renaming or symlinking the pathname afterwards cannot redirect them.
+
+The helper refuses to publish unless, at that moment: its own `.` and `..`
+identities still match the validated folder and root, the root still resolves to
+itself, and the named folder path still resolves to the same inode. It copies
+with `COPYFILE_EXCL`, so a planted symlink at the staging name cannot be
+followed.
+
+Every wait on the helper is bounded — the staged copy generously, the commit
+round trip briefly, and stopping it too. Stopping prefers disconnecting the IPC
+channel, which the helper treats as an abort and cleans up after itself; a kill
+is the last resort, and then its staged temp file may survive, which is better
+than this process deleting a path it can no longer identify. Completion is the
+helper's **exit**, not its stdio `close`: once both ends have disconnected the
+channel, that close event may never arrive at all.
+
+Verified against: a folder renamed and replaced by a symlink after staging, the
+root deleted mid-copy, the root replaced by another directory mid-copy, a
+symlinked destination folder, a destination inside the project, and traversal
+attempts in the folder name.
+
+### 40.7 Metadata changing mid-delivery
+
+The delivery folder lives in track metadata, so metadata decides where bytes
+land. A caller's snapshot can be arbitrarily stale by the time a copy is
+published, so `deliverExport` no longer accepts one at all: it reads metadata
+itself under the lock, and reads it again after the copy.
+
+If the destination the live metadata resolves to differs from the one that was
+validated, or if the export has gone stale because its metadata changed, the
+staged copy is discarded (`source_changed`) and nothing is published. The
+canonical export is untouched; delivering again after the edit does the right
+thing.
+
+Both cases have deterministic regression tests, driven from the moment the
+helper reports its staged copy rather than from a timer.
+
+### 40.8 Shared preparation concurrency
+
+`analysis.wav` is derived and shared by every format of a track. Two renders of
+*different* formats are two processes preparing it at once, and the target lock
+deliberately does not cover that — they are different targets, and serializing
+them would defeat the point.
+
+Each producer now converts into a private `analysis.wav.tmp-<uuid>.wav` sibling
+and renames it into place, so a reader only ever sees a complete file. The
+source's identity is re-checked after conversion and an empty result refused, so
+a beat edited mid-conversion cannot certify audio that was never fully read.
+Nothing serializes across tracks.
+
+Because the conversion is deterministic, concurrent producers write identical
+bytes and whichever publishes last is indistinguishable from any other. Proven
+with four competing real processes, plus a reader sampling the published path
+throughout a re-conversion.
+
+### 40.9 Fail-closed error handling
+
+- Filesystem and copy errors become delivery *outcomes*, so a catalogue run
+  reports the one target that failed and still delivers the rest.
+- Destination problems are `TrackError`s, so the API answers 4xx rather than 500.
+- A failed copy never replaces the previously delivered file, and its staging
+  file is removed.
+- A failed publication restores the previous video and leaves the previous
+  manifest, and removes its staging directory.
+- A failed lock metadata write removes only the inode it exclusively created.
+- A failed analysis conversion leaves the previous `analysis.wav` intact.
+- Cancellation and worker failure both release the lock and the guard.
+
+### 40.10 Tests
+
+**207 total, 29 added in this pass** (178 → 207, of which Codex had written 16).
+
+`tests/lock-safety.test.mts` (13) — eight competing real processes reduced to a
+single owner, simultaneous recovery after an owner is killed mid-hold, displaced
+owners refused at commit and release, release after ownership loss, publication
+after ownership loss preserving the previous pair, corrupt pid/target/host
+metadata, a failed metadata write cleaning up only its own file, cancellation and
+worker failure releasing everything, manual guard recovery, a live guard refusing
+manual recovery, path containment, and a finished render not being reported as
+failed when a lock lingers. `tests/lock-process.mts` is the competing-process
+helper.
+
+`tests/delivery.test.mts` (36, up from 24) — plus symlinked destination folders,
+a destination inside the project, a folder swapped after staging, the root
+deleted or replaced mid-copy, live metadata edits mid-copy (title and folder),
+canonical publication refused while a delivery holds the target, a canonical
+export replaced behind the lock, a same-input re-encode invalidating a receipt,
+an older receipt schema being distrusted, and invalid folder drafts not breaking
+track views.
+
+`tests/analysis-concurrency.test.mts` (4) with `tests/analysis-process.mts` —
+competing processes converging on one complete file, no partial file ever
+observable, a failed conversion preserving the previous file, and independence
+across tracks.
+
+Concurrency and path tests use real filesystem primitives in temporary
+directories, and real forked processes where the claim is about processes.
+
+### 40.11 Verification performed
+
+- `npm run lint` (ESLint + TypeScript) clean; **207 tests pass**, and the full
+  suite was run four times consecutively with no flakes.
+- Vite production build passes (the pre-existing >500 kB advisory is unchanged).
+- `validate-track` and `prepare-track` on `ghetto-geek` exit 0.
+- A synthetic 3-second probe rendered in 3.5 s through the rewritten publication
+  path, wrote a matching manifest, and delivered a byte-identical copy with a v2
+  receipt naming the exact published inode. The canonical file was unchanged.
+- Cross-process fencing re-proved with real processes against the rewritten
+  lock: with a lock held by a separate process, `POST /render` answered 409
+  naming the holder, `render-locks` listed it as running, and both the API and
+  the CLI refused to deliver that target — writing nothing, and the CLI exiting
+  non-zero.
+- Manual guard recovery re-proved end to end: an abandoned lock plus its guard
+  refused automatic acquisition with an actionable message, then
+  `render-locks -- --release` cleared both.
+- Final state: no leaked locks, no leftover fixtures, no staging or temp files,
+  no orphaned copy helpers, no render workers, no Chromium. Ghetto Geek's assets
+  and exports were not touched, and it was not re-rendered.
+
+### 40.12 Remaining medium and low findings
+
+- **Medium.** A guard is held across `commitAsync` during the delivery commit,
+  which spans an await. A process killed exactly there leaves a guard needing
+  manual recovery. The window is a rename plus a small write.
+- **Medium.** Delivery holds the target lock for the whole copy, so a re-render
+  of that one export waits for the copy to finish. Bounded and per-target, and
+  accepted in exchange for eliminating the source-moved race.
+- **Medium.** A delivered copy is still verified by size and mtime, not by
+  hash. A replacement with identical size and timestamp would not be detected.
+- **Low.** `takeGuard` parks with `Atomics.wait` for up to 200 ms total under
+  contention, which blocks the event loop of whichever process is waiting. Only
+  reachable while another local process is inside its own short ownership
+  section.
+- **Low.** A track whose metadata is invalid reports delivery as
+  `not_configured` rather than a dedicated state, because no destination may be
+  derived from unvalidated metadata. The UI hides the delivery section in that
+  case, and validation errors dominate the panel anyway.
+- **Low.** Killing the copy helper as a last resort can leave one
+  `.deliver-*.mp4.tmp` file in the destination folder. Not swept automatically,
+  because temp names are random and two formats of one track share a folder, so
+  a sweep could delete a concurrent delivery's staging file.
+- **Low.** A hard kill during analysis preparation can leave one
+  `analysis.wav.tmp-*.wav` sibling. Gitignored, harmless, and replaced on the
+  next preparation.
+- **Unchanged from §39.** Locks are advisory across machines; PID reuse can
+  leave a lock stuck rather than shared; `out/` on a shared network volume was
+  never designed for.
+
+### 40.13 Commits
+
+- `e79d84c` — fence render ownership through publication.
+- `52df748` — fence delivery against publication and path swaps.
+- `6248426` — publish shared analysis audio atomically.
+- Documentation follow-up: this section.
+
+All commits are local only. **Do not push without a new instruction.**
+
+### 40.14 Recommended next step (not started)
+
+The release bundle proposed in §39.22 remains the next product feature. Nothing
+in this pass is unfinished.
 
 ---
 
