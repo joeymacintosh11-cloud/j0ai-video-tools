@@ -1,21 +1,23 @@
-import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
-import { copyFile, mkdir, rename, rm } from "node:fs/promises";
-import path from "node:path";
 import {
   deliveryRelativePath,
   type DeliveryReason,
   type DeliveryStatus,
 } from "../../src/domain/delivery/deliveryPaths.ts";
+import { TrackError } from "../../src/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
-import type { TrackMetadata } from "../../src/domain/tracks/types.ts";
 import {
   assertRenderPresetId,
+  RENDER_PRESETS,
   type RenderPresetId,
 } from "../../src/domain/video/renderPresets.ts";
 import { trackExportCoverage } from "../tracks/exportCoverage.ts";
 import { outputIdentity } from "../tracks/exportManifest.ts";
 import { inspectTrack } from "../tracks/inspectTrack.ts";
+import { withRenderTargetLock, type RenderTargetLock } from "../render/renderLock.ts";
+import { assertDeliveryDestination } from "./deliveryDestination.ts";
+import { stageDelivery } from "./stageDelivery.ts";
+import { DELIVERY_RECEIPT_VERSION } from "../../src/domain/delivery/deliveryPaths.ts";
 import {
   deliveryStateFor,
   readDeliveryReceipt,
@@ -44,12 +46,10 @@ import {
  * directory, then a rename. A viewer of that folder never sees a partial video,
  * and the previously delivered file survives until the new one is complete.
  *
- * Racing with a replacement render is handled by re-checking the export's
- * identity after the copy rather than by holding the render lock for the whole
- * copy. A rename into place swaps a directory entry, so an in-progress read
- * keeps the version it opened — the bytes copied are always one coherent
- * export — and if the export changed underneath, that copy is discarded
- * instead of published.
+ * The target lock is held for the whole delivery, so canonical publication and
+ * other deliveries of the same export are excluded from start to receipt.
+ * Destination writes run in a directory pinned by a helper's working directory,
+ * and live metadata is read again before the staged copy may be published.
  */
 
 export type DeliveryOutcome = {
@@ -70,12 +70,17 @@ export type DeliverExportInput = {
   readonly presetId: RenderPresetId;
   /** Read once by a caller delivering several targets. */
   readonly settings?: DeliverySettings;
-  /**
-   * The track's metadata, when the caller already has it. Omitted means read it
-   * here — it decides the destination folder, so it must never be skipped.
-   */
-  readonly metadata?: TrackMetadata | null;
 };
+
+/**
+ * Deliberately no metadata input.
+ *
+ * The delivery folder comes from metadata, so it decides where bytes are
+ * written — and a caller's snapshot can be arbitrarily old by the time a copy
+ * is published. Execution reads it from disk itself, under the target lock, and
+ * re-reads it before publishing. A planner's view is for display and planning,
+ * never authority.
+ */
 
 const outcome = (
   slug: string,
@@ -103,36 +108,31 @@ const outcome = (
  * *input* — a bad slug or preset — still throws, because that is a programming
  * or request error rather than a state of the world.
  */
-export const deliverExport = async ({
+const deliverOwnedExport = async ({
   slug: slugInput,
   presetId: presetInput,
   settings,
-  metadata: providedMetadata,
-}: DeliverExportInput): Promise<DeliveryOutcome> => {
+}: DeliverExportInput, lock: RenderTargetLock): Promise<DeliveryOutcome> => {
   const slug = assertValidSlug(slugInput);
   const presetId = assertRenderPresetId(presetInput);
   const resolved = settings ?? (await readDeliverySettings());
-  const { root, problem } = resolveDeliveryRoot(resolved);
+  const { root } = resolveDeliveryRoot(resolved);
 
-  // Resolved rather than defaulted: deliveryFolder lives in metadata, so a
-  // caller that omits it must still deliver into the track's chosen folder.
-  const metadata =
-    providedMetadata === undefined
-      ? (await inspectTrack(slug)).metadata
-      : providedMetadata;
+  // Execution always reads live metadata; planner snapshots are never authority.
+  const metadata = (await inspectTrack(slug)).metadata;
 
   const facts = trackExportCoverage(slug, metadata).find(
     (entry) => entry.presetId === presetId,
   );
   const label = facts?.label ?? presetId;
 
+  // Checked again before locking, but re-checked here because the root is
+  // re-resolved from disk and could have gone away in between.
   if (root === null) {
     return outcome(slug, presetId, label, {
-      status: problem === null ? "not_configured" : "failed",
-      reason: problem === null ? "not_configured" : "copy_failed",
-      message:
-        problem ??
-        "No export destination is configured, so there is nowhere to deliver to.",
+      status: "failed",
+      reason: "copy_failed",
+      message: "The export destination is no longer available.",
     });
   }
 
@@ -141,16 +141,7 @@ export const deliverExport = async ({
     presetId,
     metadata?.deliveryFolder,
   );
-  const destinationPath = path.join(root, relativePath);
-
-  // Belt and braces after validating the slug, preset and folder separately:
-  // whatever they are, the destination must be inside the configured root.
-  if (!path.resolve(destinationPath).startsWith(`${path.resolve(root)}${path.sep}`)) {
-    return outcome(slug, presetId, label, {
-      reason: "copy_failed",
-      message: `Refusing to deliver outside the export destination ${root}.`,
-    });
-  }
+  const destinationPath = assertDeliveryDestination(root, relativePath);
 
   const common = { destinationPath, destinationRelativePath: relativePath };
 
@@ -193,23 +184,20 @@ export const deliverExport = async ({
     });
   }
 
-  const directory = path.dirname(destinationPath);
-  const staged = path.join(directory, `.deliver-${randomUUID()}.mp4.tmp`);
-
+  const staged = await stageDelivery(root, relativePath, facts.outputPath);
   try {
-    // Inside the configured root only; the containment check above is what
-    // makes creating this safe.
-    await mkdir(directory, { recursive: true });
-    await copyFile(facts.outputPath, staged);
-
     // Re-read freshness from disk: a replacement render may have published
     // between the checks above and the copy finishing.
-    const after = trackExportCoverage(slug, metadata).find(
+    const latestMetadata = (await inspectTrack(slug)).metadata;
+    const latestRelative = deliveryRelativePath(slug, presetId, latestMetadata?.deliveryFolder);
+    const after = trackExportCoverage(slug).find(
       (entry) => entry.presetId === presetId,
     );
     const identity = statSync(facts.outputPath);
 
     if (
+      latestRelative !== relativePath ||
+      resolveDeliveryRoot(resolved).root !== root ||
       after?.freshness !== "current" ||
       after.inputFingerprint !== before.fingerprint ||
       identity.ino !== before.identity.ino ||
@@ -223,22 +211,22 @@ export const deliverExport = async ({
       });
     }
 
-    // Only now is the previous delivered file replaced, in one atomic step.
-    await rename(staged, destinationPath);
-
-    const delivered = statSync(destinationPath);
-    const receipt: DeliveryReceipt = {
-      schemaVersion: 1,
-      slug,
-      presetId,
-      sourceFingerprint: before.fingerprint,
-      destinationRoot: root,
-      destinationRelativePath: relativePath,
-      deliveredAt: new Date().toISOString(),
-      bytes: delivered.size,
-      mtimeMs: delivered.mtimeMs,
-    };
-    await writeDeliveryReceipt(receipt);
+    // Keep ownership fenced until the matching receipt is committed too.
+    const delivered = await lock.commitAsync(async () => {
+      lock.assertOwned();
+      const published = await staged.commit();
+      lock.assertOwned();
+      const receipt: DeliveryReceipt = {
+        schemaVersion: DELIVERY_RECEIPT_VERSION,
+        slug, presetId, sourceFingerprint: before.fingerprint!,
+        sourceOutput: before.identity,
+        destinationRoot: root, destinationRelativePath: relativePath,
+        deliveredAt: new Date().toISOString(), bytes: published.size,
+        mtimeMs: published.mtimeMs,
+      };
+      await writeDeliveryReceipt(receipt, lock.assertOwned);
+      return published;
+    });
 
     return outcome(slug, presetId, label, {
       ...common,
@@ -254,7 +242,59 @@ export const deliverExport = async ({
   } finally {
     // Never leaves a half-copied video behind. Removing the staged file after a
     // successful rename is a no-op, which keeps this path unconditional.
-    await rm(staged, { force: true });
+    await staged.close();
+  }
+};
+
+/**
+ * Shared by manual and automatic delivery.
+ *
+ * Takes the target lock for the whole delivery, so a copy can never be taken
+ * from an export that a render is replacing underneath it, and two deliveries
+ * of the same target cannot interleave. Holding it across the copy rather than
+ * only across the commit is deliberate: the copy is bounded, the lock is
+ * per-target so unrelated work is unaffected, and it removes the entire class
+ * of "the source moved while we were reading it" races rather than detecting
+ * them after the fact.
+ *
+ * Never turns a copy failure into a failed render. Invalid request identifiers
+ * still throw, because those are request errors rather than states of the
+ * world.
+ */
+export const deliverExport = async (input: DeliverExportInput): Promise<DeliveryOutcome> => {
+  const slug = assertValidSlug(input.slug);
+  const presetId = assertRenderPresetId(input.presetId);
+  const label = RENDER_PRESETS[presetId].shortLabel;
+
+  // Nothing to own when there is nowhere to deliver to: this must not create a
+  // lock file, and must not be refusable because a render happens to be running.
+  const settings = input.settings ?? (await readDeliverySettings());
+  const { root, problem } = resolveDeliveryRoot(settings);
+  if (root === null) {
+    return outcome(slug, presetId, label, {
+      status: problem === null ? "not_configured" : "failed",
+      reason: problem === null ? "not_configured" : "copy_failed",
+      message:
+        problem ??
+        "No export destination is configured, so there is nowhere to deliver to.",
+    });
+  }
+
+  try {
+    return await withRenderTargetLock(slug, presetId, (lock) =>
+      deliverOwnedExport({ ...input, settings }, lock),
+    );
+  } catch (error) {
+    const busy =
+      error instanceof TrackError && error.code === "RENDER_TARGET_LOCKED";
+    return outcome(slug, presetId, label, {
+      reason: "copy_failed",
+      message: busy
+        ? `${slug} / ${presetId} is being rendered or delivered right now, so it was not copied. Try again once that finishes.`
+        : error instanceof Error
+          ? error.message
+          : String(error),
+    });
   }
 };
 
@@ -265,10 +305,12 @@ export const deliveryStateForTarget = (
   facts: Parameters<typeof deliveryStateFor>[0],
   root: string | null,
   deliveryFolder: string | null | undefined,
-) =>
-  deliveryStateFor(
+) => {
+  if (root === null) return deliveryStateFor(facts, null, null, "");
+  return deliveryStateFor(
     facts,
     readDeliveryReceipt(slug, presetId),
     root,
     deliveryRelativePath(slug, presetId, deliveryFolder),
   );
+};

@@ -96,8 +96,8 @@ export const toTrackSummaryView = (
             inspection.slug,
             facts.presetId,
             facts,
-            deliveryRoot,
-            deliveryFolder,
+            inspection.metadata === null ? null : deliveryRoot,
+            inspection.metadata?.deliveryFolder,
           ),
         };
       },

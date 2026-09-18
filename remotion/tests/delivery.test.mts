@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
-import { chmodSync, realpathSync } from "node:fs";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { chmodSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import {
   mkdtemp,
+  mkdir,
+  symlink,
   readdir,
   readFile,
   rm,
@@ -37,6 +41,11 @@ import {
 } from "../src/domain/delivery/deliveryPaths.ts";
 import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
 import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+import { stageDelivery } from "../services/delivery/stageDelivery.ts";
+import { deliveryStateForTarget } from "../services/delivery/deliverExport.ts";
+import { acquireRenderTargetLock, inspectRenderTargetLock } from "../services/render/renderLock.ts";
+import { inspectTrack } from "../services/tracks/inspectTrack.ts";
+import { toTrackSummaryView } from "../server/views/trackView.ts";
 import { fixture } from "./fixtures.mts";
 
 /**
@@ -78,8 +87,11 @@ const setup = async (t: TestContext, extra: Record<string, unknown> = {}) => {
   await writeFile(f.beat, "audio");
   t.after(() => rm(f.outputDir, { recursive: true, force: true }));
 
+  // setup() returns the parsed metadata as `metadata`, which shadows the
+  // fixture's path of the same name — so the path gets an unambiguous one.
+  const metadataPath = f.metadata;
   const metadata = parseTrackMetadata(
-    JSON.parse(await readFile(f.metadata, "utf8")),
+    JSON.parse(await readFile(metadataPath, "utf8")),
     "fixture",
   );
   const props = buildTrackProps({
@@ -106,7 +118,7 @@ const setup = async (t: TestContext, extra: Record<string, unknown> = {}) => {
       (entry) => entry.presetId === presetId,
     )!;
 
-  return { ...f, metadata, props, publish, facts };
+  return { ...f, metadataPath, metadata, props, publish, facts };
 };
 
 const files = async (root: string): Promise<string[]> => {
@@ -261,7 +273,6 @@ test("a track's own folder overrides the default", async (t) => {
     slug: f.slug,
     presetId: "youtube-16x9",
     settings: settingsFor(root),
-    metadata: f.metadata,
   });
 
   assert.equal(
@@ -435,7 +446,7 @@ test("delivery writes a receipt that matches the current export", async (t) => {
 
   const receipt = readDeliveryReceipt(f.slug, "youtube-16x9");
   assert.ok(receipt);
-  assert.equal(receipt.schemaVersion, 1);
+  assert.equal(receipt.schemaVersion, 2);
   assert.equal(receipt.slug, f.slug);
   assert.equal(receipt.presetId, "youtube-16x9");
   assert.equal(receipt.sourceFingerprint, f.facts().inputFingerprint);
@@ -687,4 +698,273 @@ test("empty input is refused rather than read as the catalogue", async () => {
     () => planDeliveries({ slugs: ["x"], presetIds: [] }),
     { code: "INVALID_REQUEST" },
   );
+});
+
+
+test("same-input rerender invalidates the previous delivery receipt", async (t) => {
+  const f = await setup(t);
+  const root = await destination(t);
+  await f.publish();
+  assert.equal((await deliverExport({ slug: f.slug, presetId: "youtube-16x9", settings: settingsFor(root) })).status, "delivered");
+  await f.publish("youtube-16x9", "a new encode with identical inputs");
+  const state = deliveryStateForTarget(f.slug, "youtube-16x9", f.facts(), root, null);
+  assert.equal(state.status, "outdated");
+  assert.equal(state.reason, "export_changed");
+});
+
+test("symlink destination folder cannot write outside the configured root", async (t) => {
+  const f = await setup(t);
+  const root = await destination(t), outside = await destination(t);
+  await f.publish();
+  await symlink(outside, path.join(root, f.slug));
+  const result = await deliverExport({ slug: f.slug, presetId: "youtube-16x9", settings: settingsFor(root) });
+  assert.equal(result.status, "failed");
+  assert.deepEqual(await readdir(outside), []);
+  assert.equal(inspectRenderTargetLock(f.slug, "youtube-16x9").state, "free");
+});
+
+test("runtime settings cannot choose a destination inside the project", async (t) => {
+  const f = await setup(t);
+  await f.publish();
+  const result = await deliverExport({ slug: f.slug, presetId: "youtube-16x9", settings: settingsFor(process.cwd()) });
+  assert.equal(result.status, "failed");
+  assert.equal(result.destinationPath, null);
+});
+
+test("directory replaced after staging cannot redirect commit or cleanup", async (t) => {
+  const root = await destination(t), outside = await destination(t);
+  const source = path.join(root, "source.mp4");
+  await writeFile(source, "complete video");
+  await mkdir(path.join(root, "track"));
+  await writeFile(path.join(root, "track", "video.mp4"), "previous");
+  const staged = await stageDelivery(root, "track/video.mp4", source);
+  renameSync(path.join(root, "track"), path.join(root, "displaced"));
+  symlinkSync(outside, path.join(root, "track"));
+  await assert.rejects(() => staged.commit(), /directory changed/);
+  await staged.close();
+  assert.deepEqual(await readdir(outside), []);
+  assert.deepEqual(await readdir(path.join(root, "displaced")), ["video.mp4"]);
+  assert.equal(await readFile(path.join(root, "displaced", "video.mp4"), "utf8"), "previous");
+});
+
+for (const patch of [
+  { title: "Edited while copying" },
+  { deliveryFolder: "Changed folder" },
+] as const) {
+  test(`live metadata change during the copy is refused: ${Object.keys(patch)[0]}`, async (t) => {
+    const f = await setup(t);
+    const root = await destination(t);
+    await f.publish();
+
+    // The edit is made the moment the helper reports its staged copy, which is
+    // before the service resumes and re-checks anything — so the race is
+    // deterministic rather than timing-dependent. Nothing may throw inside this
+    // listener: an exception here would stop the staging handler that follows it
+    // from ever resolving.
+    const observed: { lockHeldDuringCopy: string | null } = {
+      lockHeldDuringCopy: null,
+    };
+    const original = childProcess.fork;
+    t.mock.method(childProcess, "fork", ((
+      ...args: Parameters<typeof childProcess.fork>
+    ) => {
+      const child = original(...args);
+      child.on("message", (message: { type?: string }) => {
+        if (message?.type !== "staged") return;
+        try {
+          writeFileSync(
+            f.metadataPath,
+            JSON.stringify({ ...f.metadata, ...patch }),
+          );
+          acquireRenderTargetLock(f.slug, "youtube-16x9");
+          observed.lockHeldDuringCopy = "acquired";
+        } catch (error) {
+          observed.lockHeldDuringCopy = (error as { code?: string }).code ?? "?";
+        }
+      });
+      return child;
+    }) as typeof childProcess.fork);
+    syncBuiltinESMExports();
+
+    try {
+      const result = await deliverExport({
+        slug: f.slug,
+        presetId: "youtube-16x9",
+        settings: settingsFor(root),
+      });
+
+      // Delivery holds the target lock for the whole copy, so no other process
+      // can publish that export underneath it.
+      assert.equal(observed.lockHeldDuringCopy, "RENDER_TARGET_LOCKED");
+
+      assert.equal(result.status, "failed", result.message ?? "");
+      assert.equal(result.reason, "source_changed", result.message ?? "");
+      assert.deepEqual(await files(root), [], "nothing was published");
+      assert.equal(readDeliveryReceipt(f.slug, "youtube-16x9"), null);
+      assert.equal(
+        inspectRenderTargetLock(f.slug, "youtube-16x9").state,
+        "free",
+        "the lock is released even when the copy is discarded",
+      );
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+  });
+}
+
+test("invalid delivery folder drafts cannot break track views, with delivery on or off", async (t) => {
+  const f = await fixture(t, { deliveryFolder: "../escape" });
+  const inspection = await inspectTrack(f.slug);
+  for (const root of [null, await destination(t)]) {
+    const view = toTrackSummaryView(inspection, new Map(), root);
+    assert.equal(view.metadataValid, false);
+    assert.equal(view.deliveryFolder, "../escape");
+  }
+});
+
+/**
+ * Runs `during` the moment the copy helper reports its staged file, which is
+ * before the service resumes and re-checks anything. Deterministic, rather than
+ * timing-dependent. Nothing may throw inside it: an exception in this listener
+ * would stop the one that follows from ever resolving the staged copy.
+ */
+const whileStaged = (t: TestContext, during: () => void) => {
+  const original = childProcess.fork;
+  t.mock.method(childProcess, "fork", ((
+    ...args: Parameters<typeof childProcess.fork>
+  ) => {
+    const child = original(...args);
+    child.on("message", (message: { type?: string }) => {
+      if (message?.type !== "staged") return;
+      try {
+        during();
+      } catch {
+        // Recorded by the caller's own assertions, never thrown from here.
+      }
+    });
+    return child;
+  }) as typeof childProcess.fork);
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+};
+
+test("the destination root disappearing mid-copy refuses publication", async (t) => {
+  const root = await destination(t);
+  const source = path.join(root, "source.mp4");
+  await writeFile(source, "complete video");
+  await mkdir(path.join(root, "track"));
+
+  const staged = await stageDelivery(root, "track/video.mp4", source);
+  await rm(root, { recursive: true, force: true });
+
+  await assert.rejects(() => staged.commit());
+  await staged.close();
+});
+
+test("the destination root being replaced mid-copy refuses publication", async (t) => {
+  const root = await destination(t);
+  const replacement = await destination(t);
+  const source = path.join(root, "source.mp4");
+  await writeFile(source, "complete video");
+  await mkdir(path.join(root, "track"));
+
+  const staged = await stageDelivery(root, "track/video.mp4", source);
+
+  // A different directory put back under the same pathname.
+  await rm(root, { recursive: true, force: true });
+  symlinkSync(replacement, root);
+
+  await assert.rejects(() => staged.commit());
+  await staged.close();
+  assert.deepEqual(await readdir(replacement), [], "nothing was written there");
+});
+
+test("canonical publication cannot happen while a delivery holds the target", async (t) => {
+  const f = await setup(t);
+  const root = await destination(t);
+  await f.publish("youtube-16x9", "the delivered version");
+
+  const attempts: string[] = [];
+  whileStaged(t, () => {
+    // publishExport without a lock takes the target itself, which is exactly
+    // what must be refused while a delivery owns it.
+    void f
+      .publish("youtube-16x9", "a replacement mid-delivery")
+      .then(() => attempts.push("published"))
+      .catch((error: { code?: string }) => attempts.push(error.code ?? "?"));
+  });
+
+  const result = await deliverExport({
+    slug: f.slug,
+    presetId: "youtube-16x9",
+    settings: settingsFor(root),
+  });
+
+  assert.equal(result.status, "delivered", result.message ?? "");
+  // Give the refused publication a turn to record its outcome.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(attempts, ["RENDER_TARGET_LOCKED"]);
+
+  // The delivered copy is the version that was current when delivery started.
+  assert.equal(
+    await readFile(path.join(root, result.destinationRelativePath!), "utf8"),
+    "the delivered version",
+  );
+});
+
+test("a canonical export replaced behind the lock is not published as current", async (t) => {
+  const f = await setup(t);
+  const root = await destination(t);
+  await f.publish("youtube-16x9", "the version delivery read");
+
+  // The lock stops the tool itself from replacing this, so the only way here is
+  // something outside it writing into out/ directly. The staged copy must still
+  // be discarded rather than published against a receipt that would claim it
+  // matches the current export.
+  whileStaged(t, () => {
+    writeFileSync(f.facts().outputPath, "replaced by something else entirely");
+  });
+
+  const result = await deliverExport({
+    slug: f.slug,
+    presetId: "youtube-16x9",
+    settings: settingsFor(root),
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.reason, "source_changed");
+  assert.deepEqual(await files(root), []);
+  assert.equal(readDeliveryReceipt(f.slug, "youtube-16x9"), null);
+});
+
+test("a receipt from an older schema is not trusted", async (t) => {
+  const f = await setup(t);
+  const root = await destination(t);
+  await f.publish();
+
+  await deliverExport({
+    slug: f.slug,
+    presetId: "youtube-16x9",
+    settings: settingsFor(root),
+  });
+  const receipt = readDeliveryReceipt(f.slug, "youtube-16x9");
+  assert.ok(receipt);
+
+  // A receipt written before the exact published file was recorded cannot prove
+  // what it holds, so it reads as never delivered rather than as delivered.
+  const { sourceOutput, ...withoutOutput } = receipt;
+  assert.ok(sourceOutput);
+  await writeFile(
+    deliveryReceiptPath(f.slug, "youtube-16x9"),
+    JSON.stringify({ ...withoutOutput, schemaVersion: 1 }),
+  );
+
+  assert.equal(readDeliveryReceipt(f.slug, "youtube-16x9"), null);
+  const state = deliveryStateForTarget(f.slug, "youtube-16x9", f.facts(), root, null);
+  assert.equal(state.status, "pending");
+  assert.equal(state.reason, "never_delivered");
 });

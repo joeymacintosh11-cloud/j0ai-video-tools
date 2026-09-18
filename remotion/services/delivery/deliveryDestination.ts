@@ -1,0 +1,67 @@
+import { lstatSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
+import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+
+/**
+ * Identifies and fences a delivery destination.
+ *
+ * Errors are structured so the API reports them as a request problem rather
+ * than an internal fault: a destination that moved or was replaced is something
+ * the user can act on.
+ */
+
+const refuse = (message: string): never => {
+  throw new TrackError(trackIssue("INVALID_REQUEST", message));
+};
+
+/** dev:ino of a directory, so a pathname swap is detectable. */
+export const directoryIdentity = (directory: string): string => {
+  const stat = statSync(directory);
+  if (!stat.isDirectory()) refuse(`"${directory}" is not a folder.`);
+  return `${stat.dev}:${stat.ino}`;
+};
+
+/**
+ * The absolute destination for one delivered file, constrained to the root.
+ *
+ * Used for reads, reveals and status. Copying additionally pins its working
+ * directory in a short-lived helper, so a swapped pathname cannot redirect a
+ * write even between this check and the copy.
+ */
+export const assertDeliveryDestination = (
+  root: string,
+  relative: string,
+): string => {
+  const segments = relative.split("/");
+  const file = path.resolve(root, relative);
+  const parent = path.dirname(file);
+
+  if (
+    segments.length !== 2 ||
+    path.dirname(parent) !== root ||
+    path.basename(file) !== segments[1]
+  ) {
+    refuse(`Refusing a delivery path outside the export destination ${root}.`);
+  }
+
+  // The stored root is resolved, so anything else means it moved or was
+  // replaced since it was configured.
+  if (realpathSync(root) !== root) {
+    refuse(`The export destination ${root} changed.`);
+  }
+
+  try {
+    const stat = lstatSync(parent);
+    if (!stat.isDirectory() || realpathSync(parent) !== parent) {
+      refuse(
+        `The delivery folder ${parent} must be a real directory, not a link.`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof TrackError) throw error;
+    // Not created yet is fine; the copy helper creates it inside the root.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  return file;
+};

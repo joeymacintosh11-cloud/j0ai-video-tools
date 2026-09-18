@@ -170,13 +170,7 @@ export const resolveDeliveryRoot = (
   if (settings.root === null) return { root: null, problem: null };
 
   try {
-    const root = realpathSync(settings.root);
-    if (!statSync(root).isDirectory()) {
-      return {
-        root: null,
-        problem: `The export destination "${settings.root}" is not a folder.`,
-      };
-    }
+    const root = assertDeliveryRoot(settings.root);
     return { root, problem: null };
   } catch {
     return {

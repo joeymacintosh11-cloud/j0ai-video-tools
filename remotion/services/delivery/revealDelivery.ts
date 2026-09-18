@@ -7,8 +7,8 @@ import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
 import {
   assertRenderPresetId,
-  type RenderPresetId,
 } from "../../src/domain/video/renderPresets.ts";
+import { assertDeliveryDestination } from "./deliveryDestination.ts";
 import { inspectTrack } from "../tracks/inspectTrack.ts";
 import { readDeliverySettings, resolveDeliveryRoot } from "./deliverySettings.ts";
 
@@ -31,6 +31,8 @@ export const revealDeliveryDestination = async (
   slugInput?: string,
   presetInput?: unknown,
 ): Promise<{ readonly revealedPath: string }> => {
+  const slug = slugInput === undefined ? undefined : assertValidSlug(slugInput);
+  const presetId = slug === undefined ? undefined : assertRenderPresetId(presetInput);
   const { root, problem } = resolveDeliveryRoot(await readDeliverySettings());
 
   if (root === null) {
@@ -45,12 +47,10 @@ export const revealDeliveryDestination = async (
 
   let target = root;
 
-  if (slugInput !== undefined) {
-    const slug = assertValidSlug(slugInput);
-    const presetId: RenderPresetId = assertRenderPresetId(presetInput);
+  if (slug !== undefined && presetId !== undefined) {
     const folder = (await inspectTrack(slug)).metadata?.deliveryFolder ?? null;
     const relative = deliveryRelativePath(slug, presetId, folder);
-    const file = path.resolve(root, relative);
+    const file = assertDeliveryDestination(root, relative);
 
     if (!file.startsWith(`${path.resolve(root)}${path.sep}`)) {
       throw new TrackError(

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DeliverView } from "../../src/domain/api/views.ts";
 import { ApiRequestError, deliverExports } from "../api/client.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
@@ -19,16 +19,30 @@ const asApiError = (cause: unknown): ApiRequestError =>
  * copies anything. Serves a single track and the whole catalogue — `tracks` of
  * null means the catalogue — so there is one place that describes a delivery.
  */
-export const DeliverPanel: React.FC<{
+type DeliverPanelProps = {
   readonly label: string;
   /** Tracks to cover; null means every track. */
   readonly tracks: readonly string[] | null;
   readonly disabled?: boolean;
   readonly onChanged: () => void;
-}> = ({ label, tracks, disabled = false, onChanged }) => {
+};
+
+// A plan belongs to exactly one scope. Changing tracks discards both the plan
+// and any pending response before a confirmation can target a different track.
+export const DeliverPanel: React.FC<DeliverPanelProps> = (props) => (
+  <ScopedDeliverPanel key={JSON.stringify(props.tracks)} {...props} />
+);
+
+const ScopedDeliverPanel: React.FC<DeliverPanelProps> = ({ label, tracks, disabled = false, onChanged }) => {
   const [plan, setPlan] = useState<DeliverView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiRequestError | null>(null);
+
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const run = async (dryRun: boolean) => {
     setBusy(true);
@@ -37,12 +51,13 @@ export const DeliverPanel: React.FC<{
     try {
       const result = await deliverExports(tracks, null, dryRun);
 
+      if (!mounted.current) return;
       setPlan(result);
       if (!dryRun) onChanged();
     } catch (cause) {
-      setError(asApiError(cause));
+      if (mounted.current) setError(asApiError(cause));
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
 

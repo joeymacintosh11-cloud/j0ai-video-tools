@@ -21,7 +21,7 @@ import {
  * else, and so nothing downstream has to quote it.
  */
 
-export const DELIVERY_RECEIPT_VERSION = 1;
+export const DELIVERY_RECEIPT_VERSION = 2;
 export const DELIVERY_SETTINGS_VERSION = 1;
 
 /**

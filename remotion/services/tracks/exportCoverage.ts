@@ -42,6 +42,7 @@ export type ExportFileFacts = {
    * receipt against this rather than reading the manifest a second time.
    */
   readonly inputFingerprint: string | null;
+  readonly outputIdentity?: { readonly bytes: number; readonly mtimeMs: number; readonly ino: number };
   readonly presetId: RenderPresetId;
   /** Short preset label, e.g. "Reels 9:16". */
   readonly label: string;
@@ -150,6 +151,7 @@ export const trackExportCoverage = (
       return {
         ...facts,
         freshness: staleReasons.length ? "stale" : "current",
+        outputIdentity: identity,
         staleReasons,
         inputFingerprint: manifest.inputFingerprint,
       };

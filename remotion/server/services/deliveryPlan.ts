@@ -226,22 +226,13 @@ export const deliverPlanned = async (
 ): Promise<readonly DeliveryOutcome[]> => {
   const resolved = settings ?? (await readDeliverySettings());
   const outcomes: DeliveryOutcome[] = [];
-  const metadataBySlug = new Map<string, TrackInspection["metadata"]>();
 
   for (const target of plan.deliverable) {
-    if (!metadataBySlug.has(target.slug)) {
-      metadataBySlug.set(
-        target.slug,
-        (await inspectTrack(target.slug)).metadata,
-      );
-    }
-
     outcomes.push(
       await deliverExport({
         slug: target.slug,
         presetId: target.presetId,
         settings: resolved,
-        metadata: metadataBySlug.get(target.slug),
       }),
     );
   }

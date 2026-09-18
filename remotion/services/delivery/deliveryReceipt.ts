@@ -7,6 +7,8 @@ import {
 } from "../../src/domain/delivery/deliveryPaths.ts";
 import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 import { writeAtomicFile } from "../tracks/atomicFile.ts";
+import type { ExportManifest } from "../tracks/exportManifest.ts";
+import { assertDeliveryDestination } from "./deliveryDestination.ts";
 import type { ExportFileFacts } from "../tracks/exportCoverage.ts";
 import { trackOutputLocation } from "../tracks/trackLocations.ts";
 
@@ -29,6 +31,7 @@ export type DeliveryReceipt = {
   readonly presetId: RenderPresetId;
   /** The canonical export manifest's inputFingerprint at delivery time. */
   readonly sourceFingerprint: string;
+  readonly sourceOutput: ExportManifest["output"];
   readonly destinationRoot: string;
   readonly destinationRelativePath: string;
   readonly deliveredAt: string;
@@ -57,6 +60,8 @@ export const readDeliveryReceipt = (
       value.slug === slug &&
       value.presetId === presetId &&
       typeof value.sourceFingerprint === "string" &&
+      value.sourceOutput?.bytes > 0 &&
+      Number.isFinite(value.sourceOutput.mtimeMs) && Number.isFinite(value.sourceOutput.ino) &&
       typeof value.destinationRoot === "string" &&
       typeof value.destinationRelativePath === "string" &&
       Number.isFinite(value.bytes) &&
@@ -72,10 +77,12 @@ export const readDeliveryReceipt = (
 
 export const writeDeliveryReceipt = async (
   receipt: DeliveryReceipt,
+  assertOwned: () => void = () => {},
 ): Promise<void> => {
   await writeAtomicFile(
     deliveryReceiptPath(receipt.slug, receipt.presetId),
     (handle) => handle.writeFile(`${JSON.stringify(receipt, null, 2)}\n`, "utf-8"),
+    async () => assertOwned(),
   );
 };
 
@@ -140,6 +147,7 @@ export const deliveryStateFor = (
   }
 
   try {
+    assertDeliveryDestination(root, relativePath);
     const stats = statSync(destinationPath);
     if (stats.size !== receipt.bytes || stats.mtimeMs !== receipt.mtimeMs) {
       return outdated("destination_modified");
@@ -150,7 +158,10 @@ export const deliveryStateFor = (
 
   if (!facts.rendered) return outdated("export_missing");
   if (facts.freshness !== "current") return outdated("export_not_current");
-  if (facts.inputFingerprint !== receipt.sourceFingerprint) {
+  if (facts.inputFingerprint !== receipt.sourceFingerprint ||
+      facts.outputIdentity?.ino !== receipt.sourceOutput.ino ||
+      facts.outputIdentity?.bytes !== receipt.sourceOutput.bytes ||
+      facts.outputIdentity?.mtimeMs !== receipt.sourceOutput.mtimeMs) {
     return outdated("export_changed");
   }
 
