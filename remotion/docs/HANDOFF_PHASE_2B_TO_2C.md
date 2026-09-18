@@ -2022,10 +2022,10 @@ unless dry-running. Existing CLI invocations keep missing-only defaults;
 `render-track` remains an explicit render and now writes manifests automatically.
 No new package scripts or packages were necessary.
 
-**Known existing cross-process limitation:** CLI and API queues do not share a
-lock. Do not simultaneously render the same track/format via both. Publication
-has an in-process lock, not a cross-process lock. Normal UI renders remain
-single-slot and deduplicated.
+**Superseded in §39:** CLI and API now share a filesystem render-target lock,
+so the same track/format can no longer be rendered by both at once. The rest of
+this paragraph — single-slot UI renders, in-process publication locking — still
+holds.
 
 ### 38.8 Verification and performance
 
@@ -2065,13 +2065,412 @@ Commits for this milestone:
 
 All commits are local only. **Do not push without a new instruction.**
 
-### 38.9 Recommended next major feature (not started)
+### 38.9 Recommended next major feature
 
-**Export destinations / post-render delivery**, as previously proposed, with
-explicit local destination selection and copying only successfully published
-current pairs. Keep destination handling separate from the canonical render and
-manifest pair. Before implementing, decide replacement policy and how delivery
-status differs from export freshness. No cloud API is required.
+**Export destinations / post-render delivery.** Built — see §39, along with the
+cross-process render lock that closes the limitation noted in §38.7.
+
+
+---
+
+## 39. Current State — Cross-Process Render Locks and Local Delivery (2026-09-18)
+
+**Supersedes §38.7's cross-process limitation.** No composition, layout,
+presets, brand sources, final audio routing or render concurrency changed. No
+dependencies were added.
+
+### 39.1 Why a filesystem lock
+
+The render manager dedupes jobs inside one server process, but the CLI is a
+separate process with no view of that queue. A CLI render and an API render
+could therefore both produce and publish the same `slug + presetId`. Publication
+was atomic, so neither would see a torn file — but the loser's work was wasted
+and which version survived was a race.
+
+### 39.2 Lock mechanism
+
+```text
+out/.locks/<slug>__<preset-id>.lock
+```
+
+`services/render/renderLock.ts`. **Exclusivity is `openSync(file, "wx")` —
+O_EXCL creation — and nothing else.** There is deliberately no "check, then
+create": whoever creates the file owns the target. Metadata is written to that
+same descriptor afterwards and is used only for reporting and recovery
+decisions, so a truncated or hand-edited lock file can never admit two owners.
+
+Lock contents: `schemaVersion`, `slug`, `presetId`, `pid`, `hostname`,
+`createdAt`, `jobId` (null for a CLI render) and a random `token`.
+
+Locks are **per target**. `ghetto-geek/square-1x1` says nothing about
+`ghetto-geek/youtube-16x9`, so a batch rendering three formats of one track does
+not serialize on the first, and there is no global render lock.
+
+`out/` is gitignored, so lock files never reach git. Nothing enumerates `out/`,
+so a dot-directory there is invisible to the rest of the app.
+
+### 39.3 Lifecycle
+
+Acquired inside **`renderTrackVideo`** — the one place both the CLI and the
+render worker pass through. One acquisition therefore covers bundling,
+composition resolution, rendering and publication, and a second process fails
+fast instead of spending seconds on a bundle it will not be allowed to publish.
+Released in a `finally`, so success, failure and cancellation all release.
+
+The lock is held by the **worker process**, not the server, because the worker's
+liveness is what matters for recovery. A SIGKILLed worker cannot release
+anything; that is what stale recovery is for.
+
+Release is **token-checked**: a lock is only removed if it is still the one this
+handle created. Without that, an owner whose lock had already been reclaimed as
+abandoned could come back and delete its successor's.
+
+### 39.4 Stale-lock recovery policy
+
+Deliberately one-sided, and the reasoning matters:
+
+- **A dead PID on this machine** is the only thing that permits reclaiming.
+- PID reuse can make a dead owner look **alive** — costing a stuck lock, which
+  is recoverable by hand — but never make a live owner look **dead**, which
+  would cost two renders publishing one file. The safe direction is the only one
+  taken.
+- `EPERM` from `kill(pid, 0)` counts as alive (the process exists, it is just
+  not ours).
+- A lock whose `hostname` differs is **never** reclaimed: PID liveness says
+  nothing about another machine.
+- A **malformed or unreadable** lock is never reclaimed either, for the same
+  reason — we cannot tell whether something live is behind it.
+
+Reclaiming is itself atomic: the stale lock is `rename`d aside and then removed,
+so of several processes racing to reclaim, exactly one wins the rename and the
+losers simply retry the creation.
+
+For everything that cannot be proved dead there is an **explicit** path:
+
+```console
+npm run render-locks                                      # list
+npm run render-locks -- --release <slug> <preset-id>      # clear one
+```
+
+It takes a slug and a format, **never a path**, so it can only remove a file
+this module would have created. The listing marks which locks would be reclaimed
+automatically and which need a decision.
+
+### 39.5 Contention behaviour
+
+| Caller | Behaviour |
+|---|---|
+| `POST /api/tracks/:slug/render` | **409 `RENDER_TARGET_LOCKED`**, naming the holding pid, host, job and start time. No job is queued. |
+| `POST /api/render-batches` | The contended target is left out and returned in `locked`; every other target still queues. |
+| `POST /api/export-missing` | Same, reported as `lockedElsewhere`. |
+| CLI (`render-track`, `render-missing`) | `TrackError` → message plus exit 1. |
+
+The manager's check before queueing is a **courtesy, not the authority** — it
+exists so a request that cannot succeed is refused immediately rather than
+starting a worker that fails. The authoritative acquisition is still inside the
+render, which is why the advisory check being racy is harmless. This server's own
+renders never appear in it: the worker child holds the lock, and in-memory
+deduplication (`RENDER_ALREADY_ACTIVE`) has already rejected those. **In-memory
+deduplication and the batch queue are unchanged**; the lock is an additional
+layer, not a replacement.
+
+### 39.6 Delivery: what it is and is not
+
+Optional post-render copying to a local folder. A Movies folder, a release
+folder, or a locally synced Dropbox or Drive folder — from here all of these are
+ordinary directories. **No cloud SDK, no credentials, no upload, no watcher.**
+
+`out/<slug>/<preset>.mp4` plus its manifest remains the source of truth:
+
+- the canonical file is **never moved**;
+- the destination copy is **never** consulted for freshness;
+- a failed delivery leaves a successfully rendered export completely untouched.
+
+**"Render: current, delivery: failed" is a real state** and is reported as one.
+
+### 39.7 Configuration model
+
+Split by what travels:
+
+| Where | What | Why |
+|---|---|---|
+| `delivery.local.json` (gitignored) | `root` (absolute), `autoDeliver` | Machine-specific; an absolute path in git would leak one person's folder layout and break on any other machine |
+| track `metadata.json` | `deliveryFolder` (portable folder name) | Travels with the track |
+
+A track with no `deliveryFolder` delivers into a folder named after its slug. A
+project with no configured root behaves **exactly** as before delivery existed,
+and does no filesystem work for it.
+
+The root is validated once, hard, when configured: a non-empty string, absolute,
+existing, a directory, and **outside the project** (delivering into `out/` would
+have the tool copying its own output back into its own input tree). It is stored
+`realpath`-resolved, so later containment checks are made against the real
+location. It is re-checked at delivery time too, because a synced or external
+destination can vanish between the two.
+
+### 39.8 Path safety
+
+- **No endpoint accepts a destination path for an operation.** The root is
+  configured once and stored; every delivery names tracks and formats and the
+  server resolves where those go.
+- `deliveryFolder` is the only user-authored text that reaches a path. It must be
+  a single ordinary directory name: no separators, no leading or trailing dot, no
+  control characters, none of `/ \ : * ? " < > |`, at most 80 characters.
+- Slug and preset are validated by the existing guards.
+- After all of that, the resolved destination is asserted to start with the
+  resolved root — so no future change to any of those rules can turn this into an
+  escape.
+- Copying uses `fs.promises.copyFile` and `rename`. No shell, ever.
+
+### 39.9 Destination layout
+
+```text
+<root>/<track folder>/<slug>-<preset-id>.mp4
+
+Toshi Exports/
+  Ghetto Geek/
+    ghetto-geek-youtube-16x9.mp4
+    ghetto-geek-vertical-9x16.mp4
+```
+
+Centralised in `src/domain/delivery/deliveryPaths.ts` (browser-safe), so the
+server, the CLI and the UI all describe the same destination and no folder
+naming is scattered across call sites. The folder is human-chosen because that
+is the part someone browsing a synced folder reads; the filename stays canonical
+kebab-case so a file still says what it is once it has been moved elsewhere, and
+so nothing downstream has to quote it.
+
+### 39.10 Atomic delivery
+
+1. Only a **current** export is delivered. Copying a stale one would put content
+   at the destination the tool already knows should be re-rendered.
+2. The export's identity (manifest fingerprint, inode, size, mtime) is captured.
+3. `mkdir -p` inside the trusted root, then `copyFile` to
+   `.deliver-<uuid>.mp4.tmp` **inside the destination directory** (same
+   filesystem, so the rename is atomic).
+4. Freshness and identity are **re-read**. If the export changed underneath, the
+   staged copy is discarded and the target is reported `source_changed`.
+5. `rename` into place — the previous delivered file is replaced in one step and
+   survives until then.
+6. `stat` the published copy and write the receipt.
+7. The staged file is removed on every path, so nothing partial is ever left.
+
+**Racing with replacement publication** is handled by step 4 rather than by
+holding the render lock across the copy. A `rename` into place swaps a directory
+entry, so a read already in progress keeps the version it opened: the bytes
+copied are always one coherent export, never a mixture. Delivery therefore holds
+no render lock at all.
+
+### 39.11 Delivery freshness and receipts
+
+`out/<slug>/<preset>.delivery.json`, beside the canonical pair — **not** at the
+destination, which may be a folder other people look at. Contents:
+`schemaVersion`, `slug`, `presetId`, `sourceFingerprint` (the manifest's
+`inputFingerprint` at delivery time), `destinationRoot`,
+`destinationRelativePath`, `deliveredAt`, `bytes`, `mtimeMs`.
+
+That is enough to answer both questions from a `stat`, with **no hashing of a
+delivered video**: the fingerprint says whether the copy is of the current
+export, and the size and mtime say whether it is still the copy we made.
+
+Status, derived from disk on every read, in this order:
+
+| Status | When |
+|---|---|
+| `not_configured` | no root set — delivery is off |
+| `pending` | no receipt, or an unreadable one |
+| `outdated` | root or folder changed; destination file missing or modified; canonical export not current; or the canonical export changed since delivery |
+| `delivered` | the copy is of the current export and is still the copy we made |
+| `failed` | **only ever reported by a delivery attempt**, never persisted |
+
+`failed` is deliberately not stored: browsing re-derives everything from disk, so
+a stale "failed" can never be shown as if it were still true.
+
+**The stale workflow, modelled explicitly and verified end to end:**
+
+| Canonical | Delivery | Reported |
+|---|---|---|
+| current, delivered | matches | `delivered` |
+| goes stale (cover/audio/metadata changed) | unchanged | `outdated / export_not_current`, and **not deliverable** |
+| re-rendered → current | still the old copy | `outdated / export_changed` |
+| delivered again | matches | `delivered` |
+
+Nothing is ever deleted to express any of this.
+
+### 39.12 API
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/delivery/settings` | root, availability, problem, autoDeliver, settings path |
+| PUT | `/api/delivery/settings` | `{root?, autoDeliver?}` — the **only** place a path is accepted; `root: null` turns delivery off |
+| POST | `/api/delivery/deliver` | `{tracks?} \| {catalogue:true}`, optional `presets`, optional `dryRun` |
+| POST | `/api/delivery/reveal` | `{slug?, preset?}` — reveals the file, else its folder, else the root |
+
+`tracks` and `catalogue` are mutually exclusive and one is required, exactly as
+for `/api/export-missing`, so a request that merely forgot its `tracks` array is
+a 400 rather than a catalogue-wide operation. Delivery status is folded into the
+existing track views rather than given its own endpoint: `RenderOutputView.delivery`
+and `TrackSummaryView.deliveryFolder`, so the UI gets it with data it already
+fetches. `RenderOutputView` also keeps `freshness` separate from `delivery` —
+they answer different questions. `CreateRenderBatchView.locked` and
+`ExportMissingView.lockedElsewhere` were added for lock contention.
+
+### 39.13 CLI
+
+```console
+npm run deliver-track -- <slug> [--preset <id>] [--dry-run]
+npm run deliver-track -- --set-root "/Users/you/Movies/Toshi Exports"
+npm run deliver-track -- --show
+npm run deliver-catalogue [-- --dry-run]
+npm run render-locks [-- --release <slug> <preset-id>]
+```
+
+Both delivery commands use **the same planner and the same delivery service as
+the API** — there is no copying or path logic in `scripts/`. A partially failed
+run exits non-zero and says outright that the exports in `out/` are unaffected.
+Every pre-existing command is unchanged.
+
+### 39.14 UI
+
+- **Delivery** button in the header opens a settings panel: destination folder,
+  auto-deliver toggle, Reveal in Finder. A typed path rather than a native folder
+  picker — a picker needs a desktop shell this project deliberately does not
+  have, and the server validates the path regardless. **It is the only place in
+  the app where a path is entered.**
+- Per track, a **Delivery** section: the folder, each intended format's state,
+  a two-step Deliver action and Reveal destination. It appears only once a
+  destination is configured.
+- The track list gets **one badge** per track ("sent" / "n to send"), because a
+  second row of per-format marks there would make delivered and rendered look
+  like the same fact.
+- **Deliver current catalogue exports** sits beside the existing export actions.
+- Delivery marks cover only intended formats, plus any unintended format that
+  has actually been delivered, so an existing copy never disappears from view.
+- A failed delivery says outright that the rendered exports are unaffected.
+- `deliveryFolder` is editable in Track info. Phase 2C-B styling is reused
+  throughout — the delivery marks share the export row's shape and the existing
+  status colours.
+
+### 39.15 Auto-delivery
+
+Opt-in (`autoDeliver`), off by default, because a tool that quietly started
+writing into a synced folder would be a surprise. It runs in `renderTrackVideo`
+**after the target lock is released**, so both the CLI and the API worker get it
+from one call site with no duplication, and it never holds a lock across a copy.
+It cannot fail a render: the export is already published and verified, and a
+delivery problem comes back as an outcome that is logged (worker log line, CLI
+line) and nothing more.
+
+### 39.16 Performance
+
+- **Delivery off costs nothing.** With no root configured, no destination is
+  stat'd at all.
+- With delivery on, a listing resolves settings **once per request** and stats
+  each export's destination once: 3 stats per track. Measured at **0.10 ms per
+  listing** of the current catalogue — indistinguishable from the 0.125 ms with
+  delivery off, i.e. inside the noise.
+- **No delivered MP4 is ever hashed.** Freshness is a recorded fingerprint plus
+  a stat.
+- Copies use `fs.copyFile`, which is a filesystem-level copy (APFS clone where
+  possible); no video is ever read into JS memory.
+- Deliveries run one after another: these are large files on one disk, and
+  copying several at once would only contend for the same bandwidth.
+- No watchers, no recursive destination scans, no new processes, no new
+  dependencies. Delivery is idle when unused.
+- Lock acquisition is one `open` plus one small write.
+
+### 39.17 Tests (43 added, 178 total)
+
+`tests/render-lock.test.mts` (16) and `tests/delivery.test.mts` (24) use **real
+filesystem primitives in temp directories**, because what is being checked is
+what the filesystem does — a mocked filesystem would prove nothing about O_EXCL
+or an atomic rename. Notably: a failed copy is a genuinely unwritable directory,
+not a stubbed error, and the previously delivered file is read back byte for byte
+afterwards. Twelve concurrent acquisitions are raced, and exactly one wins.
+
+Three additions to `tests/api-integration.test.mts` cover settings refusing an
+unusable root without writing anything, delivery naming tracks rather than
+paths, reveal refusing a traversal slug, and a locked target answering 409 with
+no job queued.
+
+Delivery tests always pass settings explicitly, so none of them reads or writes
+the project's own `delivery.local.json`.
+
+### 39.18 Verification performed
+
+- `npm run lint` (ESLint + TypeScript) and **178 tests** clean; the full suite
+  run 5 times consecutively after the final change.
+- `validate-track` and `prepare-track` on `ghetto-geek` exit 0. Vite production
+  build passes (the pre-existing >500 kB advisory is unchanged).
+- **Cross-process contention proved with real processes**, not just unit tests:
+  a CLI render was started, its lock file inspected, and a second CLI render of
+  the same target refused naming the first's pid; with a lock held by a separate
+  live process, `POST /render` answered 409 and a two-target batch queued the
+  other format while reporting the locked one.
+- **Lock release proved in the real world**: a completed CLI render released its
+  lock, and a cancelled API render released its own while leaving the previous
+  export `current` and the cancelled format still `missing`.
+- **Delivery proved end to end on a real render**: a synthesised 3-second probe
+  track rendered, delivered, and was byte-identical to its canonical export,
+  which was itself unchanged. The whole freshness cycle was then walked —
+  stale → not deliverable, re-render → `export_changed`, deliver → `delivered` —
+  and auto-delivery was switched on and confirmed to copy into a changed
+  per-track folder while leaving the old copy alone.
+- The UI was driven in a real headless browser: settings panel, an invalid path
+  refused without changing stored settings, per-format delivery marks, the
+  "1 to send" badge, a two-step delivery actually copying a file, and the
+  catalogue summary.
+- **Ghetto Geek was not re-rendered and its files were not touched.** Its
+  exports predate manifests, so they read as `stale / manifest_missing` and are
+  correctly reported as needing a re-render before they can be delivered.
+- Final cleanup: no render workers, no headless Chromium, no leaked locks, no
+  temp delivery destinations, no probe fixtures, no stray temp files.
+
+### 39.19 Limitations
+
+- **A lock is advisory across machines.** PID liveness is meaningful only on the
+  host that wrote the lock, so a lock from another hostname is never reclaimed
+  automatically and needs `render-locks --release`. This is a single-machine
+  local tool; a shared network `out/` was not designed for.
+- **PID reuse can leave a lock stuck**, never shared. Deliberate, and the safe
+  direction — the fix is the explicit release command.
+- **`prepareTrack` is not locked.** Locks are per `slug + presetId` as
+  specified; two processes rendering *different* formats of one track can both
+  regenerate `analysis.wav`. That was already true and is unchanged; the writes
+  are deterministic and produce identical bytes.
+- **A hard kill leaves a lock file behind** until the next render reclaims it.
+  Harmless, and visible in `render-locks`.
+- **Delivery is not transactional across targets.** Each copy is atomic on its
+  own; a catalogue run can deliver nine of ten and report the tenth.
+- **A delivered copy is verified by size and mtime, not by hash.** Someone who
+  replaced it with a file of identical size and timestamp would not be detected.
+- **`failed` is not persisted**, so a failure is visible in the response that
+  produced it and not after a refresh — where the state re-derives to `pending`
+  or `outdated`.
+- **No native folder picker.** Paths are typed or pasted, and validated
+  server-side. A picker would need a desktop shell this project does not have.
+- **Delivery never deletes anything**, including copies left behind by a changed
+  folder or root. That is deliberate; tidying the destination is the user's.
+
+### 39.20 Commits for this milestone
+
+- `5a2c023` — cross-process render target locks, manager integration, recovery CLI.
+- `9070101` — delivery configuration, atomic delivery, receipts, API and CLI.
+- `a168c3f` — delivery settings, status and actions in the app.
+- `1edd387` — 43 tests for locking and delivery.
+- Documentation follow-up: this section and the README.
+
+All commits are local only. **Do not push without a new instruction.**
+
+### 39.21 Recommended next major feature (not started)
+
+**A release bundle per track** — a manifest of what shipped where, generated
+alongside delivery: the delivered files, their formats, durations, byte sizes and
+delivery timestamps, written as one human-readable file (Markdown or CSV) into
+the track's destination folder. It answers "what did I send, in which formats,
+and when" without opening the folder, reuses the receipts and coverage already
+in place, and needs no new concepts — only a formatter and an opt-in setting.
+It would also give the destination folder something a collaborator can read.
 
 ---
 

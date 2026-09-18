@@ -349,13 +349,105 @@ npm run render-catalogue-missing -- --mode missing-and-stale --replace
 
 These use the same planner as the API, and render one format after another.
 A stale replacement requires `--replace` unless `--dry-run` is set. Existing
-commands keep their default behavior; `render-track` also writes manifests. A
-separate process cannot see a running server's queue, so use the app or the
-CLI for a given track, not both at once.
+commands keep their default behavior; `render-track` also writes manifests.
+
+### One renderer per export at a time
+
+The app and the CLI are separate processes, so a filesystem lock — not the
+render queue — is what stops both producing the same export at once. Before a
+render starts it takes `out/.locks/<slug>__<preset>.lock`, created exclusively,
+and releases it on success, failure or cancellation.
+
+Locks are per track *and* format, so rendering three formats of one track still
+runs them back to back, and unrelated tracks never block each other. Asking for
+a target another process holds is refused clearly rather than queued:
+
+```console
+✗ ghetto-geek / square-1x1 is already being rendered by another process.
+  Held by process 10947 on this-mac since 2026-09-18T13:44:17.648Z.
+```
+
+The API answers `409 RENDER_TARGET_LOCKED` for a single render, and a batch
+leaves the contended target out while queueing the rest.
+
+If a render is killed outright, its lock stays behind until the next render
+reclaims it — which happens automatically once the owning process is gone. A
+lock written by another machine, or one whose contents cannot be read, is never
+reclaimed automatically, because nothing here can prove it is dead:
+
+```console
+npm run render-locks                                    # what is held, and why
+npm run render-locks -- --release ghetto-geek square-1x1
+```
+
+Release takes a track and a format, never a path. Only do it once you are
+certain nothing is rendering that export.
 
 Render job and batch history is kept in memory and bounded — the most recent
 200 jobs and 50 batches — so a long-running server does not grow without limit.
 Anything queued or running is never dropped, and files on disk are untouched.
+
+### Delivering exports to a folder
+
+Optionally, a finished export can be copied somewhere you actually use it: a
+Movies folder, a release folder, or a locally synced Dropbox or Drive folder.
+From here those are all just directories — there is no cloud integration, no
+account and no upload.
+
+`out/` stays the source of truth. The copy is never consulted for freshness, the
+canonical file is never moved, and **a delivery that fails leaves a
+successfully rendered export untouched** — "render current, delivery failed" is
+a real state and is reported as one.
+
+Set the destination in the app under **Delivery**, or from the terminal:
+
+```console
+npm run deliver-track -- --set-root "/Users/you/Movies/Toshi Exports"
+npm run deliver-track -- --show
+npm run deliver-track -- ghetto-geek --dry-run
+npm run deliver-track -- ghetto-geek
+npm run deliver-catalogue -- --dry-run
+npm run deliver-catalogue
+```
+
+The destination is stored in `delivery.local.json`, which is **not committed** —
+an absolute path belongs to one machine, so it never goes into a track's
+metadata or into git. What *is* portable lives in `metadata.json`:
+
+```json
+{ "deliveryFolder": "Ghetto Geek" }
+```
+
+Files land in a deterministic layout, with the folder defaulting to the slug:
+
+```
+Toshi Exports/
+  Ghetto Geek/
+    ghetto-geek-youtube-16x9.mp4
+    ghetto-geek-vertical-9x16.mp4
+```
+
+**Only current exports are delivered.** A missing or stale one is reported so
+you can re-render it first, rather than copying content that is already known to
+be out of date. Copies are published through a temp file and an atomic rename,
+so nobody watching that folder sees a partial video, and the previous copy
+survives until the new one is complete.
+
+Delivery freshness is tracked in a small receipt beside the export, so nothing
+has to hash a video to answer it:
+
+| Canonical export | Delivered copy | Shown as |
+| --- | --- | --- |
+| current | matches | delivered |
+| stale (cover changed, say) | unchanged | outdated — re-render first |
+| re-rendered, current again | still the old copy | outdated — deliver again |
+| current | matches | delivered |
+
+Nothing is ever deleted to express that, and delivery never removes anything
+from the destination.
+
+**Deliver after each render** is available in Delivery settings and is off
+unless you turn it on.
 
 ```console
 curl -X POST http://127.0.0.1:4600/api/render-batches \
@@ -469,7 +561,7 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | GET | `/api/tracks` | List all tracks with asset/validation status |
 | POST | `/api/tracks` | Create a track from `{"title":"..."}` |
 | GET | `/api/tracks/:slug` | Full detail: metadata, assets, validation, render |
-| PATCH | `/api/tracks/:slug/metadata` | Update title/artist/key/bpm/subtitle |
+| PATCH | `/api/tracks/:slug/metadata` | Update title/artist/key/bpm/subtitle/exportPresets/deliveryFolder |
 | PUT | `/api/tracks/:slug/cover` | Upload `cover.png` (raw PNG body) |
 | PUT | `/api/tracks/:slug/beat` | Upload `beat.wav` (raw WAV body) |
 | POST | `/api/tracks/:slug/validate` | Structured validation result |
@@ -488,11 +580,19 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | GET | `/api/render-batches/:batchId` | Batch totals, progress and member jobs |
 | GET | `/api/render-batches/:batchId/events` | Live batch aggregate (Server-Sent Events) |
 | POST | `/api/render-batches/:batchId/cancel` | Cancel a batch's unfinished renders |
+| GET | `/api/delivery/settings` | Destination folder, availability and auto-deliver |
+| PUT | `/api/delivery/settings` | Set `{"root":"/abs/path"}` (or `null` to turn it off) / `{"autoDeliver":true}` |
+| POST | `/api/delivery/deliver` | Plan/copy current exports; `{"tracks":[...]}` or `{"catalogue":true}`, optional `dryRun` |
+| POST | `/api/delivery/reveal` | Show the destination in Finder (macOS); takes a slug, never a path |
 
 Successful responses are `{"ok":true,"data":...}`. Failures are
 `{"ok":false,"error":{"code","message","path?"}}`, where `code` is the shared
-domain error code (`TRACK_NOT_FOUND`, `AUDIO_MISSING`, `METADATA_INVALID`, …)
-mapped onto a matching HTTP status.
+domain error code (`TRACK_NOT_FOUND`, `AUDIO_MISSING`, `METADATA_INVALID`,
+`RENDER_TARGET_LOCKED`, …) mapped onto a matching HTTP status.
+
+No delivery endpoint accepts a destination path for an operation: the root is
+configured once and validated, and every delivery names tracks and formats while
+the server resolves where those go.
 
 ### Examples
 
