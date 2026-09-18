@@ -115,6 +115,13 @@ export const updateTrackMetadata = async (
         // Left alone unless the patch names it: editing a title must not
         // materialise an intent the track never declared.
         exportPresets: patch.exportPresets ?? current.exportPresets,
+        // An empty string clears the override, which falls back to the slug.
+        deliveryFolder:
+          patch.deliveryFolder === undefined
+            ? current.deliveryFolder
+            : patch.deliveryFolder.trim() === ""
+              ? undefined
+              : patch.deliveryFolder.trim(),
       };
       const { issues, metadata } = validateTrackMetadata(merged, source);
       if (metadata === null) {

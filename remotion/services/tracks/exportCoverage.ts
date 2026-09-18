@@ -36,6 +36,12 @@ import { trackLocations, trackOutputLocation } from "./trackLocations.ts";
 export type ExportFileFacts = {
   readonly freshness: ExportFreshness;
   readonly staleReasons: readonly StaleReason[];
+  /**
+   * The manifest's input fingerprint, or null without a valid manifest. Read
+   * here because coverage already opens the manifest; delivery compares its
+   * receipt against this rather than reading the manifest a second time.
+   */
+  readonly inputFingerprint: string | null;
   readonly presetId: RenderPresetId;
   /** Short preset label, e.g. "Reels 9:16". */
   readonly label: string;
@@ -55,7 +61,7 @@ const fileFacts = (
   slug: string,
   presetId: RenderPresetId,
   label: string,
-): Omit<ExportFileFacts, "freshness" | "staleReasons"> => {
+): Omit<ExportFileFacts, "freshness" | "staleReasons" | "inputFingerprint"> => {
   const output = trackOutputLocation(slug, presetId);
 
   // statSync throws for a missing file; anything else (a permission error, say)
@@ -101,7 +107,12 @@ export const trackExportCoverage = (
   return RENDER_PRESET_LIST.map((preset) => {
     const facts = fileFacts(slug, preset.id, preset.shortLabel);
     if (!facts.rendered)
-      return { ...facts, freshness: "missing", staleReasons: [] };
+      return {
+        ...facts,
+        freshness: "missing",
+        staleReasons: [],
+        inputFingerprint: null,
+      };
     const output = trackOutputLocation(slug, preset.id);
     const { manifest, reason } = readExportManifest(
       output.manifest,
@@ -109,8 +120,19 @@ export const trackExportCoverage = (
       preset.id,
     );
     if (!manifest)
-      return { ...facts, freshness: "stale", staleReasons: [reason!] };
-    if (!metadata) return { ...facts, freshness: "invalid", staleReasons: [] };
+      return {
+        ...facts,
+        freshness: "stale",
+        staleReasons: [reason!],
+        inputFingerprint: null,
+      };
+    if (!metadata)
+      return {
+        ...facts,
+        freshness: "invalid",
+        staleReasons: [],
+        inputFingerprint: manifest.inputFingerprint,
+      };
     try {
       const current = fingerprintInputs(
         buildTrackProps({ slug, metadata, analysisAvailable: true }),
@@ -129,10 +151,16 @@ export const trackExportCoverage = (
         ...facts,
         freshness: staleReasons.length ? "stale" : "current",
         staleReasons,
+        inputFingerprint: manifest.inputFingerprint,
       };
     } catch {
       // Missing/unreadable inputs cannot establish freshness; validation reports why.
-      return { ...facts, freshness: "invalid", staleReasons: [] };
+      return {
+        ...facts,
+        freshness: "invalid",
+        staleReasons: [],
+        inputFingerprint: manifest.inputFingerprint,
+      };
     }
   });
 };

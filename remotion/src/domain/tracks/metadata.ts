@@ -1,3 +1,4 @@
+import { assertDeliveryFolder } from "../delivery/deliveryPaths.ts";
 import { TrackError, trackIssue, type TrackIssue } from "./errors.ts";
 import {
   coerceExportPresetList,
@@ -65,6 +66,10 @@ export const coerceMetadataDraft = (
         : null,
     subtitle: typeof raw.subtitle === "string" ? raw.subtitle : undefined,
     exportPresets: coerceExportPresetList(raw.exportPresets),
+    deliveryFolder:
+      typeof raw.deliveryFolder === "string" && raw.deliveryFolder.trim() !== ""
+        ? raw.deliveryFolder.trim()
+        : undefined,
   };
 };
 
@@ -81,6 +86,7 @@ export const serializeTrackMetadata = (
     // Undefined is dropped by JSON.stringify, so an undeclared track keeps a
     // file with no exportPresets key rather than gaining an empty one.
     exportPresets: metadata.exportPresets,
+    deliveryFolder: metadata.deliveryFolder,
   };
 
   return `${JSON.stringify(ordered, null, 2)}\n`;
@@ -167,6 +173,22 @@ export const validateTrackMetadata = (
     exportPresets = presets ?? undefined;
   }
 
+  // Portable folder name only; the absolute destination root is local config.
+  let deliveryFolder: string | undefined;
+  if (raw.deliveryFolder !== undefined && raw.deliveryFolder !== null) {
+    try {
+      deliveryFolder = assertDeliveryFolder(raw.deliveryFolder);
+    } catch (error) {
+      issues.push(
+        trackIssue(
+          "METADATA_INVALID",
+          `${source} ${error instanceof Error ? error.message : String(error)}`,
+          source,
+        ),
+      );
+    }
+  }
+
   if (title === null || artist === null || key === null || bpm === null) {
     return { issues, metadata: null };
   }
@@ -184,6 +206,7 @@ export const validateTrackMetadata = (
       bpm,
       subtitle: typeof rawSubtitle === "string" ? rawSubtitle : undefined,
       exportPresets,
+      deliveryFolder,
     },
   };
 };

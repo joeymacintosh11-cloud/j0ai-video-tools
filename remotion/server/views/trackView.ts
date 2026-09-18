@@ -8,6 +8,7 @@ import {
   DEFAULT_RENDER_PRESET_ID,
   resolveExportPresets,
 } from "../../src/domain/video/renderPresets.ts";
+import { deliveryStateForTarget } from "../../services/delivery/deliverExport.ts";
 import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
 import {
   trackLocations,
@@ -30,6 +31,13 @@ export const toTrackSummaryView = (
    * the caller's concern. Omitted means "nothing in flight".
    */
   inFlight: ReadonlyMap<string, "queued" | "active"> = new Map(),
+  /**
+   * The configured destination root, or null when delivery is off. Passed in
+   * rather than read here, so a listing resolves settings once instead of once
+   * per track, and this stays a pure mapping. With delivery off, no destination
+   * is stat'd at all.
+   */
+  deliveryRoot: string | null = null,
 ): TrackSummaryView => {
   // Falls back to the draft so a track that is not yet renderable still reports
   // the intent it was created with, exactly as its title does.
@@ -38,6 +46,10 @@ export const toTrackSummaryView = (
     inspection.metadataDraft?.exportPresets ??
     null;
   const intended = new Set(resolveExportPresets(declared));
+  const deliveryFolder =
+    inspection.metadata?.deliveryFolder ??
+    inspection.metadataDraft?.deliveryFolder ??
+    null;
 
   return {
     slug: inspection.slug,
@@ -80,10 +92,18 @@ export const toTrackSummaryView = (
           queued: state === "queued",
           active: state === "active",
           intended: intended.has(facts.presetId),
+          delivery: deliveryStateForTarget(
+            inspection.slug,
+            facts.presetId,
+            facts,
+            deliveryRoot,
+            deliveryFolder,
+          ),
         };
       },
     ),
     exportPresets: declared,
+    deliveryFolder,
   };
 };
 
@@ -95,6 +115,8 @@ export const toTrackDetailView = (
    * the caller's concern. Omitted means "nothing in flight".
    */
   inFlight: ReadonlyMap<string, "queued" | "active"> = new Map(),
+  /** The configured destination root, or null when delivery is off. */
+  deliveryRoot: string | null = null,
 ): TrackDetailView => {
   const locations = trackLocations(inspection.slug);
   const defaultOutput = trackOutputLocation(
@@ -105,7 +127,7 @@ export const toTrackDetailView = (
     DEFAULT_RENDER_PRESET_ID,
   );
   return {
-    ...toTrackSummaryView(inspection, inFlight),
+    ...toTrackSummaryView(inspection, inFlight, deliveryRoot),
     metadata: inspection.metadata,
     metadataDraft: inspection.metadataDraft,
     metadataRevision: inspection.metadataRevision,

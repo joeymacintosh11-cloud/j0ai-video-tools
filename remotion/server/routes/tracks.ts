@@ -34,9 +34,23 @@ import {
   updateTrackMetadata,
   type TrackMetadataPatch,
 } from "../../services/tracks/updateTrackMetadata.ts";
+import {
+  readDeliverySettings,
+  resolveDeliveryRoot,
+} from "../../services/delivery/deliverySettings.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
 import { renderManager } from "../services/renderManager.ts";
 import { toTrackDetailView, toTrackSummaryView } from "../views/trackView.ts";
+
+/**
+ * The destination root for this response, or null when delivery is off.
+ *
+ * Resolved once per request: a listing then stats each export's destination at
+ * most once, and with no destination configured it does no filesystem work at
+ * all.
+ */
+const deliveryRootForView = async (): Promise<string | null> =>
+  resolveDeliveryRoot(await readDeliverySettings()).root;
 
 export const handleListTracks = async (
   _request: IncomingMessage,
@@ -44,12 +58,15 @@ export const handleListTracks = async (
 ): Promise<void> => {
   const tracks = await listTracks();
   const inFlight = renderManager.inFlightTargets();
+  const deliveryRoot = await deliveryRootForView();
 
   // Explicit arrow: passing the function directly would hand map's index
   // argument to the inFlight parameter.
   sendOk(
     response,
-    tracks.map((inspection) => toTrackSummaryView(inspection, inFlight)),
+    tracks.map((inspection) =>
+      toTrackSummaryView(inspection, inFlight, deliveryRoot),
+    ),
   );
 };
 
@@ -70,7 +87,14 @@ export const handleGetTrack = async (
     );
   }
 
-  sendOk(response, toTrackDetailView(inspection, renderManager.inFlightTargets()));
+  sendOk(
+    response,
+    toTrackDetailView(
+      inspection,
+      renderManager.inFlightTargets(),
+      await deliveryRootForView(),
+    ),
+  );
 };
 
 export const handleCreateTrack = async (
@@ -92,7 +116,14 @@ export const handleCreateTrack = async (
   const { slug } = await createTrack(title, readExportPresets(body));
   const inspection = await inspectTrack(slug);
 
-  sendOk(response, toTrackDetailView(inspection, renderManager.inFlightTargets()));
+  sendOk(
+    response,
+    toTrackDetailView(
+      inspection,
+      renderManager.inFlightTargets(),
+      await deliveryRootForView(),
+    ),
+  );
 };
 
 /**
@@ -121,7 +152,15 @@ const readExportPresets = (
 const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch => {
   const patch: Record<string, unknown> = {};
 
-  for (const field of ["title", "artist", "key", "subtitle"] as const) {
+  // deliveryFolder is included: an empty string clears it, which is why it is
+  // read as a plain string rather than validated away here.
+  for (const field of [
+    "title",
+    "artist",
+    "key",
+    "subtitle",
+    "deliveryFolder",
+  ] as const) {
     const value = body[field];
     if (value !== undefined) {
       if (typeof value !== "string") {
@@ -151,7 +190,7 @@ const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch =>
     throw new TrackError(
       trackIssue(
         "INVALID_REQUEST",
-        "Provide at least one of: title, artist, key, bpm, subtitle, exportPresets.",
+        "Provide at least one of: title, artist, key, bpm, subtitle, exportPresets, deliveryFolder.",
       ),
     );
   }
@@ -175,7 +214,14 @@ export const handleUpdateMetadata = async (
   await updateTrackMetadata(slug, patch, ifMatch?.slice(1, -1));
   const inspection = await inspectTrack(slug);
 
-  sendOk(response, toTrackDetailView(inspection, renderManager.inFlightTargets()));
+  sendOk(
+    response,
+    toTrackDetailView(
+      inspection,
+      renderManager.inFlightTargets(),
+      await deliveryRootForView(),
+    ),
+  );
 };
 
 /**
@@ -222,7 +268,11 @@ export const handleUploadAsset = async (
 
   const payload: UploadAssetView = {
     ...result,
-    track: toTrackDetailView(inspection, renderManager.inFlightTargets()),
+    track: toTrackDetailView(
+      inspection,
+      renderManager.inFlightTargets(),
+      await deliveryRootForView(),
+    ),
   };
 
   sendOk(response, payload);
@@ -239,7 +289,11 @@ export const handleValidateTrack = async (
     slug,
     status: inspection.status,
     validation: inspection.validation,
-    assets: toTrackSummaryView(inspection, renderManager.inFlightTargets()),
+    assets: toTrackSummaryView(
+      inspection,
+      renderManager.inFlightTargets(),
+      await deliveryRootForView(),
+    ),
   };
 
   sendOk(response, payload);

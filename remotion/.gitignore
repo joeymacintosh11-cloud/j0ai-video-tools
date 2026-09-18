@@ -6,6 +6,9 @@ dist
 # Ignore the output video from Git but not videos you import into src/.
 out
 
+# Machine-local export destination (absolute paths never belong in git).
+delivery.local.json
+
 # Auto-generated waveform-analysis copies of each track's beat.wav
 # (npm run prepare-track regenerates these deterministically).
 public/tracks/*/analysis.wav

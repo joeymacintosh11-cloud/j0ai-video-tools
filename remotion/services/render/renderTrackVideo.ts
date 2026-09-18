@@ -7,6 +7,8 @@ import {
 } from "@remotion/renderer";
 import { rm } from "node:fs/promises";
 import path from "node:path";
+import { deliverAfterRender } from "../delivery/autoDeliver.ts";
+import type { DeliveryOutcome } from "../delivery/deliverExport.ts";
 import { fingerprintInputs } from "../tracks/exportManifest.ts";
 import { publishExport } from "./publishExport.ts";
 import { withRenderTargetLock } from "./renderLock.ts";
@@ -52,6 +54,8 @@ export type RenderTrackVideoOptions = {
   readonly onPhase?: (phase: RenderPhase) => void;
   readonly onResolved?: (info: RenderResolvedInfo) => void;
   readonly onProgress?: (update: RenderProgressUpdate) => void;
+  /** Called when auto-delivery ran, whatever its result. */
+  readonly onDelivery?: (outcome: DeliveryOutcome) => void;
 };
 
 export type RenderTrackVideoResult = RenderResolvedInfo;
@@ -187,13 +191,24 @@ const renderToTarget = async ({
  * of spending seconds on a bundle it will not be allowed to publish. A
  * RENDER_TARGET_LOCKED error reaches the CLI as a non-zero exit and the API as
  * a structured job failure.
+ *
+ * Auto-delivery, when switched on, runs after the lock is released: the export
+ * is published and verified by then, and delivery re-checks the file's identity
+ * itself, so there is no reason to hold the target for the duration of a copy.
  */
 export const renderTrackVideo = async (
   options: RenderTrackVideoOptions,
-): Promise<RenderTrackVideoResult> =>
-  withRenderTargetLock(
+): Promise<RenderTrackVideoResult> => {
+  const presetId = options.presetId ?? DEFAULT_RENDER_PRESET_ID;
+
+  const result = await withRenderTargetLock(
     options.slug,
-    options.presetId ?? DEFAULT_RENDER_PRESET_ID,
+    presetId,
     () => renderToTarget(options),
     { jobId: options.jobId ?? null },
   );
+
+  await deliverAfterRender(options.slug, presetId, options.onDelivery);
+
+  return result;
+};

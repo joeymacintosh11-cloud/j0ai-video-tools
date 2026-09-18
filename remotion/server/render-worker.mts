@@ -96,6 +96,14 @@ const main = async (): Promise<void> => {
         `Duration resolved: ${durationInFrames} frames @ ${fps}fps (${seconds}s), ${width}x${height}.`,
       );
     },
+    onDelivery: (outcome) => {
+      log(
+        outcome.status === "delivered"
+          ? `Delivered to ${outcome.destinationRelativePath}.`
+          : `Delivery did not happen: ${outcome.message ?? outcome.status}. The export itself is fine.`,
+        outcome.status === "delivered" ? "info" : "error",
+      );
+    },
     onProgress: (update) => {
       emit({ type: "progress", ...update });
 

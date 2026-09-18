@@ -17,6 +17,12 @@ export type TrackMetadata = {
    * duplicates.
    */
   readonly exportPresets?: readonly RenderPresetId[];
+  /**
+   * Which folder this track delivers into, inside the configured export
+   * destination. Absent means the slug. Deliberately a portable folder name,
+   * never a machine path — absolute destinations are local configuration.
+   */
+  readonly deliveryFolder?: string;
 };
 
 /**
@@ -38,6 +44,12 @@ export type TrackMetadataDraft = {
    * duplicates.
    */
   readonly exportPresets?: readonly RenderPresetId[];
+  /**
+   * Which folder this track delivers into, inside the configured export
+   * destination. Absent means the slug. Deliberately a portable folder name,
+   * never a machine path — absolute destinations are local configuration.
+   */
+  readonly deliveryFolder?: string;
 };
 
 /**

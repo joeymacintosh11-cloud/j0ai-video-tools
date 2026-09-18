@@ -3,6 +3,12 @@ import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
 import type { HealthView } from "../src/domain/api/views.ts";
 import { sendErrorForException, sendNotFound } from "./http/errors.ts";
 import { sendOk } from "./http/json.ts";
+import {
+  handleDeliver,
+  handleGetDeliverySettings,
+  handleRevealDelivery,
+  handleUpdateDeliverySettings,
+} from "./routes/delivery.ts";
 import { handleExportMissing } from "./routes/exportMissing.ts";
 import {
   handleBatchEvents,
@@ -123,6 +129,32 @@ const route = async (
     }
     if (third === "reveal" && method === "POST") {
       await handleRevealOutput(second, request, response);
+      return;
+    }
+
+    sendNotFound(response, "Endpoint");
+    return;
+  }
+
+  if (collection === "delivery") {
+    if (second === "settings" && third === undefined) {
+      if (method === "GET") {
+        await handleGetDeliverySettings(response);
+        return;
+      }
+      if (method === "PUT") {
+        await handleUpdateDeliverySettings(request, response);
+        return;
+      }
+      sendNotFound(response, "Endpoint");
+      return;
+    }
+    if (second === "deliver" && third === undefined && method === "POST") {
+      await handleDeliver(request, response);
+      return;
+    }
+    if (second === "reveal" && third === undefined && method === "POST") {
+      await handleRevealDelivery(request, response);
       return;
     }
 

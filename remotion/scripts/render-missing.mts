@@ -186,6 +186,13 @@ runCli("rendering missing exports", async () => {
       slug: target.slug,
       props,
       presetId: target.presetId,
+      onDelivery: (outcome) => {
+        console.log(
+          outcome.status === "delivered"
+            ? `✓ Delivered to ${outcome.destinationRelativePath}`
+            : `! Not delivered: ${outcome.message ?? outcome.status}`,
+        );
+      },
       onProgress: ({ progress }) => {
         const percentage = Math.floor(progress * 100);
         if (percentage !== lastLoggedPercentage && percentage % 10 === 0) {

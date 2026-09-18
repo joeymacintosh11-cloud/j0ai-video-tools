@@ -3,6 +3,10 @@ import type {
   ExportMode,
   StaleReason,
 } from "../video/exportFreshness.ts";
+import type {
+  DeliveryReason,
+  DeliveryStatus,
+} from "../delivery/deliveryPaths.ts";
 import type { TrackErrorCode, TrackIssue } from "../tracks/errors.ts";
 import type {
   TrackMetadata,
@@ -92,6 +96,11 @@ export type TrackSummaryView = {
    * showing an intent the user never chose.
    */
   readonly exportPresets: readonly RenderPresetId[] | null;
+  /**
+   * The folder this track delivers into, or null when it has not chosen one and
+   * falls back to its slug. A portable folder name, never a machine path.
+   */
+  readonly deliveryFolder: string | null;
 };
 
 /** GET /api/tracks/:slug, and the response to create/metadata updates. */
@@ -144,6 +153,11 @@ export type TrackMetadataPatch = {
    * never invents an intent the user did not choose.
    */
   readonly exportPresets?: readonly RenderPresetId[];
+  /**
+   * Folder this track delivers into, inside the configured destination. Empty
+   * string clears it, which falls back to the slug.
+   */
+  readonly deliveryFolder?: string;
 };
 
 /** POST /api/tracks request body. */
@@ -185,6 +199,23 @@ export type RenderOutputView = {
    * being intended, and the two say different things.
    */
   readonly intended: boolean;
+  /**
+   * Where this export stands at the configured destination. Separate from
+   * `freshness` throughout: a current export may be undelivered, and a
+   * delivered copy may be outdated. "not_configured" means delivery is off.
+   */
+  readonly delivery: DeliveryTargetStateView;
+};
+
+/** One export's delivery state, derived from disk on every read. */
+export type DeliveryTargetStateView = {
+  readonly status: DeliveryStatus;
+  readonly reason: DeliveryReason | null;
+  /** Absolute destination, or null when delivery is off. */
+  readonly destinationPath: string | null;
+  /** Path inside the destination root, e.g. "Ghetto Geek/x-square-1x1.mp4". */
+  readonly destinationRelativePath: string | null;
+  readonly deliveredAt: string | null;
 };
 
 /** The two files a client may upload into a track. */
@@ -456,6 +487,112 @@ export type CreateRenderBatchView = {
   readonly skipped: readonly RenderTarget[];
   /** Targets another process is rendering, which were not queued either. */
   readonly locked: readonly RenderTarget[];
+};
+
+/* ------------------------------------------------------------------ *
+ * Local export delivery
+ * ------------------------------------------------------------------ */
+
+/** GET /api/delivery/settings, and the response to a settings update. */
+export type DeliverySettingsView = {
+  /** Absolute destination root, or null when delivery is off. */
+  readonly root: string | null;
+  /** True when the configured root exists and is reachable right now. */
+  readonly available: boolean;
+  /** Why the configured root is unusable, when it is not. */
+  readonly problem: string | null;
+  /** Copy automatically after a successful render. Opt-in. */
+  readonly autoDeliver: boolean;
+  /** Where the machine-local setting is stored, for the UI to name. */
+  readonly settingsPath: string;
+};
+
+/**
+ * PUT /api/delivery/settings request body.
+ *
+ * `root` is an absolute path typed or pasted by the user, validated
+ * server-side. It is the only place a destination path is ever accepted; every
+ * delivery request names tracks and formats, never paths.
+ */
+export type DeliverySettingsBody = {
+  readonly root?: string | null;
+  readonly autoDeliver?: boolean;
+};
+
+/** One target's result from a delivery attempt. */
+export type DeliveryOutcomeView = {
+  readonly slug: string;
+  readonly presetId: RenderPresetId;
+  readonly label: string;
+  readonly status: DeliveryStatus;
+  readonly reason: DeliveryReason | null;
+  readonly destinationPath: string | null;
+  readonly destinationRelativePath: string | null;
+  readonly bytes: number | null;
+  readonly message: string | null;
+};
+
+/** One target in a delivery plan. */
+export type DeliveryTargetView = {
+  readonly slug: string;
+  readonly presetId: RenderPresetId;
+  readonly label: string;
+  readonly outputLabel: string;
+  /** The canonical export's freshness, which is separate from the copy's. */
+  readonly freshness: ExportFreshness;
+  readonly status: DeliveryStatus;
+  readonly reason: DeliveryReason | null;
+  readonly destinationRelativePath: string | null;
+};
+
+/**
+ * POST /api/delivery/deliver request body.
+ *
+ * Mirrors /api/export-missing: name tracks, or ask for the catalogue outright.
+ * No destination is accepted here — the server resolves it from stored
+ * settings, so a request can never point a copy somewhere of its choosing.
+ */
+export type DeliverBody = {
+  readonly tracks?: readonly string[];
+  readonly catalogue?: boolean;
+  readonly presets?: readonly RenderPresetId[] | null;
+  readonly dryRun?: boolean;
+};
+
+/** POST /api/delivery/deliver */
+export type DeliverView = {
+  readonly dryRun: boolean;
+  readonly catalogue: boolean;
+  readonly tracks: number;
+  readonly root: string | null;
+  readonly rootProblem: string | null;
+  /** Every intended export considered, whatever its state. */
+  readonly considered: readonly DeliveryTargetView[];
+  /** Current exports that need copying. */
+  readonly deliverable: readonly DeliveryTargetView[];
+  readonly alreadyDelivered: readonly DeliveryTargetView[];
+  /** Missing or stale exports, which must be re-rendered before delivery. */
+  readonly notCurrent: readonly DeliveryTargetView[];
+  readonly invalid: readonly InvalidTrackView[];
+  /** Results of the copies this call performed; empty on a dry run. */
+  readonly delivered: readonly DeliveryOutcomeView[];
+  /** True when every considered export is already at the destination. */
+  readonly nothingToDo: boolean;
+};
+
+/**
+ * POST /api/delivery/reveal
+ *
+ * Shows the destination in Finder. Takes an optional slug and preset, never a
+ * path; the server resolves what to reveal from stored settings.
+ */
+export type DeliveryRevealBody = {
+  readonly slug?: string;
+  readonly preset?: RenderPresetId;
+};
+
+export type DeliveryRevealView = {
+  readonly revealedPath: string;
 };
 
 /** GET /api/renders/:jobId/logs */
