@@ -12,6 +12,7 @@ import {
 import { ApiRequestError } from "./api/client.ts";
 import { DeliverPanel } from "./components/DeliverPanel.tsx";
 import { DeliverySettingsPanel } from "./components/DeliverySettingsPanel.tsx";
+import { ReleaseBundlePanel } from "./components/ReleaseBundlePanel.tsx";
 import { ErrorBanner } from "./components/ErrorBanner.tsx";
 import { ExportMissingPanel } from "./components/ExportMissingPanel.tsx";
 import { FormatPicker } from "./components/FormatPicker.tsx";
@@ -174,11 +175,18 @@ export const App: React.FC = () => {
         {/* Only offered once a destination exists; there is nothing to
             deliver to before that, and the settings panel says so. */}
         {delivery.data?.root === null ? null : (
-          <DeliverPanel
-            label="Deliver current catalogue exports"
-            tracks={null}
-            onChanged={refreshAll}
-          />
+          <>
+            <DeliverPanel
+              label="Deliver current catalogue exports"
+              tracks={null}
+              onChanged={refreshAll}
+            />
+            <ReleaseBundlePanel
+              label="Update release bundles"
+              tracks={null}
+              onChanged={refreshAll}
+            />
+          </>
         )}
       </div>
 

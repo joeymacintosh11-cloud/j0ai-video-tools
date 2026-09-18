@@ -239,8 +239,15 @@ export const renderReleaseMarkdown = (bundle: ReleaseBundle): string => {
   section("Outdated", bundle.outdated);
   section("Missing", bundle.missing);
 
+  // Distinguished on purpose: a folder whose copies have gone out of date has
+  // not "delivered nothing", it is holding content that should be replaced.
   if (bundle.deliveries.length === 0) {
-    lines.push("", "Nothing has been delivered yet.");
+    lines.push(
+      "",
+      bundle.outdated.length > 0
+        ? "Nothing here is current — re-render, then deliver again."
+        : "Nothing has been delivered yet.",
+    );
   }
 
   lines.push(

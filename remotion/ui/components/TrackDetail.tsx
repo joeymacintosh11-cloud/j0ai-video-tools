@@ -7,6 +7,10 @@ import { revealDelivery } from "../api/client.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
 import { DeliverPanel } from "./DeliverPanel.tsx";
 import { DeliveryStatus } from "./DeliveryStatus.tsx";
+import {
+  ReleaseBundleBadge,
+  ReleaseBundlePanel,
+} from "./ReleaseBundlePanel.tsx";
 import { ExportMissingPanel } from "./ExportMissingPanel.tsx";
 import { ExportStatus } from "./ExportStatus.tsx";
 import { AssetDropZone } from "./AssetDropZone.tsx";
@@ -165,9 +169,34 @@ export const TrackDetail: React.FC<{
             ) : null}
           </p>
           <DeliveryStatus exports={track.exports} />
+
+          {/* What the folder says about itself, which is downstream of the
+              deliveries above and can lag behind them. */}
+          <p className="exports__intent">
+            <span className="exports__intentlabel">Release bundle</span>
+            <ReleaseBundleBadge status={track.releaseBundle} />
+            <span className="muted">
+              {track.releaseBundle.freshness === "not_configured"
+                ? ""
+                : `${track.releaseBundle.delivered} delivered · ` +
+                  `${track.releaseBundle.outdated} outdated · ` +
+                  `${track.releaseBundle.missing} missing`}
+            </span>
+          </p>
+
           <div className="form__actions">
             <DeliverPanel
               label="Deliver current exports"
+              tracks={[track.slug]}
+              disabled={!track.validation.ok}
+              onChanged={onChanged}
+            />
+            <ReleaseBundlePanel
+              label={
+                track.releaseBundle.freshness === "missing"
+                  ? "Generate release bundle"
+                  : "Update release bundle"
+              }
               tracks={[track.slug]}
               disabled={!track.validation.ok}
               onChanged={onChanged}

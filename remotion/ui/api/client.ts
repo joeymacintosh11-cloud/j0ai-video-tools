@@ -16,6 +16,8 @@ import type {
   DeliverySettingsView,
   HealthView,
   PrepareTrackView,
+  ReleaseBundleBody,
+  ReleaseBundlesView,
   RenderBatchView,
   RenderJobView,
   RenderLogsView,
@@ -342,6 +344,30 @@ export const revealDelivery = (
   };
 
   return jsonRequest<DeliveryRevealView>("/api/delivery/reveal", "POST", body);
+};
+
+/* ------------------------------------------------------------------ *
+ * Release bundles
+ * ------------------------------------------------------------------ */
+
+/**
+ * Writes release.json and release.md into each track's destination folder.
+ *
+ * `tracks` of null covers the whole catalogue. With `dryRun` the same plan
+ * comes back without writing anything. Only missing and outdated bundles are
+ * written unless `force` is set.
+ */
+export const generateReleaseBundles = (
+  tracks: readonly string[] | null,
+  { dryRun = false, force = false }: { dryRun?: boolean; force?: boolean } = {},
+): Promise<ReleaseBundlesView> => {
+  const body: ReleaseBundleBody = {
+    ...(tracks === null ? { catalogue: true } : { tracks }),
+    dryRun,
+    force,
+  };
+
+  return jsonRequest<ReleaseBundlesView>("/api/release-bundles", "POST", body);
 };
 
 /** SSE endpoint for a batch's aggregate; consumed with EventSource. */

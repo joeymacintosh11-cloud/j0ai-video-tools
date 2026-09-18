@@ -1,5 +1,6 @@
 import type { TrackSummaryView } from "../../src/domain/api/views.ts";
 import { DeliverySummary } from "./DeliveryStatus.tsx";
+import { ReleaseBundleBadge } from "./ReleaseBundlePanel.tsx";
 import { ExportStatus } from "./ExportStatus.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
 
@@ -62,6 +63,11 @@ export const TrackList: React.FC<{
               <StatusBadge status={track.status} />
               <ExportStatus exports={track.exports} compact />
               <DeliverySummary exports={track.exports} />
+              {/* Only once a destination exists; before that a bundle has
+                  nowhere to live and the badge would be noise. */}
+              {track.releaseBundle.freshness === "not_configured" ? null : (
+                <ReleaseBundleBadge status={track.releaseBundle} />
+              )}
             </span>
           </button>
         </div>

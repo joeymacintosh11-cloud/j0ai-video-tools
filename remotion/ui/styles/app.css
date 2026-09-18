@@ -1537,3 +1537,42 @@ body {
   color: var(--vintage-gold);
   background: var(--gold-wash);
 }
+
+/* ---------------------------------------------------------------- *
+ * Release bundle status
+ *
+ * Shares the delivery badge's shape and the existing status colours, so
+ * "the folder describes itself" reads as the same kind of fact as
+ * "delivered" without a second visual language for it.
+ * ---------------------------------------------------------------- */
+
+.bundlebadge {
+  font-family: var(--font-label);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.bundlebadge--current {
+  color: var(--status-ready);
+  background: var(--ready-wash);
+}
+
+.bundlebadge--outdated {
+  color: var(--vintage-gold);
+  background: var(--gold-wash);
+}
+
+.bundlebadge--missing {
+  color: var(--text-faint);
+  background: var(--surface-3);
+}
+
+.bundlebadge--not_configured {
+  color: var(--text-faint);
+  opacity: 0.6;
+}
