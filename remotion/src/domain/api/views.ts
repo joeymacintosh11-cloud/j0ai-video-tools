@@ -129,7 +129,14 @@ export type CreateTrackBody = {
   readonly title: string;
 };
 
-/** One export format's render, present or not. */
+/**
+ * One export format's state for a track.
+ *
+ * `present` is the filesystem answer and the one that decides whether an export
+ * needs making. `queued` and `active` describe work in flight, which lives in
+ * the server's memory and is forgotten on restart — so they inform the UI but
+ * never stand in for a finished file.
+ */
 export type RenderOutputView = {
   readonly presetId: RenderPresetId;
   /** Short preset label, e.g. "Reels 9:16". */
@@ -137,6 +144,14 @@ export type RenderOutputView = {
   readonly outputLabel: string;
   readonly outputPath: string | null;
   readonly present: boolean;
+  readonly bytes: number | null;
+  readonly modifiedAt: string | null;
+  /** The file exists but is empty, so it does not count as an export. */
+  readonly empty: boolean;
+  /** A job for this track and format is waiting for the render slot. */
+  readonly queued: boolean;
+  /** A job for this track and format is preparing or rendering now. */
+  readonly active: boolean;
 };
 
 /** The two files a client may upload into a track. */
@@ -314,6 +329,60 @@ export type RenderBatchView = {
   readonly status: "running" | "finished";
   /** Member jobs in the order they were queued. */
   readonly jobs: readonly RenderJobView[];
+};
+
+/* ------------------------------------------------------------------ *
+ * Export what is missing
+ * ------------------------------------------------------------------ */
+
+/** One track/format pair in an export plan. */
+export type PlannedTargetView = {
+  readonly slug: string;
+  readonly presetId: RenderPresetId;
+  /** Short preset label, e.g. "Reels 9:16". */
+  readonly label: string;
+  readonly outputLabel: string;
+};
+
+/** A track that cannot be exported, and why. */
+export type InvalidTrackView = {
+  readonly slug: string;
+  readonly code: string;
+  readonly reason: string;
+};
+
+/** POST /api/export-missing request body. */
+export type ExportMissingBody = {
+  readonly tracks: readonly string[];
+  /** Formats to cover. Omitted means every format. */
+  readonly presets?: readonly RenderPresetId[];
+  /** Report the plan without queueing anything. */
+  readonly dryRun?: boolean;
+};
+
+/**
+ * POST /api/export-missing
+ *
+ * `missing` is what needs rendering, and is filled in whether or not anything
+ * was queued — that is what makes a dry run useful as a preview. `queued` is
+ * what was actually enqueued, so it is empty on a dry run and equal to
+ * `missing` otherwise. The three `skipped*` lists say why the rest needed no
+ * work: the file already exists, a render is already waiting, or one is running
+ * now.
+ */
+export type ExportMissingView = {
+  readonly batchId: string | null;
+  readonly dryRun: boolean;
+  /** Exports that do not exist yet and are not already on their way. */
+  readonly missing: readonly PlannedTargetView[];
+  /** Exports actually enqueued by this call; empty on a dry run. */
+  readonly queued: readonly PlannedTargetView[];
+  readonly skippedExisting: readonly PlannedTargetView[];
+  readonly skippedQueued: readonly PlannedTargetView[];
+  readonly skippedActive: readonly PlannedTargetView[];
+  readonly invalid: readonly InvalidTrackView[];
+  /** True when every requested export already exists or is already on its way. */
+  readonly nothingToDo: boolean;
 };
 
 /** POST /api/render-batches */

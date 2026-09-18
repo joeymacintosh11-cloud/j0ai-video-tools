@@ -28,8 +28,25 @@ const WORKER_PATH = path.join(
 );
 
 const MAX_LOG_ENTRIES = 200;
+
+/**
+ * How much settled history to keep in memory.
+ *
+ * Job and batch records are never written to disk, so without a bound a
+ * long-lived server would accumulate them forever. Only settled records are
+ * ever dropped, oldest first — anything queued or running is untouchable, as is
+ * any job still belonging to a batch we are keeping, so a retained batch can
+ * always still list its members. Rendered files on disk are never affected.
+ */
+const MAX_SETTLED_JOBS = 200;
+const MAX_SETTLED_BATCHES = 50;
+
 /** How long a graceful cancel gets before the process is killed outright. */
 const CANCEL_GRACE_MS = 20000;
+
+/** Identifies one track/format pair. */
+const targetKey = (slug: string, presetId: RenderPresetId): string =>
+  `${slug}::${presetId}`;
 
 export type RenderJobEvent =
   | { readonly type: "status"; readonly job: RenderJobView }
@@ -205,7 +222,7 @@ class RenderManager {
     const seen = new Set<string>();
 
     for (const { slug, presetId } of resolved) {
-      const key = `${slug}::${presetId}`;
+      const key = targetKey(slug, presetId);
 
       // Duplicates inside the request itself, and pairs already in flight.
       if (seen.has(key) || this.activeJobFor(slug, presetId)) {
@@ -266,6 +283,29 @@ class RenderManager {
 
   getJob(jobId: string): RenderJobView {
     return this.toView(this.requireJob(jobId));
+  }
+
+  /**
+   * Queue state for every track/format pair with work in flight.
+   *
+   * Keyed "<slug>::<presetId>". Callers use this to report what is already on
+   * its way without reaching into job internals — and it never stands in for a
+   * finished file, which only the filesystem can confirm.
+   */
+  inFlightTargets(): ReadonlyMap<string, "queued" | "active"> {
+    const targets = new Map<string, "queued" | "active">();
+
+    for (const job of this.jobs.values()) {
+      if (isTerminalStatus(job.status)) {
+        continue;
+      }
+      targets.set(
+        targetKey(job.slug, job.presetId),
+        job.status === "queued" ? "queued" : "active",
+      );
+    }
+
+    return targets;
   }
 
   /** The queued or running job for a track/format pair, if any. */
@@ -597,6 +637,48 @@ class RenderManager {
       this.emit(job, { type: "cancelled", job: view });
     } else {
       this.emit(job, { type: "failed", job: view });
+    }
+
+    // Settling is the only moment history can grow.
+    this.trimHistory();
+  }
+
+  /**
+   * Drops the oldest settled records once history grows past its bounds.
+   *
+   * Runs when a job settles, which is the only moment the counts can grow.
+   */
+  private trimHistory(): void {
+    const settledBatches = [...this.batches.values()]
+      .filter((batch) => this.toBatchView(batch).status === "finished")
+      .sort((a, b) => a.createdAt - b.createdAt);
+
+    const droppedBatches = Math.max(0, settledBatches.length - MAX_SETTLED_BATCHES);
+    for (const batch of settledBatches.slice(0, droppedBatches)) {
+      this.batches.delete(batch.id);
+    }
+
+    // A job that still belongs to a retained batch has to stay, or that batch
+    // could no longer report its own members.
+    const claimed = new Set<string>();
+    for (const batch of this.batches.values()) {
+      for (const jobId of batch.jobIds) {
+        claimed.add(jobId);
+      }
+    }
+
+    const settledJobs = [...this.jobs.values()]
+      .filter(
+        (job) =>
+          isTerminalStatus(job.status) &&
+          !claimed.has(job.id) &&
+          job.listeners.size === 0,
+      )
+      .sort((a, b) => (a.finishedAt ?? a.queuedAt) - (b.finishedAt ?? b.queuedAt));
+
+    const droppedJobs = Math.max(0, settledJobs.length - MAX_SETTLED_JOBS);
+    for (const job of settledJobs.slice(0, droppedJobs)) {
+      this.jobs.delete(job.id);
     }
   }
 

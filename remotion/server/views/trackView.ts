@@ -4,10 +4,8 @@ import type {
 } from "../../src/domain/api/views.ts";
 import { publicLabel } from "../../src/domain/tracks/paths.ts";
 import type { TrackInspection } from "../../src/domain/tracks/types.ts";
-import {
-  DEFAULT_RENDER_PRESET_ID,
-  RENDER_PRESET_LIST,
-} from "../../src/domain/video/renderPresets.ts";
+import { DEFAULT_RENDER_PRESET_ID } from "../../src/domain/video/renderPresets.ts";
+import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
 import {
   trackLocations,
   trackOutputLocation,
@@ -42,6 +40,12 @@ export const toTrackSummaryView = (
 
 export const toTrackDetailView = (
   inspection: TrackInspection,
+  /**
+   * Work in flight, keyed "<slug>::<presetId>". Passed in rather than read from
+   * the render manager here, so this stays a pure mapping and the queue stays
+   * the caller's concern. Omitted means "nothing in flight".
+   */
+  inFlight: ReadonlyMap<string, "queued" | "active"> = new Map(),
 ): TrackDetailView => {
   const locations = trackLocations(inspection.slug);
   const defaultOutput = trackOutputLocation(
@@ -51,6 +55,7 @@ export const toTrackDetailView = (
   const defaultPresent = inspection.facts.renderedPresets.includes(
     DEFAULT_RENDER_PRESET_ID,
   );
+  const coverage = trackExportCoverage(inspection.slug);
 
   return {
     ...toTrackSummaryView(inspection),
@@ -68,16 +73,20 @@ export const toTrackDetailView = (
       present: inspection.facts.outputExists,
       // Per-format outputs. The UI reads this; the three fields below stay for
       // callers written before presets existed.
-      outputs: RENDER_PRESET_LIST.map((preset) => {
-        const output = trackOutputLocation(inspection.slug, preset.id);
-        const present = inspection.facts.renderedPresets.includes(preset.id);
+      outputs: coverage.map((facts) => {
+        const state = inFlight.get(`${inspection.slug}::${facts.presetId}`);
 
         return {
-          presetId: preset.id,
-          label: preset.shortLabel,
-          outputLabel: output.label,
-          outputPath: present ? output.path : null,
-          present,
+          presetId: facts.presetId,
+          label: facts.label,
+          outputLabel: facts.outputLabel,
+          outputPath: facts.rendered ? facts.outputPath : null,
+          present: facts.rendered,
+          bytes: facts.bytes,
+          modifiedAt: facts.modifiedAt,
+          empty: facts.empty,
+          queued: state === "queued",
+          active: state === "active",
         };
       }),
       legacyPresent: inspection.facts.legacyOutputExists,

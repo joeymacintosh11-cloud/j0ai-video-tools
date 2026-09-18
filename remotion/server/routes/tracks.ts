@@ -60,7 +60,7 @@ export const handleGetTrack = async (
     );
   }
 
-  sendOk(response, toTrackDetailView(inspection));
+  sendOk(response, toTrackDetailView(inspection, renderManager.inFlightTargets()));
 };
 
 export const handleCreateTrack = async (
@@ -82,7 +82,7 @@ export const handleCreateTrack = async (
   const { slug } = await createTrack(title);
   const inspection = await inspectTrack(slug);
 
-  sendOk(response, toTrackDetailView(inspection));
+  sendOk(response, toTrackDetailView(inspection, renderManager.inFlightTargets()));
 };
 
 const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch => {
@@ -137,7 +137,7 @@ export const handleUpdateMetadata = async (
   await updateTrackMetadata(slug, patch, ifMatch?.slice(1, -1));
   const inspection = await inspectTrack(slug);
 
-  sendOk(response, toTrackDetailView(inspection));
+  sendOk(response, toTrackDetailView(inspection, renderManager.inFlightTargets()));
 };
 
 /**
@@ -184,7 +184,7 @@ export const handleUploadAsset = async (
 
   const payload: UploadAssetView = {
     ...result,
-    track: toTrackDetailView(inspection),
+    track: toTrackDetailView(inspection, renderManager.inFlightTargets()),
   };
 
   sendOk(response, payload);

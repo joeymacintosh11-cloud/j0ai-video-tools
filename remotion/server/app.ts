@@ -3,6 +3,7 @@ import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
 import type { HealthView } from "../src/domain/api/views.ts";
 import { sendErrorForException, sendNotFound } from "./http/errors.ts";
 import { sendOk } from "./http/json.ts";
+import { handleExportMissing } from "./routes/exportMissing.ts";
 import {
   handleBatchEvents,
   handleCancelBatch,
@@ -125,6 +126,15 @@ const route = async (
       return;
     }
 
+    sendNotFound(response, "Endpoint");
+    return;
+  }
+
+  if (collection === "export-missing" && segments.length === 2) {
+    if (method === "POST") {
+      await handleExportMissing(request, response);
+      return;
+    }
     sendNotFound(response, "Endpoint");
     return;
   }

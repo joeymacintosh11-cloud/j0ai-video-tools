@@ -20,9 +20,9 @@ import {
   deriveTrackStatus,
   validateTrackAssets,
 } from "../../src/domain/tracks/validation.ts";
-import { RENDER_PRESET_IDS } from "../../src/domain/video/renderPresets.ts";
+import { renderedPresetIds } from "./exportCoverage.ts";
 import { metadataRevision } from "./metadataRevision.ts";
-import { trackLocations, trackOutputLocation } from "./trackLocations.ts";
+import { trackLocations } from "./trackLocations.ts";
 
 const mtimeMs = (filePath: string): number | null =>
   existsSync(filePath) ? statSync(filePath).mtimeMs : null;
@@ -33,9 +33,9 @@ const observeFacts = (slug: string): TrackAssetFacts => {
   const beatMtime = mtimeMs(locations.beat);
   const analysisMtime = mtimeMs(locations.analysis);
 
-  const renderedPresets = RENDER_PRESET_IDS.filter((presetId) =>
-    existsSync(trackOutputLocation(slug, presetId).path),
-  );
+  // One definition of "this format is exported", shared with the export
+  // planner and the UI: the file exists and is not empty.
+  const renderedPresets = renderedPresetIds(slug);
   const legacyOutputExists = existsSync(locations.legacyOutput);
 
   return {
