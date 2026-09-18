@@ -1,18 +1,27 @@
 import type { RenderTarget } from "../../src/domain/api/views.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+import type { TrackInspection } from "../../src/domain/tracks/types.ts";
 import {
   assertRenderPresetId,
-  RENDER_PRESET_LIST,
+  canonicalPresetOrder,
   RENDER_PRESETS,
+  resolveExportPresets,
   type RenderPresetId,
 } from "../../src/domain/video/renderPresets.ts";
 import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
 import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
-import { renderManager } from "./renderManager.ts";
+import { listTracks } from "../../services/tracks/listTracks.ts";
 
 /**
  * Works out which exports a set of tracks is actually missing.
+ *
+ * Which formats a track *should* have comes from its own metadata, so a
+ * catalogue-wide run plans each track's declared intent rather than flattening
+ * everything into one global format list. A caller that names formats
+ * explicitly overrides that intent for the request — which is what the toolbar
+ * and the CLI's --preset do — and a track that declares nothing resolves to
+ * every format, exactly as before intent existed.
  *
  * Three different things can mean "no work needed", and they are reported
  * separately rather than lumped together, because they need different answers
@@ -40,6 +49,12 @@ export type InvalidTrack = {
 };
 
 export type ExportPlan = {
+  /** True when the plan covered the whole catalogue rather than named tracks. */
+  readonly catalogue: boolean;
+  /** How many tracks were considered, renderable or not. */
+  readonly tracks: number;
+  /** Every track/format pair the tracks are meant to ship, missing or not. */
+  readonly intendedTargets: readonly PlannedTarget[];
   readonly missing: readonly PlannedTarget[];
   readonly skippedExisting: readonly PlannedTarget[];
   readonly skippedQueued: readonly PlannedTarget[];
@@ -48,35 +63,58 @@ export type ExportPlan = {
 };
 
 export type PlanMissingExportsInput = {
-  readonly slugs: readonly string[];
-  readonly presetIds: readonly RenderPresetId[];
   /**
-   * Work already in flight, keyed "<slug>::<presetId>". Defaults to the render
-   * manager's own view; passed in explicitly by tests, which have no business
-   * spawning render processes just to describe a queue.
+   * Tracks to cover. Omitted means every track under public/tracks/ — the
+   * catalogue-wide run. An explicitly empty list is a mistake, not a catalogue.
+   */
+  readonly slugs?: readonly string[];
+  /**
+   * Formats to cover, overriding metadata for this request. Omitted means each
+   * track's own declared intent.
+   */
+  readonly presetIds?: readonly RenderPresetId[] | null;
+  /**
+   * Work already in flight, keyed "<slug>::<presetId>". Passed in rather than
+   * read from the render manager here, so this module stays free of the
+   * server's queue: the API route supplies the live map, and the CLI — a
+   * separate process that knows nothing of a running server — supplies nothing.
    */
   readonly inFlight?: ReadonlyMap<string, "queued" | "active">;
 };
 
-/**
- * Normalises the request: validates every slug and preset, drops duplicates,
- * and fixes the order.
- *
- * Tracks keep the order asked for, formats always take canonical preset order.
- * That makes the queue deterministic regardless of how the request was written,
- * so the same request twice produces the same plan.
- */
-const normalise = ({
-  slugs,
-  presetIds,
-}: PlanMissingExportsInput): {
-  readonly slugs: readonly string[];
-  readonly presets: readonly { id: RenderPresetId; label: string }[];
-} => {
+/** Validates and de-duplicates named tracks, keeping the order asked for. */
+const namedSlugs = (slugs: readonly string[]): readonly string[] => {
   if (slugs.length === 0) {
     throw new TrackError(
       trackIssue("INVALID_REQUEST", "Name at least one track to export."),
     );
+  }
+
+  const seen = new Set<string>();
+  const unique: string[] = [];
+
+  for (const slug of slugs) {
+    const valid = assertValidSlug(slug);
+    if (!seen.has(valid)) {
+      seen.add(valid);
+      unique.push(valid);
+    }
+  }
+
+  return unique;
+};
+
+/**
+ * The formats named by the caller, or null to mean "use each track's intent".
+ *
+ * Always returned in canonical preset order, so the queue is deterministic
+ * regardless of how the request was written.
+ */
+const requestedPresets = (
+  presetIds: readonly RenderPresetId[] | null | undefined,
+): readonly RenderPresetId[] | null => {
+  if (presetIds === undefined || presetIds === null) {
+    return null;
   }
 
   if (presetIds.length === 0) {
@@ -85,41 +123,31 @@ const normalise = ({
     );
   }
 
-  const validated = presetIds.map((id) => assertRenderPresetId(id));
-  const wanted = new Set<RenderPresetId>(validated);
-
-  const seen = new Set<string>();
-  const uniqueSlugs: string[] = [];
-  for (const slug of slugs) {
-    const valid = assertValidSlug(slug);
-    if (!seen.has(valid)) {
-      seen.add(valid);
-      uniqueSlugs.push(valid);
-    }
-  }
-
-  return {
-    slugs: uniqueSlugs,
-    presets: RENDER_PRESET_LIST.filter((preset) => wanted.has(preset.id)).map(
-      (preset) => ({ id: preset.id, label: preset.shortLabel }),
-    ),
-  };
+  return canonicalPresetOrder(presetIds.map((id) => assertRenderPresetId(id)));
 };
 
 export const planMissingExports = async (
   input: PlanMissingExportsInput,
 ): Promise<ExportPlan> => {
-  const { slugs, presets } = normalise(input);
-  const inFlight = input.inFlight ?? renderManager.inFlightTargets();
+  const catalogue = input.slugs === undefined;
+  const override = requestedPresets(input.presetIds);
+  const inFlight = input.inFlight ?? new Map<string, "queued" | "active">();
 
+  // Catalogue mode inspects every track in one pass, in slug order. Named
+  // tracks are inspected individually, in the order they were asked for.
+  const inspections: readonly TrackInspection[] = catalogue
+    ? await listTracks()
+    : await Promise.all(namedSlugs(input.slugs ?? []).map(inspectTrack));
+
+  const intendedTargets: PlannedTarget[] = [];
   const missing: PlannedTarget[] = [];
   const skippedExisting: PlannedTarget[] = [];
   const skippedQueued: PlannedTarget[] = [];
   const skippedActive: PlannedTarget[] = [];
   const invalid: InvalidTrack[] = [];
 
-  for (const slug of slugs) {
-    const inspection = await inspectTrack(slug);
+  for (const inspection of inspections) {
+    const { slug } = inspection;
 
     if (!inspection.facts.trackDirExists) {
       invalid.push({
@@ -142,16 +170,20 @@ export const planMissingExports = async (
       continue;
     }
 
+    const presetIds =
+      override ?? resolveExportPresets(inspection.metadata?.exportPresets);
     const coverage = trackExportCoverage(slug);
 
-    for (const preset of presets) {
-      const facts = coverage.find((entry) => entry.presetId === preset.id);
+    for (const presetId of presetIds) {
+      const facts = coverage.find((entry) => entry.presetId === presetId);
       const target: PlannedTarget = {
         slug,
-        presetId: preset.id,
-        label: preset.label,
+        presetId,
+        label: RENDER_PRESETS[presetId].shortLabel,
         outputLabel: facts?.outputLabel ?? "",
       };
+
+      intendedTargets.push(target);
 
       // Disk first: a finished file is never re-rendered automatically.
       if (facts?.rendered) {
@@ -159,7 +191,7 @@ export const planMissingExports = async (
         continue;
       }
 
-      const state = inFlight.get(`${slug}::${preset.id}`);
+      const state = inFlight.get(`${slug}::${presetId}`);
       if (state === "active") {
         skippedActive.push(target);
         continue;
@@ -173,7 +205,16 @@ export const planMissingExports = async (
     }
   }
 
-  return { missing, skippedExisting, skippedQueued, skippedActive, invalid };
+  return {
+    catalogue,
+    tracks: inspections.length,
+    intendedTargets,
+    missing,
+    skippedExisting,
+    skippedQueued,
+    skippedActive,
+    invalid,
+  };
 };
 
 /** The plan's missing targets, in the shape startBatch takes. */
@@ -184,7 +225,3 @@ export const toRenderTargets = (
     slug: target.slug,
     preset: target.presetId,
   }));
-
-/** Every format, for a caller that did not narrow the request. */
-export const allPresetIds = (): readonly RenderPresetId[] =>
-  RENDER_PRESET_LIST.map((preset) => RENDER_PRESETS[preset.id].id);

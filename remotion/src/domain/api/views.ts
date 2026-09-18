@@ -362,11 +362,25 @@ export type InvalidTrackView = {
   readonly reason: string;
 };
 
-/** POST /api/export-missing request body. */
+/**
+ * POST /api/export-missing request body.
+ *
+ * Exactly one of `tracks` and `catalogue` picks what to cover, and `presets`
+ * picks the formats. Requiring `catalogue` to be stated outright — rather than
+ * reading an absent `tracks` as "everything" — means a malformed request can
+ * never queue the whole catalogue by accident.
+ */
 export type ExportMissingBody = {
-  readonly tracks: readonly string[];
-  /** Formats to cover. Omitted means every format. */
-  readonly presets?: readonly RenderPresetId[];
+  /** Tracks to cover. Mutually exclusive with `catalogue`. */
+  readonly tracks?: readonly string[];
+  /** Cover every track under public/tracks/. */
+  readonly catalogue?: boolean;
+  /**
+   * Formats to cover, overriding each track's declared intent for this
+   * request. Omitted means use what each track's metadata declares — which for
+   * a track that declares nothing is every format, as it always was.
+   */
+  readonly presets?: readonly RenderPresetId[] | null;
   /** Report the plan without queueing anything. */
   readonly dryRun?: boolean;
 };
@@ -380,10 +394,20 @@ export type ExportMissingBody = {
  * `missing` otherwise. The three `skipped*` lists say why the rest needed no
  * work: the file already exists, a render is already waiting, or one is running
  * now.
+ *
+ * `intendedTargets` is every export these tracks are meant to ship, whatever
+ * its state — so it is the sum of `missing` and the three `skipped*` lists, and
+ * it is what "21 intended exports" in a summary counts.
  */
 export type ExportMissingView = {
   readonly batchId: string | null;
   readonly dryRun: boolean;
+  /** True when the plan covered the whole catalogue rather than named tracks. */
+  readonly catalogue: boolean;
+  /** How many tracks were considered, renderable or not. */
+  readonly tracks: number;
+  /** Every export these tracks intend, in whatever state. */
+  readonly intendedTargets: readonly PlannedTargetView[];
   /** Exports that do not exist yet and are not already on their way. */
   readonly missing: readonly PlannedTargetView[];
   /** Exports actually enqueued by this call; empty on a dry run. */

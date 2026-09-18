@@ -1,20 +1,46 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type {
-  ExportMissingView,
-  PlannedTargetView,
-} from "../../src/domain/api/views.ts";
+import type { ExportMissingView } from "../../src/domain/api/views.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
-import {
-  allPresetIds,
-  planMissingExports,
-  toRenderTargets,
-} from "../services/exportPlan.ts";
+import { planMissingExports, toRenderTargets } from "../services/exportPlan.ts";
 import { renderManager } from "../services/renderManager.ts";
 
-const readSlugs = (body: Record<string, unknown>): readonly string[] => {
-  const { tracks } = body;
+/**
+ * Which tracks to cover: the ones named, or every one of them.
+ *
+ * Returning undefined means the catalogue. That has to be asked for outright,
+ * so a request that simply forgot its `tracks` array is an error rather than a
+ * catalogue-wide queue.
+ */
+const readSlugs = (
+  body: Record<string, unknown>,
+): readonly string[] | undefined => {
+  const { tracks, catalogue } = body;
+  const wantsCatalogue = catalogue === true;
+
+  if (tracks === undefined || tracks === null) {
+    if (wantsCatalogue) {
+      return undefined;
+    }
+
+    throw new TrackError(
+      trackIssue(
+        "INVALID_REQUEST",
+        'Provide a non-empty "tracks" array, e.g. {"tracks":["ghetto-geek"]}, ' +
+          'or {"catalogue":true} to cover every track.',
+      ),
+    );
+  }
+
+  if (wantsCatalogue) {
+    throw new TrackError(
+      trackIssue(
+        "INVALID_REQUEST",
+        'Provide either "tracks" or "catalogue", not both.',
+      ),
+    );
+  }
 
   if (!Array.isArray(tracks) || tracks.length === 0) {
     throw new TrackError(
@@ -35,19 +61,26 @@ const readSlugs = (body: Record<string, unknown>): readonly string[] => {
   });
 };
 
-const readPresets = (body: Record<string, unknown>): readonly RenderPresetId[] => {
+/**
+ * Formats named by the caller, or null to use each track's declared intent.
+ *
+ * Omitting them is the ordinary case now: "export what's missing" means what
+ * each track says it ships in, which may differ from track to track.
+ */
+const readPresets = (
+  body: Record<string, unknown>,
+): readonly RenderPresetId[] | null => {
   const { presets } = body;
 
-  // Omitted means "every format" — the common case for "export what's missing".
   if (presets === undefined || presets === null) {
-    return allPresetIds();
+    return null;
   }
 
   if (!Array.isArray(presets) || presets.length === 0) {
     throw new TrackError(
       trackIssue(
         "INVALID_REQUEST",
-        '"presets" must be a non-empty array when provided.',
+        '"presets" must be a non-empty array when provided, or left out to use each track\'s own formats.',
       ),
     );
   }
@@ -76,21 +109,27 @@ export const handleExportMissing = async (
   const plan = await planMissingExports({
     slugs: readSlugs(body),
     presetIds: readPresets(body),
+    inFlight: renderManager.inFlightTargets(),
   });
 
-  const toView = (targets: readonly PlannedTargetView[]) => targets;
+  const common = {
+    catalogue: plan.catalogue,
+    tracks: plan.tracks,
+    intendedTargets: plan.intendedTargets,
+    // Reported even on a dry run — that is the point of previewing.
+    missing: plan.missing,
+    skippedExisting: plan.skippedExisting,
+    skippedQueued: plan.skippedQueued,
+    skippedActive: plan.skippedActive,
+    invalid: plan.invalid,
+  };
 
   if (dryRun || plan.missing.length === 0) {
     const payload: ExportMissingView = {
+      ...common,
       batchId: null,
       dryRun,
-      // Reported even on a dry run — that is the point of previewing.
-      missing: toView(plan.missing),
       queued: [],
-      skippedExisting: toView(plan.skippedExisting),
-      skippedQueued: toView(plan.skippedQueued),
-      skippedActive: toView(plan.skippedActive),
-      invalid: plan.invalid,
       nothingToDo: plan.missing.length === 0,
     };
 
@@ -101,14 +140,10 @@ export const handleExportMissing = async (
   const { batch } = renderManager.startBatch(toRenderTargets(plan));
 
   const payload: ExportMissingView = {
+    ...common,
     batchId: batch.id,
     dryRun: false,
-    missing: toView(plan.missing),
-    queued: toView(plan.missing),
-    skippedExisting: toView(plan.skippedExisting),
-    skippedQueued: toView(plan.skippedQueued),
-    skippedActive: toView(plan.skippedActive),
-    invalid: plan.invalid,
+    queued: plan.missing,
     nothingToDo: false,
   };
 
