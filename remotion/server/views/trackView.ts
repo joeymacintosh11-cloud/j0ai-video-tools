@@ -9,6 +9,7 @@ import {
   resolveExportPresets,
 } from "../../src/domain/video/renderPresets.ts";
 import { deliveryStateForTarget } from "../../services/delivery/deliverExport.ts";
+import { releaseBundleStateFor } from "../../services/delivery/releaseBundle.ts";
 import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
 import {
   trackLocations,
@@ -46,6 +47,9 @@ export const toTrackSummaryView = (
     inspection.metadataDraft?.exportPresets ??
     null;
   const intended = new Set(resolveExportPresets(declared));
+  // Computed once and shared with the release bundle status below, which needs
+  // exactly the same facts; reading manifests twice per track would be waste.
+  const coverage = trackExportCoverage(inspection.slug, inspection.metadata);
   const deliveryFolder =
     inspection.metadata?.deliveryFolder ??
     inspection.metadataDraft?.deliveryFolder ??
@@ -66,7 +70,7 @@ export const toTrackSummaryView = (
     analysisPresent: inspection.facts.analysisExists,
     analysisUpToDate: inspection.facts.analysisUpToDate,
     renderPresent: inspection.facts.outputExists,
-    exports: trackExportCoverage(inspection.slug, inspection.metadata).map(
+    exports: coverage.map(
       (facts) => {
         const state = inFlight.get(`${inspection.slug}::${facts.presetId}`);
 
@@ -104,6 +108,23 @@ export const toTrackSummaryView = (
     ),
     exportPresets: declared,
     deliveryFolder,
+    releaseBundle: (() => {
+      const state = releaseBundleStateFor(
+        inspection,
+        inspection.metadata === null ? null : deliveryRoot,
+        coverage,
+      );
+
+      return {
+        freshness: state.freshness,
+        relativePath: state.relativePath,
+        generatedAt: state.generatedAt,
+        delivered: state.delivered,
+        outdated: state.outdated,
+        missing: state.missing,
+        problem: state.problem,
+      };
+    })(),
   };
 };
 

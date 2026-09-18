@@ -7,6 +7,7 @@ import type {
   DeliveryReason,
   DeliveryStatus,
 } from "../delivery/deliveryPaths.ts";
+import type { ReleaseBundleFreshness } from "../delivery/releaseBundle.ts";
 import type { TrackErrorCode, TrackIssue } from "../tracks/errors.ts";
 import type {
   TrackMetadata,
@@ -101,6 +102,12 @@ export type TrackSummaryView = {
    * falls back to its slug. A portable folder name, never a machine path.
    */
   readonly deliveryFolder: string | null;
+  /**
+   * Whether this track's release bundle still describes what it shipped.
+   * Reported here rather than from a separate endpoint, since it is derived
+   * from state this view already gathers.
+   */
+  readonly releaseBundle: ReleaseBundleStatusView;
 };
 
 /** GET /api/tracks/:slug, and the response to create/metadata updates. */
@@ -593,6 +600,74 @@ export type DeliveryRevealBody = {
 
 export type DeliveryRevealView = {
   readonly revealedPath: string;
+};
+
+/* ------------------------------------------------------------------ *
+ * Release bundles
+ * ------------------------------------------------------------------ */
+
+/**
+ * Whether a track's release bundle still describes what it has shipped.
+ *
+ * Folded into the track views rather than given its own endpoint, so the UI
+ * gets it with data it already fetches. Counts are of the track's *intended*
+ * formats, so they say how complete the release is.
+ */
+export type ReleaseBundleStatusView = {
+  readonly freshness: ReleaseBundleFreshness;
+  /** Portable location, e.g. "Ghetto Geek/release.json". Null when off. */
+  readonly relativePath: string | null;
+  /** When the bundle on disk was written, if there is one. */
+  readonly generatedAt: string | null;
+  readonly delivered: number;
+  readonly outdated: number;
+  readonly missing: number;
+  /** Why no bundle can be described for this track at all. */
+  readonly problem: string | null;
+};
+
+/** One track in a release bundle plan. */
+export type ReleaseBundleTrackView = ReleaseBundleStatusView & {
+  readonly slug: string;
+};
+
+/** What one generation attempt did. */
+export type ReleaseBundleResultView = ReleaseBundleTrackView & {
+  readonly generated: boolean;
+};
+
+/**
+ * POST /api/release-bundles request body.
+ *
+ * Mirrors the delivery endpoints: name tracks, or ask for the catalogue
+ * outright. No path is accepted — bundles are written into each track's own
+ * destination folder, which the server resolves from stored settings.
+ */
+export type ReleaseBundleBody = {
+  readonly tracks?: readonly string[];
+  readonly catalogue?: boolean;
+  /** Report what would be written without writing anything. */
+  readonly dryRun?: boolean;
+  /** Rewrite bundles that are already current. */
+  readonly force?: boolean;
+};
+
+/** POST /api/release-bundles */
+export type ReleaseBundlesView = {
+  readonly dryRun: boolean;
+  readonly catalogue: boolean;
+  readonly tracks: number;
+  readonly root: string | null;
+  readonly rootProblem: string | null;
+  readonly current: readonly ReleaseBundleTrackView[];
+  readonly outdated: readonly ReleaseBundleTrackView[];
+  readonly missing: readonly ReleaseBundleTrackView[];
+  /** Tracks with no destination, or that cannot be described. */
+  readonly unavailable: readonly ReleaseBundleTrackView[];
+  /** Results of what this call wrote; empty on a dry run. */
+  readonly generated: readonly ReleaseBundleResultView[];
+  /** True when every bundle in scope is already current. */
+  readonly nothingToDo: boolean;
 };
 
 /** GET /api/renders/:jobId/logs */

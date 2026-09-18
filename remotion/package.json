@@ -44,6 +44,8 @@
     "render-locks": "node scripts/render-locks.mts",
     "deliver-track": "node scripts/deliver.mts",
     "deliver-catalogue": "node scripts/deliver.mts --all-tracks",
+    "release-bundle": "node scripts/release-bundle.mts",
+    "release-bundles": "node scripts/release-bundle.mts --all-tracks",
     "test": "node --test tests/*.test.mts",
     "render-all-formats": "node scripts/render-track.mts --all-formats"
   }

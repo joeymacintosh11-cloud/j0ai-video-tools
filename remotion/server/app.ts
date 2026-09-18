@@ -10,6 +10,7 @@ import {
   handleUpdateDeliverySettings,
 } from "./routes/delivery.ts";
 import { handleExportMissing } from "./routes/exportMissing.ts";
+import { handleReleaseBundles } from "./routes/releaseBundles.ts";
 import {
   handleBatchEvents,
   handleCancelBatch,
@@ -158,6 +159,15 @@ const route = async (
       return;
     }
 
+    sendNotFound(response, "Endpoint");
+    return;
+  }
+
+  if (collection === "release-bundles" && segments.length === 2) {
+    if (method === "POST") {
+      await handleReleaseBundles(request, response);
+      return;
+    }
     sendNotFound(response, "Endpoint");
     return;
   }
