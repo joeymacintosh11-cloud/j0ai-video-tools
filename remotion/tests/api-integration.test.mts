@@ -177,3 +177,91 @@ test("disk failure responds even while the HTTP uploader is waiting to send more
   assert.match(await response, /500 Internal Server Error/);
   assert.deepEqual(await tempFiles(f.trackDir), []);
 });
+
+test("export-missing plans from intent, and says what it will not guess", async (t) => {
+  const f = await fixture(t, { exportPresets: ["youtube-16x9"] });
+  await fs.writeFile(f.cover, "placeholder");
+  await fs.writeFile(f.beat, "placeholder");
+  const { base } = await api(t);
+
+  const post = async (body: unknown) => {
+    const response = await fetch(`${base}/api/export-missing`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, body: await response.json() };
+  };
+
+  // No presets named: the track's own exportPresets decide. Nothing is queued,
+  // because this is a dry run.
+  const intent = await post({ tracks: [f.slug], dryRun: true });
+  assert.equal(intent.status, 200);
+  assert.deepEqual(
+    intent.body.data.missing.map((target: { presetId: string }) => target.presetId),
+    ["youtube-16x9"],
+  );
+  assert.equal(intent.body.data.batchId, null);
+  assert.equal(intent.body.data.catalogue, false);
+  assert.equal(intent.body.data.intendedTargets.length, 1);
+
+  // Named presets override that intent for this request.
+  const override = await post({
+    tracks: [f.slug],
+    presets: ["square-1x1"],
+    dryRun: true,
+  });
+  assert.deepEqual(
+    override.body.data.missing.map((target: { presetId: string }) => target.presetId),
+    ["square-1x1"],
+  );
+
+  // The catalogue has to be asked for outright, and cannot be combined.
+  const catalogue = await post({ catalogue: true, dryRun: true });
+  assert.equal(catalogue.body.data.catalogue, true);
+  assert.ok(catalogue.body.data.tracks >= 1);
+
+  const neither = await post({ dryRun: true });
+  assert.equal(neither.status, 400);
+  assert.equal(neither.body.error.code, "INVALID_REQUEST");
+
+  const both = await post({ tracks: [f.slug], catalogue: true, dryRun: true });
+  assert.equal(both.body.ok, false);
+  assert.match(both.body.error.message, /not both/);
+});
+
+test("the track view separates what a track intends from what it has", async (t) => {
+  const f = await fixture(t, { exportPresets: ["vertical-9x16"] });
+  const { base } = await api(t);
+
+  const track = (await (await fetch(`${base}/api/tracks/${f.slug}`)).json()).data;
+
+  assert.deepEqual(track.exportPresets, ["vertical-9x16"]);
+  assert.deepEqual(
+    track.exports.map((output: { presetId: string; intended: boolean }) => [
+      output.presetId,
+      output.intended,
+    ]),
+    [
+      ["youtube-16x9", false],
+      ["vertical-9x16", true],
+      ["square-1x1", false],
+    ],
+  );
+  assert.equal(
+    track.exports.every((output: { present: boolean }) => !output.present),
+    true,
+    "intending a format is not the same as having rendered it",
+  );
+
+  // A track that declares nothing reports null, not an invented list, while
+  // every format still counts as intended.
+  const plain = await fixture(t);
+  const other = (await (await fetch(`${base}/api/tracks/${plain.slug}`)).json()).data;
+
+  assert.equal(other.exportPresets, null);
+  assert.equal(
+    other.exports.every((output: { intended: boolean }) => output.intended),
+    true,
+  );
+});

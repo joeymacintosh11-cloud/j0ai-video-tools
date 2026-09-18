@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  planMissingExports,
+  toRenderTargets,
+} from "../server/services/exportPlan.ts";
+import {
   renderedPresetIds,
   trackExportCoverage,
 } from "../services/tracks/exportCoverage.ts";
@@ -13,22 +17,14 @@ import type { TestContext } from "node:test";
 /**
  * Export coverage and the missing-export planner.
  *
- * Queue state is handed to the planner rather than taken from the render
- * manager singleton, so these tests never fork a render process to describe
- * what is supposedly running.
+ * Queue state is handed to the planner rather than read from the render
+ * manager, so these tests never fork a render process to describe what is
+ * supposedly running.
+ *
+ * Catalogue runs see every track under public/tracks/, which includes real
+ * tracks and any fixture another test file happens to be holding, so the
+ * assertions here are scoped to each test's own slugs rather than to totals.
  */
-
-const planner = async (t: TestContext) => {
-  const { randomUUID } = await import("node:crypto");
-  const suffix = randomUUID();
-
-  const plan = (await import(
-    new URL(`../server/services/exportPlan.ts?t=${suffix}`, import.meta.url).href
-  )) as typeof import("../server/services/exportPlan.ts");
-  t.after(() => undefined);
-
-  return { plan };
-};
 
 /**
  * A fixture track that passes validation.
@@ -38,14 +34,26 @@ const planner = async (t: TestContext) => {
  * that could be rendered, so the asset files are added here. Their contents do
  * not matter: nothing in the planner reads them.
  */
-const renderableFixture = async (t: TestContext) => {
-  const f = await fixture(t);
+const renderableFixture = async (
+  t: TestContext,
+  extra: Record<string, unknown> = {},
+) => {
+  const f = await fixture(t, extra);
 
   await writeFile(f.cover, "placeholder");
   await writeFile(f.beat, "placeholder");
 
   return f;
 };
+
+/** Only the targets belonging to these tracks, as "slug/preset" strings. */
+const targetsFor = (
+  targets: readonly { slug: string; presetId: string }[],
+  slugs: readonly string[],
+): readonly string[] =>
+  targets
+    .filter((target) => slugs.includes(target.slug))
+    .map((target) => `${target.slug}/${target.presetId}`);
 
 /** Writes a fake export so coverage sees it, without rendering anything. */
 const writeOutput = async (slug: string, presetId: string, bytes: number) => {
@@ -108,11 +116,10 @@ test("a zero-byte output is a broken leftover, not an export", async (t) => {
 test("only the formats that are missing are planned", async (t) => {
   const f = await renderableFixture(t);
   cleanOutputs(t, f.slug);
-  const { plan } = await planner(t);
 
   await writeOutput(f.slug, "youtube-16x9", 1024);
 
-  const result = await plan.planMissingExports({
+  const result = await planMissingExports({
     slugs: [f.slug],
     presetIds: [...RENDER_PRESET_IDS],
   });
@@ -131,11 +138,10 @@ test("only the formats that are missing are planned", async (t) => {
 test("an empty output is planned again, so a broken render gets remade", async (t) => {
   const f = await renderableFixture(t);
   cleanOutputs(t, f.slug);
-  const { plan } = await planner(t);
 
   await writeOutput(f.slug, "youtube-16x9", 0);
 
-  const result = await plan.planMissingExports({
+  const result = await planMissingExports({
     slugs: [f.slug],
     presetIds: ["youtube-16x9"],
   });
@@ -149,13 +155,12 @@ test("an empty output is planned again, so a broken render gets remade", async (
 test("nothing is planned when every requested export exists", async (t) => {
   const f = await renderableFixture(t);
   cleanOutputs(t, f.slug);
-  const { plan } = await planner(t);
 
   for (const presetId of RENDER_PRESET_IDS) {
     await writeOutput(f.slug, presetId, 512);
   }
 
-  const result = await plan.planMissingExports({
+  const result = await planMissingExports({
     slugs: [f.slug],
     presetIds: [...RENDER_PRESET_IDS],
   });
@@ -167,7 +172,6 @@ test("nothing is planned when every requested export exists", async (t) => {
 test("queued and running targets are skipped, and reported apart", async (t) => {
   const f = await renderableFixture(t);
   cleanOutputs(t, f.slug);
-  const { plan } = await planner(t);
 
   // Describing the queue directly, rather than starting real renders: the
   // point here is how the plan reads in-flight work, not how forking behaves.
@@ -176,7 +180,7 @@ test("queued and running targets are skipped, and reported apart", async (t) => 
     [`${f.slug}::vertical-9x16`, "queued"],
   ]);
 
-  const result = await plan.planMissingExports({
+  const result = await planMissingExports({
     slugs: [f.slug],
     presetIds: [...RENDER_PRESET_IDS],
     inFlight,
@@ -200,12 +204,11 @@ test("queued and running targets are skipped, and reported apart", async (t) => 
 test("an unrenderable track is reported once, not once per format", async (t) => {
   const f = await renderableFixture(t);
   cleanOutputs(t, f.slug);
-  const { plan } = await planner(t);
 
   // Break the metadata so validation fails.
   await writeFile(f.metadata, "{ not json");
 
-  const result = await plan.planMissingExports({
+  const result = await planMissingExports({
     slugs: [f.slug],
     presetIds: [...RENDER_PRESET_IDS],
   });
@@ -216,10 +219,9 @@ test("an unrenderable track is reported once, not once per format", async (t) =>
   assert.deepEqual(result.missing, []);
 });
 
-test("a track that does not exist is reported as not found", async (t) => {
-  const { plan } = await planner(t);
+test("a track that does not exist is reported as not found", async () => {
 
-  const result = await plan.planMissingExports({
+  const result = await planMissingExports({
     slugs: ["definitely-not-a-track"],
     presetIds: ["youtube-16x9"],
   });
@@ -238,9 +240,8 @@ test("ordering is deterministic: tracks as given, formats canonical", async (t) 
   const b = await renderableFixture(t);
   cleanOutputs(t, a.slug);
   cleanOutputs(t, b.slug);
-  const { plan } = await planner(t);
 
-  const result = await plan.planMissingExports({
+  const result = await planMissingExports({
     slugs: [b.slug, a.slug],
     // Deliberately out of canonical order, and with a duplicate.
     presetIds: ["square-1x1", "youtube-16x9", "square-1x1"],
@@ -260,9 +261,8 @@ test("ordering is deterministic: tracks as given, formats canonical", async (t) 
 test("a repeated track is planned once", async (t) => {
   const f = await renderableFixture(t);
   cleanOutputs(t, f.slug);
-  const { plan } = await planner(t);
 
-  const result = await plan.planMissingExports({
+  const result = await planMissingExports({
     slugs: [f.slug, f.slug],
     presetIds: ["youtube-16x9"],
   });
@@ -272,19 +272,18 @@ test("a repeated track is planned once", async (t) => {
 
 test("empty input and unknown formats are refused", async (t) => {
   const f = await renderableFixture(t);
-  const { plan } = await planner(t);
 
   await assert.rejects(
-    () => plan.planMissingExports({ slugs: [], presetIds: ["youtube-16x9"] }),
+    () => planMissingExports({ slugs: [], presetIds: ["youtube-16x9"] }),
     { code: "INVALID_REQUEST" },
   );
   await assert.rejects(
-    () => plan.planMissingExports({ slugs: [f.slug], presetIds: [] }),
+    () => planMissingExports({ slugs: [f.slug], presetIds: [] }),
     { code: "INVALID_REQUEST" },
   );
   await assert.rejects(
     () =>
-      plan.planMissingExports({
+      planMissingExports({
         slugs: [f.slug],
         presetIds: ["tiktok" as never],
       }),
@@ -292,7 +291,7 @@ test("empty input and unknown formats are refused", async (t) => {
   );
   await assert.rejects(
     () =>
-      plan.planMissingExports({ slugs: ["../etc"], presetIds: ["square-1x1"] }),
+      planMissingExports({ slugs: ["../etc"], presetIds: ["square-1x1"] }),
     { code: "INVALID_SLUG" },
   );
 });
@@ -300,15 +299,145 @@ test("empty input and unknown formats are refused", async (t) => {
 test("the plan converts straight into batch targets", async (t) => {
   const f = await renderableFixture(t);
   cleanOutputs(t, f.slug);
-  const { plan } = await planner(t);
 
-  const result = await plan.planMissingExports({
+  const result = await planMissingExports({
     slugs: [f.slug],
     presetIds: ["youtube-16x9", "square-1x1"],
   });
 
-  assert.deepEqual(plan.toRenderTargets(result), [
+  assert.deepEqual(toRenderTargets(result), [
     { slug: f.slug, preset: "youtube-16x9" },
     { slug: f.slug, preset: "square-1x1" },
   ]);
+});
+
+/* ------------------------------------------------------------------ *
+ * Declared intent
+ * ------------------------------------------------------------------ */
+
+test("with no formats named, each track's own intent decides", async (t) => {
+  const a = await renderableFixture(t, { exportPresets: ["youtube-16x9"] });
+  const b = await renderableFixture(t, {
+    exportPresets: ["youtube-16x9", "vertical-9x16"],
+  });
+  cleanOutputs(t, a.slug);
+  cleanOutputs(t, b.slug);
+
+  const result = await planMissingExports({ slugs: [a.slug, b.slug] });
+
+  assert.deepEqual(targetsFor(result.missing, [a.slug, b.slug]), [
+    `${a.slug}/youtube-16x9`,
+    `${b.slug}/youtube-16x9`,
+    `${b.slug}/vertical-9x16`,
+  ]);
+  assert.deepEqual(
+    result.intendedTargets.map((target) => target.presetId),
+    ["youtube-16x9", "youtube-16x9", "vertical-9x16"],
+    "intent is per track, never flattened into one list for all of them",
+  );
+});
+
+test("named formats override intent for the request", async (t) => {
+  const f = await renderableFixture(t, { exportPresets: ["youtube-16x9"] });
+  cleanOutputs(t, f.slug);
+
+  const result = await planMissingExports({
+    slugs: [f.slug],
+    presetIds: ["square-1x1"],
+  });
+
+  assert.deepEqual(targetsFor(result.missing, [f.slug]), [
+    `${f.slug}/square-1x1`,
+  ]);
+});
+
+test("a track declaring nothing still means every format", async (t) => {
+  const f = await renderableFixture(t);
+  cleanOutputs(t, f.slug);
+
+  const result = await planMissingExports({ slugs: [f.slug] });
+
+  assert.deepEqual(
+    result.missing.map((target) => target.presetId),
+    [...RENDER_PRESET_IDS],
+    "undeclared behaves exactly as it did before intent existed",
+  );
+});
+
+test("an export outside a track's intent is left alone", async (t) => {
+  const f = await renderableFixture(t, { exportPresets: ["youtube-16x9"] });
+  cleanOutputs(t, f.slug);
+
+  await writeOutput(f.slug, "youtube-16x9", 1024);
+
+  const result = await planMissingExports({ slugs: [f.slug] });
+
+  assert.deepEqual(result.missing, []);
+  assert.deepEqual(
+    result.skippedExisting.map((target) => target.presetId),
+    ["youtube-16x9"],
+  );
+  assert.equal(
+    result.intendedTargets.length,
+    1,
+    "the two formats this track does not ship in are not planned at all",
+  );
+});
+
+test("the catalogue covers every track, each on its own intent", async (t) => {
+  const a = await renderableFixture(t, { exportPresets: ["square-1x1"] });
+  const b = await renderableFixture(t, {
+    exportPresets: ["youtube-16x9", "square-1x1"],
+  });
+  cleanOutputs(t, a.slug);
+  cleanOutputs(t, b.slug);
+
+  await writeOutput(b.slug, "youtube-16x9", 2048);
+
+  const result = await planMissingExports({});
+
+  assert.equal(result.catalogue, true);
+  assert.ok(result.tracks >= 2, "every track folder was considered");
+  // A catalogue run is ordered by slug, not by the order tracks were made —
+  // fixture slugs are random, so sorting is what states that contract.
+  assert.deepEqual(
+    targetsFor(result.missing, [a.slug, b.slug]),
+    [`${a.slug}/square-1x1`, `${b.slug}/square-1x1`].sort(),
+  );
+  assert.deepEqual(targetsFor(result.skippedExisting, [b.slug]), [
+    `${b.slug}/youtube-16x9`,
+  ]);
+});
+
+test("a catalogue with nothing missing plans nothing", async (t) => {
+  const f = await renderableFixture(t, { exportPresets: ["vertical-9x16"] });
+  cleanOutputs(t, f.slug);
+
+  await writeOutput(f.slug, "vertical-9x16", 512);
+
+  const result = await planMissingExports({
+    slugs: [f.slug],
+    presetIds: null,
+  });
+
+  assert.deepEqual(result.missing, []);
+  assert.equal(result.intendedTargets.length, 1);
+});
+
+test("an unrenderable track is reported once however many formats it wants", async (t) => {
+  const f = await fixture(t, {
+    exportPresets: ["youtube-16x9", "vertical-9x16", "square-1x1"],
+  });
+  cleanOutputs(t, f.slug);
+
+  const result = await planMissingExports({ slugs: [f.slug] });
+
+  assert.equal(result.invalid.length, 1);
+  assert.deepEqual(result.intendedTargets, []);
+});
+
+test("the catalogue is not something an empty track list can ask for", async () => {
+  await assert.rejects(() => planMissingExports({ slugs: [] }), {
+    code: "INVALID_REQUEST",
+  });
 });
