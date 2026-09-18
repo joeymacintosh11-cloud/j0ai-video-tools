@@ -1514,8 +1514,8 @@ rather than producing one doomed job per format.
 take canonical preset order, and duplicate tracks and formats are collapsed. The
 same request twice yields the same plan.
 
-Queue state is an optional `inFlight` parameter defaulting to the render
-manager, so a test can describe a queue without forking real render processes.
+Queue state is an optional `inFlight` parameter. **Superseded in §37**: it no
+longer defaults to the render manager, and the planner no longer imports it.
 
 ### 36.3 API
 
@@ -1524,9 +1524,10 @@ POST /api/export-missing
 { "tracks": ["ghetto-geek"], "presets": ["youtube-16x9"], "dryRun": true }
 ```
 
-`presets` may be omitted to mean **every** format. The response carries
-`missing`, `queued`, the three `skipped*` lists, `invalid`, `batchId` and
-`nothingToDo`.
+`presets` may be omitted to mean **every** format. **Superseded in §37**:
+omitting it now means each track's own declared intent, which for a track that
+declares nothing is still every format. The response carries `missing`,
+`queued`, the three `skipped*` lists, `invalid`, `batchId` and `nothingToDo`.
 
 Two details worth keeping:
 
@@ -1629,12 +1630,210 @@ and the only composition change was proven pixel-identical at frame level.
 
 ### 36.10 Recommended next step
 
-**Per-track export presets** — remembering which formats a given track is meant
-to ship in, stored in its `metadata.json`, so "export missing" knows that one
-track is YouTube-only while another needs all three. Everything needed is in
-place: coverage is per format, the planner already takes a format list, and
-metadata already has a validated read/write path with conditional saves. It
-would remove the last piece of manual selection from a catalogue workflow.
+**Per-track export presets.** Built — see §37, which supersedes parts of this
+section (the planner's signature and the `/api/export-missing` contract both
+changed).
+
+
+---
+
+## 37. Current State — Per-Track Export Presets and the Catalogue Workflow
+
+The newest layer. Read this after §36; where the two disagree, this wins.
+
+The workflow this completes: **new beat → choose its formats once → save →
+Export missing → only the intended missing outputs are queued.**
+
+### 37.1 The `exportPresets` metadata field
+
+```json
+{
+  "title": "Ghetto Geek",
+  "artist": "Toshi",
+  "key": "F Minor",
+  "bpm": 100,
+  "subtitle": "Boom bap soul, trap bounce and latin heat.",
+  "exportPresets": ["youtube-16x9", "vertical-9x16"]
+}
+```
+
+Optional, and written last. Every id is validated against
+`src/domain/video/renderPresets.ts` — **there is no second list of format
+strings anywhere**, in the metadata layer, the API, the planner, the CLI or the
+UI. The helpers live with the registry itself:
+
+| helper | job |
+|---|---|
+| `parseExportPresetList` | strict read; collects *every* problem, does not throw |
+| `coerceExportPresetList` | best-effort read for prefilling an editor |
+| `canonicalPresetOrder` | canonical order, duplicates dropped |
+| `resolveExportPresets` | declared list, or every format when undeclared |
+
+Rules, all enforced before anything is written:
+
+- unknown id → `METADATA_INVALID` naming the ids that do exist
+- repeated id → `METADATA_INVALID` (not silently collapsed)
+- empty array → refused; leaving the field out is how you say "undeclared"
+- not an array → refused
+- saved in **canonical preset order**, so files do not churn on rewrite
+
+### 37.2 Backwards compatibility — the decision that matters
+
+**Absent `exportPresets` means every supported format.**
+
+That is exactly what "export what's missing" meant before intent existed, so:
+
+- every metadata.json already on disk stays valid, unchanged and correct;
+- **nothing is migrated**, at startup or ever (Feature I);
+- Ghetto Geek, which declares nothing, still resolves to all three formats.
+
+The alternative — reading absent as "16:9 only" — was rejected: it would have
+invented an intent the user never expressed *and* quietly narrowed what the
+existing endpoint does.
+
+Normalisation is opt-in and visible: a metadata PATCH writes the field **only
+when it names it**, so editing a title cannot materialise an intent. The UI
+form does send it, and shows the resolved formats ticked with a hint saying so,
+which is how an undeclared track becomes declared — by someone looking at it.
+
+### 37.3 Planning from intent
+
+`planMissingExports({ slugs?, presetIds?, inFlight? })`:
+
+| input | meaning |
+|---|---|
+| `slugs` omitted | **catalogue mode** — every track under `public/tracks/`, slug order |
+| `slugs: []` | an error, never a catalogue |
+| `presetIds` omitted/null | each track's own intent, resolved per track |
+| `presetIds: [...]` | overrides intent for this request |
+
+**Intent is never flattened.** A catalogue run where A ships 16:9 and B ships
+16:9 + vertical plans `A/16:9`, `B/16:9`, `B/vertical` — not three formats for
+both.
+
+Returns the five lists from §36.2 plus `intendedTargets` (every pair intended,
+in whatever state — the sum of `missing` and the three `skipped*`), `tracks`
+and `catalogue`.
+
+`inFlight` is now **always passed in** and defaults to empty; the planner does
+not import the render manager at all. The API route supplies the live map; the
+CLI, a separate process with no view of a running server's queue, supplies
+nothing.
+
+### 37.4 API
+
+```
+POST /api/export-missing
+{ "tracks": ["ghetto-geek"], "dryRun": true }   # this track, its own formats
+{ "catalogue": true, "dryRun": true }           # every track, each its own
+{ "tracks": [...], "presets": ["square-1x1"] }  # override intent
+```
+
+- `tracks` and `catalogue` are **mutually exclusive**, and one is required.
+  The catalogue has to be asked for outright, so a request that merely forgot
+  its `tracks` array is a 400 rather than a catalogue-wide queue.
+- `presets` omitted → per-track intent. Present → overrides it.
+- Response adds `intendedTargets`, `tracks` and `catalogue` to the §36 shape.
+- Nothing missing is still a **successful no-op**: no batch, `batchId: null`,
+  `nothingToDo: true`.
+
+`TrackSummaryView` gained `exportPresets` (the declared list, or `null` when
+undeclared), and each `RenderOutputView` gained `intended`.
+
+### 37.5 UI
+
+- **Metadata editor** — an "Intended exports" row built from the shared preset
+  list, saved through the existing conditional-write path. An undeclared track
+  shows every format ticked and says it is not declared yet.
+- **New track panel** and **`new-track --presets`** — formats chosen at
+  creation, so no one has to hand-edit JSON. Default: `youtube-16x9`.
+- **Intent is displayed apart from coverage** everywhere: the detail panel
+  names the intended formats, and a format the track does not ship in is dimmed
+  with its own mark (`◦`) in the track list, the export row and the file
+  checklist. Marks: `✓` rendered, `●` rendering, `·` queued, `!` empty file,
+  `—` intended but missing, `◦` not intended.
+- **Export missing** (single track and ticked tracks) now uses intent rather
+  than the toolbar formats. The toolbar still drives Render, preview and "Add
+  to render queue". Explicit-format export-missing remains available on the API
+  and CLI.
+- **"Export missing for catalogue"** sits in the toolbar, always available,
+  behind the same two-step dry run. Nothing missing reads "Catalogue is fully
+  exported"; otherwise the summary is the server's own plan:
+  `3 tracks · 7 intended exports · 3 already rendered · 4 missing`.
+
+### 37.6 CLI
+
+```bash
+npm run render-missing -- <slug>              # that track's intended formats
+npm run render-missing -- <slug> --dry-run    # plan only
+npm run render-missing -- <slug> --preset square-1x1   # override
+npm run render-catalogue-missing              # every track, each its own
+npm run render-catalogue-missing -- --dry-run
+npm run new-track -- "Title" --presets youtube-16x9,vertical-9x16
+```
+
+Both commands use **the same planner as the API** — no business logic is
+duplicated in `scripts/`. Renders run one after another, as
+`render-track --all-formats` already did; concurrency is unchanged. A track is
+prepared once and its `analysis.wav` is reused by every format after it.
+
+Every pre-existing command is untouched.
+
+### 37.7 A bug this found
+
+The metadata form never re-seeded after its **own** successful save, so the
+refresh that followed arrived with a changed revision while the form was still
+dirty — the exact shape of an external edit — and the user was warned of a
+conflict with their own change, with the form stuck on "Unsaved changes".
+
+Pre-existing: reproduced against `d66bca7` in a worktree before anything was
+altered. Fixed by seeding from the write's own response, which is the
+authoritative post-write state.
+
+### 37.8 Limitations
+
+- **A catalogue run inspects every track folder.** Fine at this scale
+  (three `stat` calls per track); it has not been tested against hundreds.
+- **The CLI cannot see a running server's queue**, so a render started in the
+  app and one started with `render-missing` can overlap on the same target. The
+  usage text says so. Use one or the other for a given track.
+- **An unknown id in `exportPresets` makes the whole track invalid**, which is
+  consistent with every other malformed field but means the UI form locks and
+  the JSON has to be fixed by hand. The error names the valid ids.
+- Intent does not affect **rendering** — `render-track` still renders whatever
+  format it is asked for, intended or not. Intent decides what is *missing*,
+  not what is *allowed*.
+- The zero-byte health check from §36.1 is unchanged: a truncated but non-empty
+  MP4 still counts as exported.
+
+### 37.9 Verification performed
+
+- Lint, tsc and **97 tests** clean; the full suite run 8 times consecutively.
+- `validate-track`, `prepare-track` and `render-track` usage unchanged, exit 0.
+- Per-track intent proven at planner, API and browser level: A/16:9 +
+  B/16:9 + B/vertical, never flattened.
+- The UI driven in a real browser: undeclared hint, intent marks, catalogue dry
+  run, confirm button, a save that changes intent and lands on disk in
+  canonical order.
+- Optimistic concurrency re-checked with intent in the patch: fresh revision
+  accepted, stale refused with `METADATA_CONFLICT`, invalid ids refused without
+  touching the file.
+- **`render-missing` proven end to end on a real render** — a synthesised
+  3-second probe track declaring `square-1x1` produced a 1080×1080 MP4 with
+  audio, and a second run was a no-op. The probe and its output were removed.
+- **No full render of Ghetto Geek was needed**: `git diff --name-only d66bca7
+  HEAD` shows **no composition or render-pipeline file changed at all**, so the
+  16:9 reference output cannot have moved. Its hash remains
+  `094c36432da2eb824791209145adbf6d`.
+
+### 37.10 Recommended next step
+
+**Export destinations / post-render delivery** — once a track knows which
+formats it ships in, the missing half is where they go: a per-track or global
+output folder (a synced Dropbox/Drive path, a dated release folder), so a
+finished render lands where it is actually used instead of in `out/`. It reuses
+coverage and the planner unchanged and needs no new concepts, only a
+destination in metadata and a copy step after a successful render.
 
 Not started.
 

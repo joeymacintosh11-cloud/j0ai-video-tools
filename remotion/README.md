@@ -22,11 +22,15 @@ Scaffold a track folder from its name:
 
 ```console
 npm run new-track -- "Midnight Rider"
+npm run new-track -- "Midnight Rider" --presets youtube-16x9,vertical-9x16
 ```
 
 This creates `public/tracks/midnight-rider/` with a `metadata.json`
 template and prints the next steps. It refuses to run if that track folder
 already exists — it never overwrites or deletes anything.
+
+`--presets` records which formats the track is meant to ship in; it defaults
+to `youtube-16x9` and is editable later in the app.
 
 A track folder needs exactly these three files:
 
@@ -45,7 +49,8 @@ public/tracks/<track-slug>/
   "artist": "Toshi",
   "key": "F Minor",
   "bpm": 100,
-  "subtitle": "Boom bap soul, trap bounce and latin heat."
+  "subtitle": "Boom bap soul, trap bounce and latin heat.",
+  "exportPresets": ["youtube-16x9", "vertical-9x16"]
 }
 ```
 
@@ -53,6 +58,11 @@ public/tracks/<track-slug>/
 - `bpm` — required positive number
 - `subtitle` — optional string; if present it's shown under the title, if
   omitted the layout simply skips it
+- `exportPresets` — optional list of the formats this track ships in. **Leave
+  it out and every format is assumed**, which is how tracks behaved before the
+  field existed, so nothing needs updating. Unknown or repeated ids are
+  refused, as is an empty list — leaving the field out is how you say "not
+  decided yet".
 
 Toshi's brand assets (logo, icon mark) live once in `public/brand/toshi/` and
 are shared automatically by every track — you never need to duplicate them.
@@ -245,11 +255,16 @@ Each track row shows a mark per format: a tick once the file is on disk, and
 distinct marks for queued, rendering, and a zero-byte file left behind by an
 interrupted render.
 
-**Export missing** queues only the formats a track does not already have. It
-asks first: one click shows the plan — how many are missing, already rendered,
-already queued or invalid — and only the confirm queues anything. If there is
-nothing to do it says so rather than making an empty batch. The same action
-works for every ticked track at once.
+A format the track does not ship in is dimmed with its own mark, so "we are not
+making this one" never reads as "this one is missing".
+
+**Export missing** queues only the formats a track is meant to have and does
+not. It asks first: one click shows the plan — how many are missing, already
+rendered, already queued or invalid — and only the confirm queues anything. If
+there is nothing to do it says so rather than making an empty batch. The same
+action works for every ticked track at once, and **Export missing for
+catalogue** covers every track, each on its own intended formats — a track that
+ships only in 16:9 is never queued for vertical just because another track is.
 
 A finished export is never overwritten automatically. To redo one, delete the
 file and render again. A zero-byte file does not count as an export and will be
@@ -261,15 +276,36 @@ curl -X POST http://127.0.0.1:4600/api/export-missing \
   -H 'content-type: application/json' \
   -d '{"tracks":["ghetto-geek"],"dryRun":true}'
 
-# Queue whatever is missing, in every format
+# Queue whatever is missing, each track in its own intended formats
 curl -X POST http://127.0.0.1:4600/api/export-missing \
   -H 'content-type: application/json' \
   -d '{"tracks":["ghetto-geek","midnight-rider"]}'
+
+# The whole catalogue
+curl -X POST http://127.0.0.1:4600/api/export-missing \
+  -H 'content-type: application/json' \
+  -d '{"catalogue":true,"dryRun":true}'
 ```
 
-Omit `presets` to mean every format. The response reports `missing`, `queued`,
-`skippedExisting`, `skippedQueued`, `skippedActive`, `invalid` and a
+Omit `presets` to use each track's own `exportPresets`; name them to override
+that for one request. `tracks` and `catalogue` are mutually exclusive and one
+is required — the catalogue has to be asked for outright, so a request that
+merely forgot its `tracks` array is an error rather than a catalogue-wide
+queue. The response reports `intendedTargets`, `missing`, `queued`,
+`skippedExisting`, `skippedQueued`, `skippedActive`, `invalid`, `tracks` and a
 `nothingToDo` flag; `queued` is empty on a dry run while `missing` is not.
+
+The same thing from the terminal, which renders directly rather than queueing:
+
+```console
+npm run render-missing -- ghetto-geek --dry-run
+npm run render-missing -- ghetto-geek
+npm run render-catalogue-missing
+```
+
+These use the same planner as the API, and render one format after another. A
+separate process cannot see a running server's queue, so use the app or the
+CLI for a given track, not both at once.
 
 Render job and batch history is kept in memory and bounded — the most recent
 200 jobs and 50 batches — so a long-running server does not grow without limit.
@@ -399,7 +435,7 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | GET | `/api/renders/:jobId/events` | Live progress (Server-Sent Events) |
 | GET | `/api/renders/:jobId/logs` | Recent log lines for the job |
 | POST | `/api/renders/:jobId/cancel` | Cancel a queued or running render |
-| POST | `/api/export-missing` | Queue only the exports a track does not have |
+| POST | `/api/export-missing` | Queue only the exports a track intends and does not have |
 | POST | `/api/render-batches` | Queue many track/format pairs at once |
 | GET | `/api/render-batches` | All batches, newest first |
 | GET | `/api/render-batches/:batchId` | Batch totals, progress and member jobs |
