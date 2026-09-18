@@ -50,6 +50,12 @@ export type ExportPlan = {
 export type PlanMissingExportsInput = {
   readonly slugs: readonly string[];
   readonly presetIds: readonly RenderPresetId[];
+  /**
+   * Work already in flight, keyed "<slug>::<presetId>". Defaults to the render
+   * manager's own view; passed in explicitly by tests, which have no business
+   * spawning render processes just to describe a queue.
+   */
+  readonly inFlight?: ReadonlyMap<string, "queued" | "active">;
 };
 
 /**
@@ -104,7 +110,7 @@ export const planMissingExports = async (
   input: PlanMissingExportsInput,
 ): Promise<ExportPlan> => {
   const { slugs, presets } = normalise(input);
-  const inFlight = renderManager.inFlightTargets();
+  const inFlight = input.inFlight ?? renderManager.inFlightTargets();
 
   const missing: PlannedTarget[] = [];
   const skippedExisting: PlannedTarget[] = [];
