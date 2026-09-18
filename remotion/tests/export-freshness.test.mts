@@ -324,3 +324,52 @@ test("catalogue plans mixed freshness with each track's own intent and rejects i
   );
   assert.ok(plan.invalid.some((entry) => entry.slug === invalid.slug));
 });
+
+test("successful replacement refreshes stale manifest and preserves output naming", async (t) => {
+  const f = await setup(t);
+  await f.publish();
+  await writeFile(f.beat, "updated audio");
+  assert.equal(f.state().freshness, "stale");
+  await f.publish();
+  assert.equal(f.state().freshness, "current");
+  assert.equal(f.state().outputLabel, `out/${f.slug}/youtube-16x9.mp4`);
+});
+
+test("CLI mode planning is shared and replacements require explicit confirmation", async (t) => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  await f.publish();
+  await writeFile(f.cover, "changed artwork");
+  const run = promisify(execFile);
+  const before = await readFile(f.output.manifest, "utf8");
+  const dry = await run(process.execPath, [
+    "scripts/render-missing.mts",
+    f.slug,
+    "--mode",
+    "stale",
+    "--dry-run",
+  ]);
+  assert.match(dry.stdout, /1 stale/);
+  assert.match(dry.stdout, /replace stale export/);
+  await assert.rejects(
+    () =>
+      run(process.execPath, [
+        "scripts/render-missing.mts",
+        f.slug,
+        "--mode",
+        "stale",
+      ]),
+    (error: unknown) => {
+      assert.match((error as { stderr: string }).stderr, /--replace/);
+      return true;
+    },
+  );
+  assert.equal(await readFile(f.output.manifest, "utf8"), before);
+  const missing = await run(process.execPath, [
+    "scripts/render-missing.mts",
+    f.slug,
+    "--dry-run",
+  ]);
+  assert.match(missing.stdout, /0 missing/);
+});

@@ -1,3 +1,4 @@
+import { STALE_REASON_LABELS } from "../../src/domain/video/exportFreshness.ts";
 import type { RenderOutputView } from "../../src/domain/api/views.ts";
 
 /**
@@ -11,27 +12,32 @@ import type { RenderOutputView } from "../../src/domain/api/views.ts";
  * in is dimmed and gets its own mark, so "we are not making this one" never
  * looks like "this one is missing".
  */
-const mark = (output: RenderOutputView): { glyph: string; state: string; note: string } => {
-  if (output.present) {
+const mark = (
+  output: RenderOutputView,
+): { glyph: string; state: string; note: string } => {
+  if (output.active) return { glyph: "●", state: "active", note: "Rendering" };
+  if (output.queued) return { glyph: "·", state: "queued", note: "Queued" };
+  if (output.status === "invalid")
+    return { glyph: "!", state: "empty", note: "Invalid — check track inputs" };
+  if (output.freshness === "stale")
     return {
-      glyph: "✓",
-      state: "done",
-      note: output.intended ? "rendered" : "rendered, though not an intended format",
+      glyph: "!",
+      state: "stale",
+      note: `Stale — ${output.staleReasons.map((reason) => STALE_REASON_LABELS[reason]).join("; ")}`,
     };
-  }
-  if (output.active) {
-    return { glyph: "●", state: "active", note: "rendering now" };
-  }
-  if (output.queued) {
-    return { glyph: "·", state: "queued", note: "queued" };
-  }
+  if (output.freshness === "current")
+    return { glyph: "✓", state: "done", note: "Current" };
   if (output.empty) {
-    return { glyph: "!", state: "empty", note: "file is empty — will be re-rendered" };
+    return {
+      glyph: "!",
+      state: "empty",
+      note: "file is empty — will be re-rendered",
+    };
   }
   if (!output.intended) {
     return { glyph: "◦", state: "unintended", note: "not an intended format" };
   }
-  return { glyph: "—", state: "missing", note: "intended, not rendered yet" };
+  return { glyph: "—", state: "missing", note: "Missing" };
 };
 
 export const ExportStatus: React.FC<{
@@ -51,7 +57,13 @@ export const ExportStatus: React.FC<{
           {compact ? null : (
             <span className="export__label">{output.label}</span>
           )}
-          <span className="export__mark">{glyph}</span>
+          <span
+            className="export__mark"
+            aria-label={compact ? `${output.label}: ${note}` : undefined}
+          >
+            {glyph}
+          </span>
+          {compact ? null : <span className="export__note">{note}</span>}
         </span>
       );
     })}

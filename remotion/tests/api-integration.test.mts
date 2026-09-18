@@ -198,7 +198,9 @@ test("export-missing plans from intent, and says what it will not guess", async 
   const intent = await post({ tracks: [f.slug], dryRun: true });
   assert.equal(intent.status, 200);
   assert.deepEqual(
-    intent.body.data.missing.map((target: { presetId: string }) => target.presetId),
+    intent.body.data.missing.map(
+      (target: { presetId: string }) => target.presetId,
+    ),
     ["youtube-16x9"],
   );
   assert.equal(intent.body.data.batchId, null);
@@ -212,7 +214,9 @@ test("export-missing plans from intent, and says what it will not guess", async 
     dryRun: true,
   });
   assert.deepEqual(
-    override.body.data.missing.map((target: { presetId: string }) => target.presetId),
+    override.body.data.missing.map(
+      (target: { presetId: string }) => target.presetId,
+    ),
     ["square-1x1"],
   );
 
@@ -234,7 +238,8 @@ test("the track view separates what a track intends from what it has", async (t)
   const f = await fixture(t, { exportPresets: ["vertical-9x16"] });
   const { base } = await api(t);
 
-  const track = (await (await fetch(`${base}/api/tracks/${f.slug}`)).json()).data;
+  const track = (await (await fetch(`${base}/api/tracks/${f.slug}`)).json())
+    .data;
 
   assert.deepEqual(track.exportPresets, ["vertical-9x16"]);
   assert.deepEqual(
@@ -257,11 +262,121 @@ test("the track view separates what a track intends from what it has", async (t)
   // A track that declares nothing reports null, not an invented list, while
   // every format still counts as intended.
   const plain = await fixture(t);
-  const other = (await (await fetch(`${base}/api/tracks/${plain.slug}`)).json()).data;
+  const other = (await (await fetch(`${base}/api/tracks/${plain.slug}`)).json())
+    .data;
 
   assert.equal(other.exportPresets, null);
   assert.equal(
     other.exports.every((output: { intended: boolean }) => output.intended),
     true,
   );
+});
+
+test("freshness API reports stale reasons and all three plan modes without queueing", async (t) => {
+  const { publishExport } = await import("../services/render/publishExport.ts");
+  const { fingerprintInputs } =
+    await import("../services/tracks/exportManifest.ts");
+  const { buildTrackProps } =
+    await import("../services/tracks/buildTrackProps.ts");
+  const { inspectTrack } = await import("../services/tracks/inspectTrack.ts");
+  const f = await fixture(t);
+  await fs.writeFile(f.cover, "cover");
+  await fs.writeFile(f.beat, "audio");
+  t.after(() => fs.rm(f.outputDir, { recursive: true, force: true }));
+  const inspection = await inspectTrack(f.slug);
+  const props = buildTrackProps({
+    slug: f.slug,
+    metadata: inspection.metadata!,
+    analysisAvailable: true,
+  });
+  await publishExport(
+    f.slug,
+    "youtube-16x9",
+    fingerprintInputs(props, "youtube-16x9"),
+    async (file) => {
+      await fs.writeFile(file, "valid output");
+    },
+  );
+  await fs.writeFile(f.cover, "edited cover");
+  const { base } = await api(t);
+  const track = (await (await fetch(`${base}/api/tracks/${f.slug}`)).json())
+    .data;
+  assert.equal(track.exports[0].freshness, "stale");
+  assert.equal(track.exports[0].status, "stale");
+  assert.equal(track.exports[0].present, true);
+  assert.deepEqual(track.exports[0].staleReasons, ["cover_changed"]);
+  for (const [mode, expected] of [
+    [undefined, 2],
+    ["stale", 1],
+    ["missing-and-stale", 3],
+  ] as const) {
+    const response = await fetch(`${base}/api/export-missing`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tracks: [f.slug], mode, dryRun: true }),
+    });
+    assert.equal(response.status, 200);
+    const { data } = await response.json();
+    assert.equal(data.selected.length, expected);
+    assert.equal(data.mode, mode ?? "missing");
+    assert.equal(data.missing.length, 2);
+    assert.equal(data.stale.length, 1);
+    assert.equal(data.batchId, null);
+    assert.deepEqual(data.queued, []);
+  }
+  const bad = await fetch(`${base}/api/export-missing`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      tracks: [f.slug],
+      mode: "overwrite-everything",
+      dryRun: true,
+    }),
+  });
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).error.code, "INVALID_REQUEST");
+});
+
+test("stale execution queues replacements once and exposes rendering over disk freshness", async (t) => {
+  const childProcess = (await import("node:child_process")).default;
+  const { Worker } = await import("./managerHarness.mts");
+  const { renderManager } = await import("../server/services/renderManager.ts");
+  const worker = new Worker();
+  worker.pid = 12345;
+  t.mock.method(childProcess, "fork", () => worker);
+  syncBuiltinESMExports();
+  t.after(() => {
+    worker.emit("message", { type: "cancelled" });
+    worker.emit("exit", 0, null);
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const f = await fixture(t, { exportPresets: ["vertical-9x16"] });
+  await fs.writeFile(f.cover, "cover");
+  await fs.writeFile(f.beat, "audio");
+  await fs.mkdir(f.outputDir, { recursive: true });
+  await fs.writeFile(`${f.outputDir}/vertical-9x16.mp4`, "legacy export");
+  t.after(() => fs.rm(f.outputDir, { recursive: true, force: true }));
+  const { base } = await api(t);
+  const post = () =>
+    fetch(`${base}/api/export-missing`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tracks: [f.slug], mode: "stale" }),
+    }).then((response) => response.json());
+  const replies = await Promise.all([post(), post()]);
+  assert.equal(
+    replies.reduce((sum, reply) => sum + reply.data.queued.length, 0),
+    1,
+  );
+  const started = replies.find((reply) => reply.data.batchId !== null)!;
+  const skipped = replies.find((reply) => reply.data.batchId === null)!;
+  assert.equal(skipped.data.nothingToDo, true);
+  assert.equal(started.data.queued[0].presetId, "vertical-9x16");
+  const view = (await (await fetch(`${base}/api/tracks/${f.slug}`)).json()).data
+    .exports[1];
+  assert.equal(view.freshness, "stale");
+  assert.equal(view.status, "rendering");
+  assert.equal(view.present, true);
+  renderManager.cancelBatch(started.data.batchId);
 });

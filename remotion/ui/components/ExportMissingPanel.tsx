@@ -1,4 +1,8 @@
-import { useState } from "react";
+import {
+  STALE_REASON_LABELS,
+  type ExportMode,
+} from "../../src/domain/video/exportFreshness.ts";
+import { useEffect, useRef, useState } from "react";
 import type { ExportMissingView } from "../../src/domain/api/views.ts";
 import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 import { ApiRequestError, exportMissing } from "../api/client.ts";
@@ -40,12 +44,26 @@ export const ExportMissingPanel: React.FC<{
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiRequestError | null>(null);
 
-  const run = async (dryRun: boolean) => {
+  const requestId = useRef(0);
+  const scope = JSON.stringify([tracks, formats]);
+  useEffect(() => {
+    requestId.current++;
+    setPlan(null);
+    setBusy(false);
+    const counter = requestId;
+    return () => {
+      counter.current++;
+    };
+  }, [scope]);
+
+  const run = async (dryRun: boolean, mode: ExportMode) => {
+    const id = ++requestId.current;
     setBusy(true);
     setError(null);
 
     try {
-      const result = await exportMissing(tracks, formats, dryRun);
+      const result = await exportMissing(tracks, formats, dryRun, mode);
+      if (requestId.current !== id) return;
 
       if (dryRun) {
         setPlan(result);
@@ -58,9 +76,9 @@ export const ExportMissingPanel: React.FC<{
       }
       onChanged();
     } catch (cause) {
-      setError(asApiError(cause));
+      if (requestId.current === id) setError(asApiError(cause));
     } finally {
-      setBusy(false);
+      if (requestId.current === id) setBusy(false);
     }
   };
 
@@ -71,7 +89,8 @@ export const ExportMissingPanel: React.FC<{
     ? [
         plural(plan.tracks, "track"),
         plural(plan.intendedTargets.length, "intended export"),
-        `${plan.skippedExisting.length} already rendered`,
+        `${plan.current.length} current`,
+        `${plan.stale.length} stale`,
         plan.skippedQueued.length > 0
           ? `${plan.skippedQueued.length} already queued`
           : null,
@@ -89,7 +108,9 @@ export const ExportMissingPanel: React.FC<{
 
   return (
     <div className="exportmissing">
-      {error ? <ErrorBanner error={error} title="Could not plan exports" /> : null}
+      {error ? (
+        <ErrorBanner error={error} title="Could not plan exports" />
+      ) : null}
 
       <div className="form__actions">
         <button
@@ -101,29 +122,42 @@ export const ExportMissingPanel: React.FC<{
               ? "Queue each track's intended formats that have not been rendered yet"
               : "Queue only the selected formats that have not been rendered yet"
           }
-          onClick={() => void run(true)}
+          onClick={() => void run(true, "missing")}
         >
           {busy && plan === null ? "Checking…" : label}
         </button>
+
+        {(["stale", "missing-and-stale"] as const).map((mode) => (
+          <button
+            key={mode}
+            className="button"
+            type="button"
+            disabled={disabled || busy || tracks?.length === 0}
+            onClick={() => void run(true, mode)}
+          >
+            {mode === "stale" ? "Re-export stale" : "Export missing + stale"}
+            {tracks === null ? " for catalogue" : ""}
+          </button>
+        ))}
 
         {plan ? (
           <>
             {plan.nothingToDo ? (
               <span className="exportmissing__done">
-                {plan.catalogue
-                  ? "Catalogue is fully exported"
-                  : "All intended exports already exist"}
+                {plan.mode === "missing"
+                  ? "No missing exports"
+                  : "No matching exports to queue"}
               </span>
             ) : (
               <button
                 className="button"
                 type="button"
                 disabled={busy}
-                onClick={() => void run(false)}
+                onClick={() => void run(false, plan.mode)}
               >
                 {busy
                   ? "Queueing…"
-                  : `Queue ${plan.missing.length} render${plan.missing.length === 1 ? "" : "s"}`}
+                  : `Queue ${plan.selected.length} render${plan.selected.length === 1 ? "" : "s"}`}
               </button>
             )}
             <button
@@ -141,14 +175,30 @@ export const ExportMissingPanel: React.FC<{
       {plan ? (
         <div className="exportmissing__plan">
           <p className="exportmissing__counts">{counts}</p>
+          {plan.selected.some((target) => target.staleReasons?.length) ? (
+            <p className="muted">
+              Confirming queues replacements for{" "}
+              {
+                plan.selected.filter((target) => target.staleReasons?.length)
+                  .length
+              }{" "}
+              stale export(s). Existing videos are kept until each replacement
+              succeeds.
+            </p>
+          ) : null}
 
-          {plan.missing.length > 0 ? (
+          {plan.selected.length > 0 ? (
             <ul className="exportmissing__list">
-              {plan.missing.map((target) => (
+              {plan.selected.map((target) => (
                 <li key={`${target.slug}-${target.presetId}`}>
                   <span className="exportmissing__slug">{target.slug}</span>
                   <span className="exportmissing__preset">{target.label}</span>
-                  <span className="exportmissing__path">{target.outputLabel}</span>
+                  <span className="exportmissing__path">
+                    {target.outputLabel}
+                    {target.staleReasons?.length
+                      ? ` — Replace: ${target.staleReasons.map((reason) => STALE_REASON_LABELS[reason]).join("; ")}`
+                      : " — New export"}
+                  </span>
                 </li>
               ))}
             </ul>

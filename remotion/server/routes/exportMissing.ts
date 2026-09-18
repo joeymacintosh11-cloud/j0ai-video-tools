@@ -114,36 +114,51 @@ export const handleExportMissing = async (
     inFlight: renderManager.inFlightTargets(),
   });
 
+  // Inspection is asynchronous; another request may have queued the same
+  // target meanwhile. Recheck immediately before the synchronous batch enqueue.
+  const live = renderManager.inFlightTargets();
+  const newlyQueued = plan.selected.filter(
+    (target) => live.get(`${target.slug}::${target.presetId}`) === "queued",
+  );
+  const newlyActive = plan.selected.filter(
+    (target) => live.get(`${target.slug}::${target.presetId}`) === "active",
+  );
+  const selected = plan.selected.filter(
+    (target) => !live.has(`${target.slug}::${target.presetId}`),
+  );
+
   const common = {
     mode: plan.mode,
     stale: plan.stale,
     current: plan.current,
-    selected: plan.selected,
+    selected,
     catalogue: plan.catalogue,
     tracks: plan.tracks,
     intendedTargets: plan.intendedTargets,
     // Reported even on a dry run — that is the point of previewing.
     missing: plan.missing,
     skippedExisting: plan.skippedExisting,
-    skippedQueued: plan.skippedQueued,
-    skippedActive: plan.skippedActive,
+    skippedQueued: [...plan.skippedQueued, ...newlyQueued],
+    skippedActive: [...plan.skippedActive, ...newlyActive],
     invalid: plan.invalid,
   };
 
-  if (dryRun || plan.selected.length === 0) {
+  if (dryRun || selected.length === 0) {
     const payload: ExportMissingView = {
       ...common,
       batchId: null,
       dryRun,
       queued: [],
-      nothingToDo: plan.selected.length === 0,
+      nothingToDo: selected.length === 0,
     };
 
     sendOk(response, payload);
     return;
   }
 
-  const { batch } = renderManager.startBatch(toRenderTargets(plan));
+  const { batch } = renderManager.startBatch(
+    toRenderTargets({ ...plan, selected }),
+  );
   const queuedKeys = new Set(
     batch.jobs.map((job) => `${job.slug}::${job.presetId}`),
   );
@@ -152,7 +167,7 @@ export const handleExportMissing = async (
     ...common,
     batchId: batch.id,
     dryRun: false,
-    queued: plan.selected.filter((target) =>
+    queued: selected.filter((target) =>
       queuedKeys.has(`${target.slug}::${target.presetId}`),
     ),
     nothingToDo: false,

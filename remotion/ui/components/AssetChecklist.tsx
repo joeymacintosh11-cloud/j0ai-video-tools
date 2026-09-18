@@ -1,3 +1,4 @@
+import { STALE_REASON_LABELS } from "../../src/domain/video/exportFreshness.ts";
 import type { TrackDetailView } from "../../src/domain/api/views.ts";
 
 /**
@@ -113,15 +114,31 @@ export const AssetChecklist: React.FC<{ readonly track: TrackDetailView }> = ({
           key={output.presetId}
           name={output.label}
           state={
-            output.present ? "present" : output.intended ? "missing" : "skipped"
+            output.freshness === "stale" || output.status === "invalid"
+              ? "stale"
+              : output.freshness === "current"
+                ? "present"
+                : output.intended
+                  ? "missing"
+                  : "skipped"
           }
           path={output.outputLabel}
           note={
-            output.present
-              ? undefined
-              : output.intended
-                ? "not rendered yet"
-                : "not an intended format"
+            output.active
+              ? "rendering"
+              : output.queued
+                ? "queued"
+                : output.status === "invalid"
+                  ? "check track inputs"
+                  : output.freshness === "stale"
+                    ? output.staleReasons
+                        .map((reason) => STALE_REASON_LABELS[reason])
+                        .join("; ")
+                    : output.present
+                      ? "current"
+                      : output.intended
+                        ? "not rendered yet"
+                        : "not an intended format"
           }
         />
       ))}
@@ -129,9 +146,9 @@ export const AssetChecklist: React.FC<{ readonly track: TrackDetailView }> = ({
       {track.render.legacyPresent ? (
         <Row
           name="Earlier"
-          state="present"
+          state="stale"
           path={`out/${track.slug}.mp4`}
-          note="rendered before formats existed; left untouched"
+          note="earlier export — freshness unverified; left untouched"
         />
       ) : null}
     </ul>

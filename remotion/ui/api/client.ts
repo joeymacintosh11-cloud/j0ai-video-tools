@@ -1,3 +1,4 @@
+import type { ExportMode } from "../../src/domain/video/exportFreshness.ts";
 import type {
   ApiError,
   ApiErrorCode,
@@ -103,7 +104,10 @@ const jsonRequest = async <TData>(
 ): Promise<TData> =>
   request<TData>(path, {
     method,
-    headers: payload === undefined ? undefined : { "content-type": "application/json" },
+    headers:
+      payload === undefined
+        ? undefined
+        : { "content-type": "application/json" },
     body: payload === undefined ? undefined : JSON.stringify(payload),
   });
 
@@ -134,17 +138,14 @@ export const updateTrackMetadata = (
   patch: TrackMetadataPatch,
   revision?: string | null,
 ): Promise<TrackDetailView> =>
-  request<TrackDetailView>(
-    `/api/tracks/${encodeURIComponent(slug)}/metadata`,
-    {
-      method: "PATCH",
-      headers: {
-        "content-type": "application/json",
-        ...(revision ? { "if-match": `"${revision}"` } : {}),
-      },
-      body: JSON.stringify(patch),
+  request<TrackDetailView>(`/api/tracks/${encodeURIComponent(slug)}/metadata`, {
+    method: "PATCH",
+    headers: {
+      "content-type": "application/json",
+      ...(revision ? { "if-match": `"${revision}"` } : {}),
     },
-  );
+    body: JSON.stringify(patch),
+  });
 
 export const validateTrack = (slug: string): Promise<ValidateTrackView> =>
   jsonRequest<ValidateTrackView>(
@@ -170,16 +171,13 @@ export const uploadTrackAsset = (
   kind: TrackAssetKind,
   file: File,
 ): Promise<UploadAssetView> =>
-  request<UploadAssetView>(
-    `/api/tracks/${encodeURIComponent(slug)}/${kind}`,
-    {
-      method: "PUT",
-      headers: {
-        "content-type": kind === "cover" ? "image/png" : "audio/wav",
-      },
-      body: file,
+  request<UploadAssetView>(`/api/tracks/${encodeURIComponent(slug)}/${kind}`, {
+    method: "PUT",
+    headers: {
+      "content-type": kind === "cover" ? "image/png" : "audio/wav",
     },
-  );
+    body: file,
+  });
 
 export const getTrackPreview = (
   slug: string,
@@ -256,9 +254,7 @@ export const getRenderBatch = (batchId: string): Promise<RenderBatchView> =>
     `/api/render-batches/${encodeURIComponent(batchId)}`,
   );
 
-export const cancelRenderBatch = (
-  batchId: string,
-): Promise<RenderBatchView> =>
+export const cancelRenderBatch = (batchId: string): Promise<RenderBatchView> =>
   jsonRequest<RenderBatchView>(
     `/api/render-batches/${encodeURIComponent(batchId)}/cancel`,
     "POST",
@@ -276,11 +272,13 @@ export const exportMissing = (
   tracks: readonly string[] | null,
   presets: readonly RenderPresetId[] | null,
   dryRun: boolean,
+  mode: ExportMode = "missing",
 ): Promise<ExportMissingView> => {
   const body: ExportMissingBody = {
     ...(tracks === null ? { catalogue: true } : { tracks }),
     ...(presets === null ? {} : { presets }),
     dryRun,
+    mode,
   };
 
   return jsonRequest<ExportMissingView>("/api/export-missing", "POST", body);

@@ -1448,3 +1448,8 @@ body {
     display: none;
   }
 }
+
+/* Freshness extends the existing export marks, independently of queue/intent. */
+.export--stale { color: var(--vintage-gold); }
+.export__note { font-size: 0.75rem; font-weight: 400; }
+.exports:not(.exports--compact) { flex-wrap: wrap; }

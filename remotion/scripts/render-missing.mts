@@ -1,3 +1,5 @@
+import { assertExportMode } from "../src/domain/video/exportFreshness.ts";
+import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
 import {
   assertRenderPresetId,
   RENDER_PRESET_IDS,
@@ -32,24 +34,28 @@ import { runCli } from "./cli.ts";
  */
 
 const printUsage = () => {
-  console.error([
-    "Usage: npm run render-missing -- <track-slug> [--preset <id>] [--all-formats] [--dry-run]",
-    "       npm run render-catalogue-missing [-- --dry-run]",
-    "",
-    "  <track-slug>      Folder name under public/tracks/, e.g. ghetto-geek",
-    "  --all-tracks      Every track under public/tracks/",
-    "  --preset <id>     Override the track's intended formats for this run",
-    "  --all-formats     Override with every format",
-    "  --dry-run         Report the plan without rendering anything",
-    "",
-    "With no --preset or --all-formats, each track's own exportPresets decide",
-    "which formats matter. A track that declares none intends every format.",
-    "",
-    "Examples:",
-    "  npm run render-missing -- ghetto-geek",
-    "  npm run render-missing -- ghetto-geek --dry-run",
-    "  npm run render-catalogue-missing",
-  ].join("\n"));
+  console.error(
+    [
+      "Usage: npm run render-missing -- <track-slug> [--preset <id>] [--all-formats] [--dry-run]",
+      "       npm run render-catalogue-missing [-- --dry-run]",
+      "",
+      "  <track-slug>      Folder name under public/tracks/, e.g. ghetto-geek",
+      "  --all-tracks      Every track under public/tracks/",
+      "  --preset <id>     Override the track's intended formats for this run",
+      "  --all-formats     Override with every format",
+      "  --dry-run         Report the plan without rendering anything",
+      "  --mode <mode>     missing (default), stale, or missing-and-stale",
+      "  --replace         Confirm replacement of stale exports in this run",
+      "",
+      "With no --preset or --all-formats, each track's own exportPresets decide",
+      "which formats matter. A track that declares none intends every format.",
+      "",
+      "Examples:",
+      "  npm run render-missing -- ghetto-geek",
+      "  npm run render-missing -- ghetto-geek --dry-run",
+      "  npm run render-catalogue-missing",
+    ].join("\n"),
+  );
 };
 
 /**
@@ -63,8 +69,15 @@ const parseArgs = (argv: string[]) => {
   const presetFlagIndex = argv.indexOf("--preset");
   const presetValue =
     presetFlagIndex === -1 ? undefined : argv[presetFlagIndex + 1];
+  const modeIndex = argv.indexOf("--mode");
+  const modeValue = modeIndex === -1 ? undefined : argv[modeIndex + 1];
+  if (modeIndex !== -1 && modeValue === undefined)
+    throw new TrackError(
+      trackIssue("INVALID_REQUEST", "--mode needs a value."),
+    );
+  const mode = assertExportMode(modeValue);
   const positional = argv.filter(
-    (arg) => !arg.startsWith("--") && arg !== presetValue,
+    (arg) => !arg.startsWith("--") && arg !== presetValue && arg !== modeValue,
   );
 
   const presetIds: readonly RenderPresetId[] | null = flags.includes(
@@ -76,6 +89,8 @@ const parseArgs = (argv: string[]) => {
       : [assertRenderPresetId(presetValue)];
 
   return {
+    mode,
+    replace: flags.includes("--replace"),
     slug: positional[0],
     allTracks: flags.includes("--all-tracks"),
     dryRun: flags.includes("--dry-run"),
@@ -92,7 +107,8 @@ const describePlan = (plan: ExportPlan): void => {
     [
       plural(plan.tracks, "track"),
       plural(plan.intendedTargets.length, "intended export"),
-      `${plan.skippedExisting.length} already rendered`,
+      `${plan.current.length} current`,
+      `${plan.stale.length} stale`,
       `${plan.missing.length} missing`,
     ].join(" · "),
   );
@@ -101,13 +117,15 @@ const describePlan = (plan: ExportPlan): void => {
     console.log(`  ! ${entry.slug}: ${entry.reason}`);
   }
 
-  for (const target of plan.missing) {
-    console.log(`  → ${target.outputLabel}`);
+  for (const target of plan.selected) {
+    console.log(
+      `  → ${target.outputLabel}${target.staleReasons?.length ? " (replace stale export)" : " (new export)"}`,
+    );
   }
 };
 
 runCli("rendering missing exports", async () => {
-  const { slug, allTracks, presetIds, dryRun } = parseArgs(
+  const { slug, allTracks, presetIds, dryRun, mode, replace } = parseArgs(
     process.argv.slice(2),
   );
 
@@ -117,6 +135,7 @@ runCli("rendering missing exports", async () => {
   }
 
   const plan = await planMissingExports({
+    mode,
     slugs: allTracks ? undefined : [slug as string],
     presetIds,
   });
@@ -128,11 +147,18 @@ runCli("rendering missing exports", async () => {
     return;
   }
 
-  if (plan.missing.length === 0) {
-    console.log(
-      `\n✓ ${plan.catalogue ? "Catalogue is fully exported" : "Nothing missing"}.`,
-    );
+  if (plan.selected.length === 0) {
+    console.log(`\n✓ No matching exports to render (${mode}).`);
     return;
+  }
+
+  if (!replace && plan.selected.some((target) => target.staleReasons?.length)) {
+    throw new TrackError(
+      trackIssue(
+        "INVALID_REQUEST",
+        "This plan replaces stale exports. Review it with --dry-run, then add --replace to confirm the batch. Existing videos remain until replacement succeeds.",
+      ),
+    );
   }
 
   // One preparation per track, reused by each of its formats. Prepared lazily
@@ -140,7 +166,7 @@ runCli("rendering missing exports", async () => {
   // to need no renders.
   const prepared = new Map<string, BeatVisualizerProps>();
 
-  for (const [index, target] of plan.missing.entries()) {
+  for (const [index, target] of plan.selected.entries()) {
     const preset = renderPreset(target.presetId);
     let props = prepared.get(target.slug);
 
@@ -151,7 +177,7 @@ runCli("rendering missing exports", async () => {
     }
 
     console.log(
-      `\n→ [${index + 1}/${plan.missing.length}] ${target.slug} — ${preset.label} (${preset.width}x${preset.height})`,
+      `\n→ [${index + 1}/${plan.selected.length}] ${target.slug} — ${preset.label} (${preset.width}x${preset.height})`,
     );
 
     let lastLoggedPercentage = -1;
@@ -172,5 +198,5 @@ runCli("rendering missing exports", async () => {
     console.log(`✓ Rendered ${outputLabel}`);
   }
 
-  console.log(`\n✓ Rendered ${plan.missing.length} missing export(s).`);
+  console.log(`\n✓ Rendered ${plan.selected.length} export(s).`);
 });
