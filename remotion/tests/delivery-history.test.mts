@@ -748,11 +748,15 @@ test("repair drops only an incomplete final line, and refuses anything else", as
 
 test("damage anywhere but the final line is corruption, and is located", async (t) => {
   const root = await destination(t);
+  // Distinct events, so this isolates where the *damage* is reported. A log
+  // that repeated one event would also be flagged as duplicated, which is a
+  // different finding and has its own test.
   const good = synthetic();
+  const alsoGood = synthetic();
 
   for (const [text, badLine] of [
     [`not json\n${line(good)}`, 1],
-    [`${line(good)}{"schemaVersion":1,"kind":"nope"}\n${line(good)}`, 2],
+    [`${line(good)}{"schemaVersion":1,"kind":"nope"}\n${line(alsoGood)}`, 2],
   ] as const) {
     await writeLog(root, text);
     const read = readDeliveryLog(root);
