@@ -54,23 +54,35 @@ export const toTrackSummaryView = (
     analysisPresent: inspection.facts.analysisExists,
     analysisUpToDate: inspection.facts.analysisUpToDate,
     renderPresent: inspection.facts.outputExists,
-    exports: trackExportCoverage(inspection.slug).map((facts) => {
-      const state = inFlight.get(`${inspection.slug}::${facts.presetId}`);
+    exports: trackExportCoverage(inspection.slug, inspection.metadata).map(
+      (facts) => {
+        const state = inFlight.get(`${inspection.slug}::${facts.presetId}`);
 
-      return {
-        presetId: facts.presetId,
-        label: facts.label,
-        outputLabel: facts.outputLabel,
-        outputPath: facts.rendered ? facts.outputPath : null,
-        present: facts.rendered,
-        bytes: facts.bytes,
-        modifiedAt: facts.modifiedAt,
-        empty: facts.empty,
-        queued: state === "queued",
-        active: state === "active",
-        intended: intended.has(facts.presetId),
-      };
-    }),
+        return {
+          freshness: facts.freshness,
+          staleReasons: facts.staleReasons,
+          status:
+            state === "active"
+              ? "rendering"
+              : state === "queued"
+                ? "queued"
+                : !inspection.validation.ok
+                  ? "invalid"
+                  : facts.freshness,
+          presetId: facts.presetId,
+          label: facts.label,
+          outputLabel: facts.outputLabel,
+          outputPath: facts.rendered ? facts.outputPath : null,
+          present: facts.rendered,
+          bytes: facts.bytes,
+          modifiedAt: facts.modifiedAt,
+          empty: facts.empty,
+          queued: state === "queued",
+          active: state === "active",
+          intended: intended.has(facts.presetId),
+        };
+      },
+    ),
     exportPresets: declared,
   };
 };

@@ -5,7 +5,10 @@ import {
   selectComposition,
   type CancelSignal,
 } from "@remotion/renderer";
-import { existsSync, mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import path from "node:path";
+import { fingerprintInputs } from "../tracks/exportManifest.ts";
+import { publishExport } from "./publishExport.ts";
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
 import { COMPOSITION_ID } from "../../src/domain/video/compositionConfig.ts";
 import {
@@ -70,67 +73,106 @@ export const renderTrackVideo = async ({
   onResolved,
   onProgress,
 }: RenderTrackVideoOptions): Promise<RenderTrackVideoResult> => {
+  let cancelled = false;
+  cancelSignal?.(() => {
+    cancelled = true;
+  });
+  const checkCancelled = () => {
+    if (cancelled) throw new Error("renderMedia() got cancelled");
+  };
+  checkCancelled();
   onPhase?.("bundling");
   const bundleLocation = await bundle({ entryPoint: REMOTION_ENTRY_POINT });
 
   // A single shared browser instance is reused for both steps below, which
   // is more reliable than letting each API launch (and tear down) its own.
-  const puppeteerInstance = await openBrowser("chrome");
-
   try {
-    // The preset travels in the props, so calculateBeatVisualizerMetadata
-    // reports this format's width, height and frame count back to us.
+    checkCancelled();
     const inputProps: BeatVisualizerProps = { ...props, presetId };
-
-    onPhase?.("resolving");
-    const composition = await selectComposition({
-      serveUrl: bundleLocation,
-      id: COMPOSITION_ID,
+    // Fingerprint the copied assets the browser actually consumes, not live
+    // source files that can change while this render is running.
+    const inputs = fingerprintInputs(
       inputProps,
-      puppeteerInstance,
-    });
-
-    const output = trackOutputLocation(slug, presetId);
-    const resolved: RenderResolvedInfo = {
-      durationInFrames: composition.durationInFrames,
-      fps: composition.fps,
-      width: composition.width,
-      height: composition.height,
-      outputPath: output.path,
-      outputLabel: output.label,
+      presetId,
+      path.join(bundleLocation, "public"),
+    );
+    const puppeteerInstance = await openBrowser("chrome");
+    let browserClosed = false;
+    const closeBrowser = async () => {
+      if (!browserClosed) {
+        await puppeteerInstance.close({ silent: true });
+        browserClosed = true;
+      }
     };
-    onResolved?.(resolved);
+    try {
+      // The preset travels in the props, so calculateBeatVisualizerMetadata
+      // reports this format's width, height and frame count back to us.
+      onPhase?.("resolving");
+      const composition = await selectComposition({
+        serveUrl: bundleLocation,
+        id: COMPOSITION_ID,
+        inputProps,
+        puppeteerInstance,
+      });
 
-    // One directory per track, created on demand.
-    if (!existsSync(output.dir)) {
-      mkdirSync(output.dir, { recursive: true });
+      const output = trackOutputLocation(slug, presetId);
+      const resolved: RenderResolvedInfo = {
+        durationInFrames: composition.durationInFrames,
+        fps: composition.fps,
+        width: composition.width,
+        height: composition.height,
+        outputPath: output.path,
+        outputLabel: output.label,
+      };
+      onResolved?.(resolved);
+
+      onPhase?.("rendering");
+      await publishExport(
+        slug,
+        presetId,
+        inputs,
+        async (stagedVideo) => {
+          await renderMedia({
+            composition,
+            serveUrl: bundleLocation,
+            codec: "h264",
+            outputLocation: stagedVideo,
+            inputProps,
+            imageFormat: "jpeg",
+            overwrite: true,
+            puppeteerInstance,
+            cancelSignal,
+            // Each render worker tab pays a one-time cost to decode the waveform
+            // analysis audio the first time it reads it; every frame after that
+            // is fast. Keep concurrency modest and the timeout generous so that
+            // one-time decode has room to finish instead of tripping the frame
+            // timeout, even though analysis.wav makes it much smaller than before.
+            concurrency: 3,
+            timeoutInMilliseconds: 15 * 60 * 1000,
+            onProgress: ({
+              progress,
+              renderedFrames,
+              encodedFrames,
+              stitchStage,
+            }) => {
+              onProgress?.({
+                progress,
+                renderedFrames,
+                encodedFrames,
+                stitchStage,
+              });
+            },
+          });
+
+          await closeBrowser();
+        },
+        checkCancelled,
+      );
+      return resolved;
+    } finally {
+      await closeBrowser();
     }
-
-    onPhase?.("rendering");
-    await renderMedia({
-      composition,
-      serveUrl: bundleLocation,
-      codec: "h264",
-      outputLocation: output.path,
-      inputProps,
-      imageFormat: "jpeg",
-      overwrite: true,
-      puppeteerInstance,
-      cancelSignal,
-      // Each render worker tab pays a one-time cost to decode the waveform
-      // analysis audio the first time it reads it; every frame after that
-      // is fast. Keep concurrency modest and the timeout generous so that
-      // one-time decode has room to finish instead of tripping the frame
-      // timeout, even though analysis.wav makes it much smaller than before.
-      concurrency: 3,
-      timeoutInMilliseconds: 15 * 60 * 1000,
-      onProgress: ({ progress, renderedFrames, encodedFrames, stitchStage }) => {
-        onProgress?.({ progress, renderedFrames, encodedFrames, stitchStage });
-      },
-    });
-
-    return resolved;
   } finally {
-    await puppeteerInstance.close({ silent: true });
+    await rm(bundleLocation, { recursive: true, force: true });
   }
 };

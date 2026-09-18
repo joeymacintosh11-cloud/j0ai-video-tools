@@ -1,3 +1,8 @@
+import type {
+  ExportFreshness,
+  ExportMode,
+  StaleReason,
+} from "../video/exportFreshness.ts";
 import type { TrackErrorCode, TrackIssue } from "../tracks/errors.ts";
 import type {
   TrackMetadata,
@@ -157,6 +162,9 @@ export type CreateTrackBody = {
  * never stand in for a finished file.
  */
 export type RenderOutputView = {
+  readonly freshness: ExportFreshness;
+  readonly staleReasons: readonly StaleReason[];
+  readonly status: ExportFreshness | "queued" | "rendering";
   readonly presetId: RenderPresetId;
   /** Short preset label, e.g. "Reels 9:16". */
   readonly label: string;
@@ -362,6 +370,7 @@ export type RenderBatchView = {
 
 /** One track/format pair in an export plan. */
 export type PlannedTargetView = {
+  readonly staleReasons?: readonly StaleReason[];
   readonly slug: string;
   readonly presetId: RenderPresetId;
   /** Short preset label, e.g. "Reels 9:16". */
@@ -385,6 +394,7 @@ export type InvalidTrackView = {
  * never queue the whole catalogue by accident.
  */
 export type ExportMissingBody = {
+  readonly mode?: ExportMode;
   /** Tracks to cover. Mutually exclusive with `catalogue`. */
   readonly tracks?: readonly string[];
   /** Cover every track under public/tracks/. */
@@ -414,6 +424,10 @@ export type ExportMissingBody = {
  * it is what "21 intended exports" in a summary counts.
  */
 export type ExportMissingView = {
+  readonly mode: ExportMode;
+  readonly stale: readonly PlannedTargetView[];
+  readonly current: readonly PlannedTargetView[];
+  readonly selected: readonly PlannedTargetView[];
   readonly batchId: string | null;
   readonly dryRun: boolean;
   /** True when the plan covered the whole catalogue rather than named tracks. */

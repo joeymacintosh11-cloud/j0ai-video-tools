@@ -55,6 +55,7 @@ export type TrackOutputLocation = {
   readonly path: string;
   readonly dir: string;
   readonly label: string;
+  readonly manifest: string;
 };
 
 /** Absolute location of one track/format render. */
@@ -65,4 +66,5 @@ export const trackOutputLocation = (
   path: path.join(OUT_DIR, outputRelativePath(slug, presetId)),
   dir: path.join(OUT_DIR, slug),
   label: outputLabel(slug, presetId),
+  manifest: path.join(OUT_DIR, slug, `${presetId}.manifest.json`),
 });

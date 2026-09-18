@@ -1,3 +1,4 @@
+import { assertExportMode } from "../../src/domain/video/exportFreshness.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ExportMissingView } from "../../src/domain/api/views.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
@@ -107,12 +108,17 @@ export const handleExportMissing = async (
   const dryRun = body.dryRun === true;
 
   const plan = await planMissingExports({
+    mode: assertExportMode(body.mode),
     slugs: readSlugs(body),
     presetIds: readPresets(body),
     inFlight: renderManager.inFlightTargets(),
   });
 
   const common = {
+    mode: plan.mode,
+    stale: plan.stale,
+    current: plan.current,
+    selected: plan.selected,
     catalogue: plan.catalogue,
     tracks: plan.tracks,
     intendedTargets: plan.intendedTargets,
@@ -124,13 +130,13 @@ export const handleExportMissing = async (
     invalid: plan.invalid,
   };
 
-  if (dryRun || plan.missing.length === 0) {
+  if (dryRun || plan.selected.length === 0) {
     const payload: ExportMissingView = {
       ...common,
       batchId: null,
       dryRun,
       queued: [],
-      nothingToDo: plan.missing.length === 0,
+      nothingToDo: plan.selected.length === 0,
     };
 
     sendOk(response, payload);
@@ -138,12 +144,17 @@ export const handleExportMissing = async (
   }
 
   const { batch } = renderManager.startBatch(toRenderTargets(plan));
+  const queuedKeys = new Set(
+    batch.jobs.map((job) => `${job.slug}::${job.presetId}`),
+  );
 
   const payload: ExportMissingView = {
     ...common,
     batchId: batch.id,
     dryRun: false,
-    queued: plan.missing,
+    queued: plan.selected.filter((target) =>
+      queuedKeys.has(`${target.slug}::${target.presetId}`),
+    ),
     nothingToDo: false,
   };
 

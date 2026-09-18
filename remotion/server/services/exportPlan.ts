@@ -1,3 +1,8 @@
+import {
+  assertExportMode,
+  type ExportMode,
+  type StaleReason,
+} from "../../src/domain/video/exportFreshness.ts";
 import type { RenderTarget } from "../../src/domain/api/views.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
@@ -35,6 +40,7 @@ import { listTracks } from "../../services/tracks/listTracks.ts";
  */
 
 export type PlannedTarget = {
+  readonly staleReasons?: readonly StaleReason[];
   readonly slug: string;
   readonly presetId: RenderPresetId;
   /** Short preset label, e.g. "Reels 9:16". */
@@ -49,6 +55,10 @@ export type InvalidTrack = {
 };
 
 export type ExportPlan = {
+  readonly mode: ExportMode;
+  readonly stale: readonly PlannedTarget[];
+  readonly current: readonly PlannedTarget[];
+  readonly selected: readonly PlannedTarget[];
   /** True when the plan covered the whole catalogue rather than named tracks. */
   readonly catalogue: boolean;
   /** How many tracks were considered, renderable or not. */
@@ -63,6 +73,7 @@ export type ExportPlan = {
 };
 
 export type PlanMissingExportsInput = {
+  readonly mode?: ExportMode;
   /**
    * Tracks to cover. Omitted means every track under public/tracks/ — the
    * catalogue-wide run. An explicitly empty list is a mistake, not a catalogue.
@@ -129,6 +140,7 @@ const requestedPresets = (
 export const planMissingExports = async (
   input: PlanMissingExportsInput,
 ): Promise<ExportPlan> => {
+  const mode = assertExportMode(input.mode);
   const catalogue = input.slugs === undefined;
   const override = requestedPresets(input.presetIds);
   const inFlight = input.inFlight ?? new Map<string, "queued" | "active">();
@@ -141,6 +153,9 @@ export const planMissingExports = async (
 
   const intendedTargets: PlannedTarget[] = [];
   const missing: PlannedTarget[] = [];
+  const stale: PlannedTarget[] = [];
+  const current: PlannedTarget[] = [];
+  const selected: PlannedTarget[] = [];
   const skippedExisting: PlannedTarget[] = [];
   const skippedQueued: PlannedTarget[] = [];
   const skippedActive: PlannedTarget[] = [];
@@ -172,7 +187,7 @@ export const planMissingExports = async (
 
     const presetIds =
       override ?? resolveExportPresets(inspection.metadata?.exportPresets);
-    const coverage = trackExportCoverage(slug);
+    const coverage = trackExportCoverage(slug, inspection.metadata);
 
     for (const presetId of presetIds) {
       const facts = coverage.find((entry) => entry.presetId === presetId);
@@ -181,15 +196,12 @@ export const planMissingExports = async (
         presetId,
         label: RENDER_PRESETS[presetId].shortLabel,
         outputLabel: facts?.outputLabel ?? "",
+        ...(facts?.staleReasons.length
+          ? { staleReasons: facts.staleReasons }
+          : {}),
       };
 
       intendedTargets.push(target);
-
-      // Disk first: a finished file is never re-rendered automatically.
-      if (facts?.rendered) {
-        skippedExisting.push(target);
-        continue;
-      }
 
       const state = inFlight.get(`${slug}::${presetId}`);
       if (state === "active") {
@@ -201,11 +213,32 @@ export const planMissingExports = async (
         continue;
       }
 
-      missing.push(target);
+      if (facts?.freshness === "invalid") {
+        if (!invalid.some((entry) => entry.slug === slug))
+          invalid.push({
+            slug,
+            code: "INVALID_REQUEST",
+            reason: "Cannot read export inputs; check the track files.",
+          });
+      } else if (facts?.rendered) {
+        skippedExisting.push(target); // Backwards-compatible presence list.
+        if (facts.freshness === "current") current.push(target);
+        else {
+          stale.push(target);
+          if (mode !== "missing") selected.push(target);
+        }
+      } else {
+        missing.push(target);
+        if (mode !== "stale") selected.push(target);
+      }
     }
   }
 
   return {
+    mode,
+    stale,
+    current,
+    selected,
     catalogue,
     tracks: inspections.length,
     intendedTargets,
@@ -218,10 +251,8 @@ export const planMissingExports = async (
 };
 
 /** The plan's missing targets, in the shape startBatch takes. */
-export const toRenderTargets = (
-  plan: ExportPlan,
-): readonly RenderTarget[] =>
-  plan.missing.map((target) => ({
+export const toRenderTargets = (plan: ExportPlan): readonly RenderTarget[] =>
+  plan.selected.map((target) => ({
     slug: target.slug,
     preset: target.presetId,
   }));

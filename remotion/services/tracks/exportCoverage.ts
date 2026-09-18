@@ -1,9 +1,22 @@
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { parseTrackMetadata } from "../../src/domain/tracks/metadata.ts";
+import type { TrackMetadata } from "../../src/domain/tracks/types.ts";
+import type {
+  ExportFreshness,
+  StaleReason,
+} from "../../src/domain/video/exportFreshness.ts";
+import { buildTrackProps } from "./buildTrackProps.ts";
+import {
+  compareInputs,
+  fingerprintInputs,
+  outputIdentity,
+  readExportManifest,
+} from "./exportManifest.ts";
 import {
   RENDER_PRESET_LIST,
   type RenderPresetId,
 } from "../../src/domain/video/renderPresets.ts";
-import { trackOutputLocation } from "./trackLocations.ts";
+import { trackLocations, trackOutputLocation } from "./trackLocations.ts";
 
 /**
  * What a track has actually exported, read from disk.
@@ -21,6 +34,8 @@ import { trackOutputLocation } from "./trackLocations.ts";
  */
 
 export type ExportFileFacts = {
+  readonly freshness: ExportFreshness;
+  readonly staleReasons: readonly StaleReason[];
   readonly presetId: RenderPresetId;
   /** Short preset label, e.g. "Reels 9:16". */
   readonly label: string;
@@ -40,7 +55,7 @@ const fileFacts = (
   slug: string,
   presetId: RenderPresetId,
   label: string,
-): ExportFileFacts => {
+): Omit<ExportFileFacts, "freshness" | "staleReasons"> => {
   const output = trackOutputLocation(slug, presetId);
 
   // statSync throws for a missing file; anything else (a permission error, say)
@@ -50,7 +65,7 @@ const fileFacts = (
 
   try {
     const stats = statSync(output.path);
-    bytes = stats.size;
+    bytes = stats.isFile() ? stats.size : null;
     modifiedAt = new Date(stats.mtimeMs).toISOString();
   } catch {
     bytes = null;
@@ -68,16 +83,62 @@ const fileFacts = (
   };
 };
 
-/** Every format's export state for one track, in preset order. */
+/** Filesystem coverage plus freshness, with queue state deliberately separate. */
 export const trackExportCoverage = (
   slug: string,
-): readonly ExportFileFacts[] =>
-  RENDER_PRESET_LIST.map((preset) =>
-    fileFacts(slug, preset.id, preset.shortLabel),
-  );
+  metadata?: TrackMetadata | null,
+): readonly ExportFileFacts[] => {
+  if (metadata === undefined) {
+    try {
+      metadata = parseTrackMetadata(
+        JSON.parse(readFileSync(trackLocations(slug).metadata, "utf8")),
+        "metadata.json",
+      );
+    } catch {
+      metadata = null;
+    }
+  }
+  return RENDER_PRESET_LIST.map((preset) => {
+    const facts = fileFacts(slug, preset.id, preset.shortLabel);
+    if (!facts.rendered)
+      return { ...facts, freshness: "missing", staleReasons: [] };
+    const output = trackOutputLocation(slug, preset.id);
+    const { manifest, reason } = readExportManifest(
+      output.manifest,
+      slug,
+      preset.id,
+    );
+    if (!manifest)
+      return { ...facts, freshness: "stale", staleReasons: [reason!] };
+    if (!metadata) return { ...facts, freshness: "invalid", staleReasons: [] };
+    try {
+      const current = fingerprintInputs(
+        buildTrackProps({ slug, metadata, analysisAvailable: true }),
+        preset.id,
+      );
+      const staleReasons = compareInputs(manifest.inputs, current);
+      const identity = outputIdentity(output.path);
+      if (
+        identity.bytes !== manifest.output.bytes ||
+        identity.mtimeMs !== manifest.output.mtimeMs ||
+        identity.ino !== manifest.output.ino
+      ) {
+        staleReasons.push("output_changed");
+      }
+      return {
+        ...facts,
+        freshness: staleReasons.length ? "stale" : "current",
+        staleReasons,
+      };
+    } catch {
+      // Missing/unreadable inputs cannot establish freshness; validation reports why.
+      return { ...facts, freshness: "invalid", staleReasons: [] };
+    }
+  });
+};
 
-/** Just the formats that have a usable export on disk. */
+/** Cheap presence-only observation for validation; freshness is read by views/plans. */
 export const renderedPresetIds = (slug: string): readonly RenderPresetId[] =>
-  trackExportCoverage(slug)
-    .filter((facts) => facts.rendered)
-    .map((facts) => facts.presetId);
+  RENDER_PRESET_LIST.filter(
+    (preset) => fileFacts(slug, preset.id, preset.shortLabel).rendered,
+  ).map((preset) => preset.id);
