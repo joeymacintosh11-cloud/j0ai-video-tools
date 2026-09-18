@@ -12,3 +12,4 @@ delivery.local.json
 # Auto-generated waveform-analysis copies of each track's beat.wav
 # (npm run prepare-track regenerates these deterministically).
 public/tracks/*/analysis.wav
+public/tracks/*/analysis.wav.tmp-*

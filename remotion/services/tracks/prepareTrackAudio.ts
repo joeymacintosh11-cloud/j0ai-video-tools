@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, statSync, renameSync, rmSync } from "node:fs";
 import { promisify } from "node:util";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import {
@@ -53,13 +54,17 @@ export const ensureAnalysisAudio = async (
     regenerated,
   });
 
-  const beatMtimeMs = statSync(locations.beat).mtimeMs;
+  const source = statSync(locations.beat);
+  const beatMtimeMs = source.mtimeMs;
   const analysisExists = existsSync(locations.analysis);
 
   if (analysisExists && statSync(locations.analysis).mtimeMs >= beatMtimeMs) {
     return result(false);
   }
 
+  // Each producer writes a private sibling. Readers keep seeing the previous
+  // complete WAV until a successful, unchanged-source conversion is published.
+  const staged = `${locations.analysis}.tmp-${randomUUID()}.wav`;
   try {
     await execFileAsync("ffmpeg", [
       "-y",
@@ -72,8 +77,14 @@ export const ensureAnalysisAudio = async (
       ANALYSIS_SAMPLE_RATE,
       "-c:a",
       "pcm_s16le",
-      locations.analysis,
+      staged,
     ]);
+    const current = statSync(locations.beat);
+    if (current.ino !== source.ino || current.size !== source.size || current.mtimeMs !== source.mtimeMs) {
+      throw new Error("Source audio changed during analysis preparation; retry preparation.");
+    }
+    if (statSync(staged).size === 0) throw new Error("Analysis output is empty.");
+    renameSync(staged, locations.analysis);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
 
@@ -94,6 +105,8 @@ export const ensureAnalysisAudio = async (
         publicLabel(relativePath),
       ),
     );
+  } finally {
+    rmSync(staged, { force: true });
   }
 
   return result(true);
