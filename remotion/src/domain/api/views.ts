@@ -7,6 +7,13 @@ import type {
   DeliveryReason,
   DeliveryStatus,
 } from "../delivery/deliveryPaths.ts";
+import type {
+  DeliveryHistoryOrder,
+  DeliveryHistorySummary,
+  DeliveryLogEvent,
+  DeliveryLogProblem,
+  DeliveryLogStatus,
+} from "../delivery/deliveryHistory.ts";
 import type { ReleaseBundleFreshness } from "../delivery/releaseBundle.ts";
 import type { TrackErrorCode, TrackIssue } from "../tracks/errors.ts";
 import type {
@@ -540,6 +547,13 @@ export type DeliveryOutcomeView = {
   readonly destinationRelativePath: string | null;
   readonly bytes: number | null;
   readonly message: string | null;
+  /** The delivery log event this copy was recorded as, when it was. */
+  readonly historyEventId: string | null;
+  /**
+   * Why the copy was not recorded in the destination's delivery log. Never a
+   * delivery failure — the file is published and its receipt committed.
+   */
+  readonly historyProblem: string | null;
 };
 
 /** One target in a delivery plan. */
@@ -679,6 +693,70 @@ export type ReleaseBundlesView = {
   readonly nothingToDo: boolean;
 };
 
+/* ------------------------------------------------------------------ *
+ * Delivery history
+ * ------------------------------------------------------------------ */
+
+/**
+ * Query parameters for GET /api/delivery-history.
+ *
+ * All optional, all validated server-side, and the limit is bounded whether or
+ * not one is given. No path is accepted: the destination whose history is read
+ * comes from stored settings, exactly as it does for delivery itself.
+ */
+export type DeliveryHistoryQuery = {
+  readonly track?: string;
+  readonly preset?: string;
+  /** Inclusive ISO lower bound, or a relative period such as "7d" or "24h". */
+  readonly from?: string;
+  /** Exclusive ISO upper bound. */
+  readonly to?: string;
+  readonly limit?: number;
+  readonly order?: DeliveryHistoryOrder;
+};
+
+/** GET /api/delivery-history */
+export type DeliveryHistoryView = {
+  readonly root: string | null;
+  readonly rootProblem: string | null;
+  /** Whether the log could be read whole, and how it is damaged if not. */
+  readonly status: DeliveryLogStatus;
+  /** A note for the user about the status, when there is anything to say. */
+  readonly statusNote: string | null;
+  readonly problems: readonly DeliveryLogProblem[];
+  /** Events matching the query, ordered and limited. */
+  readonly events: readonly DeliveryLogEvent[];
+  /** How many matched the query before the limit was applied. */
+  readonly matched: number;
+  readonly limit: number;
+  /** Counts for the whole destination, not just the filtered events. */
+  readonly summary: DeliveryHistorySummary;
+  /** Tracks appearing anywhere in the log, for a filter list. */
+  readonly knownTracks: readonly { readonly slug: string; readonly title: string }[];
+};
+
+/**
+ * POST /api/delivery-history/reconcile
+ *
+ * Appends events for deliveries whose receipts exist but that were never
+ * recorded — the one thing a crash between the two can leave behind. It reads
+ * receipts only, never invents a timestamp, and is idempotent.
+ */
+export type DeliveryHistoryReconcileView = {
+  readonly root: string | null;
+  readonly rootProblem: string | null;
+  readonly scanned: number;
+  readonly alreadyRecorded: number;
+  readonly appended: readonly DeliveryLogEvent[];
+  /** Receipts that could not be turned into an event, with the reason. */
+  readonly unreconcilable: readonly {
+    readonly slug: string;
+    readonly presetId: string;
+    readonly reason: string;
+  }[];
+  readonly problem: string | null;
+};
+
 /** GET /api/renders/:jobId/logs */
 export type RenderLogsView = {
   readonly id: string;
@@ -703,3 +781,12 @@ export type RenderEventName =
 
 /** A validation error or warning, re-exported so clients need one import. */
 export type { TrackIssue };
+
+/** Delivery history types, re-exported so clients need one import. */
+export type {
+  DeliveryHistoryOrder,
+  DeliveryHistorySummary,
+  DeliveryLogEvent,
+  DeliveryLogProblem,
+  DeliveryLogStatus,
+};

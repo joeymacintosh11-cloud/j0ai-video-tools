@@ -16,6 +16,7 @@ import { outputIdentity } from "../tracks/exportManifest.ts";
 import { inspectTrack } from "../tracks/inspectTrack.ts";
 import { withRenderTargetLock, type RenderTargetLock } from "../render/renderLock.ts";
 import { assertDeliveryDestination } from "./deliveryDestination.ts";
+import { recordDelivery } from "./deliveryHistory.ts";
 import { stageDelivery } from "./stageDelivery.ts";
 import { DELIVERY_RECEIPT_VERSION } from "../../src/domain/delivery/deliveryPaths.ts";
 import {
@@ -50,6 +51,12 @@ import {
  * other deliveries of the same export are excluded from start to receipt.
  * Destination writes run in a directory pinned by a helper's working directory,
  * and live metadata is read again before the staged copy may be published.
+ *
+ * A successful delivery is then appended to the destination's delivery log, in
+ * that order and never before: file published, receipt committed, history
+ * recorded. Recording is the last step and the only one that cannot undo
+ * anything, so a log that could not be written is reported alongside a
+ * delivery that still succeeded.
  */
 
 export type DeliveryOutcome = {
@@ -63,6 +70,14 @@ export type DeliveryOutcome = {
   readonly bytes: number | null;
   /** Human-readable explanation when a delivery did not happen. */
   readonly message: string | null;
+  /** The history event this delivery was recorded as, when it was. */
+  readonly historyEventId: string | null;
+  /**
+   * Why the delivery was not recorded in the destination's log, if it was not.
+   * Never a delivery failure: the file is published and its receipt committed,
+   * so "delivered, not logged" is a real state and is reported as one.
+   */
+  readonly historyProblem: string | null;
 };
 
 export type DeliverExportInput = {
@@ -97,6 +112,8 @@ const outcome = (
   destinationRelativePath: null,
   bytes: null,
   message: null,
+  historyEventId: null,
+  historyProblem: null,
   ...partial,
 });
 
@@ -225,13 +242,27 @@ const deliverOwnedExport = async ({
         mtimeMs: published.mtimeMs,
       };
       await writeDeliveryReceipt(receipt, lock.assertOwned);
-      return published;
+      return { published, receipt };
     });
+
+    // Only now, with the copy published and its receipt committed, is there a
+    // delivery to record. The snapshot is the metadata this delivery actually
+    // used, so later edits never reach back into what history says.
+    const snapshot = latestMetadata ?? metadata;
+    const recorded = snapshot === null
+      ? {
+          eventId: null,
+          problem:
+            `${facts.outputLabel} was delivered, but the track's metadata could not be read, so it was not recorded in the delivery log.`,
+        }
+      : await recordDelivery({ root, receipt: delivered.receipt, metadata: snapshot });
 
     return outcome(slug, presetId, label, {
       ...common,
       status: "delivered",
-      bytes: delivered.size,
+      bytes: delivered.published.size,
+      historyEventId: recorded.eventId,
+      historyProblem: recorded.problem,
     });
   } catch (error) {
     return outcome(slug, presetId, label, {
