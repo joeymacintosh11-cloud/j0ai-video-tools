@@ -5060,5 +5060,157 @@ milestone in this project has kept.
 
 Not started, per instruction.
 
+## 48. Confirmed Delivery lifecycle audit and hardening (2026-09-19)
+
+This pass audited the completed feature in §47. The repository was clean at
+`b3b10d2` before the audit. No render output was changed, no new queue or
+progress transport was added, and nothing was pushed. The audit used the real
+render-manager singleton and real delivery/copy, receipt, history, bundle, and
+health paths; only the expensive render-worker process was replaced at the
+controlled worker boundary in lifecycle tests.
+
+### 48.1 Confirmed high-risk findings and fixes
+
+1. **The UI/CLI second apply could start a replacement render.** The first
+   apply returned `queued` with a job id, but the later confirmation only sent
+   action ids. A fresh plan after a failed or cancelled render still wanted a
+   rerender and could queue it again. The confirmation call now sends
+   `followJobs: [{actionId, jobId}]`. The executor verifies the job belongs to
+   the exact slug and preset of that freshly derived action and follows only
+   that job. A missing or mismatched job is `blocked`; failure and cancellation
+   are reported from that same job, with no replacement. Fresh server-side
+   planning still decides whether a selected action is safe and needed.
+2. **A render could finish between status lookup and subscription.**
+   `followRenderJob` now subscribes and re-reads manager state. It also handles
+   a synchronous terminal callback during registration, clears its timer and
+   listener on every ordinary settle/timeout, and re-reads terminal state at
+   the timeout boundary. A completed, failed, or cancelled job cannot be
+   missed at this boundary. The SSE route likewise re-reads after subscribing.
+3. **Live destination configuration could change during a render.** API and
+   CLI apply calls now let the executor read live settings; it checks that the
+   configured root still matches before delivery, bundle generation, and
+   health confirmation. A change blocks use of the earlier root. Existing
+   delivery code still revalidates root identity, export freshness, target
+   lock, and staged copy before publication.
+4. **A few results overstated certainty.** A vanished action under a blocked
+   plan is now `blocked`, rather than `skipped_already_fixed`. Health
+   confirmation refuses scan errors, unavailable/unconfigured roots, root
+   findings, and invalid tracks. A completed delivery can still have
+   `healthConfirmed: false` when other findings remain. CLI `timed_out` now
+   exits as failure and does not run a late confirm call; `--timeout` rejects
+   malformed/nonpositive values and caps at 1800 seconds.
+
+### 48.2 Lifecycle contract after the audit
+
+- **Job correlation:** `startBatch` decides whether to queue the exact
+  `(slug, presetId)` target. An in-process nonterminal job for the same exact
+  pair may be adopted; a different preset, track, historical terminal job,
+  or cross-process lock is never adopted. Two concurrent calls converge on
+  one in-process job. The second-call confirmation is pinned to the original
+  job id and target.
+- **Wait/timeout/cancel:** A waiter timeout ends only that observation; it
+  does not cancel the render or mutate the returned result later. Cancellation
+  prevents delivery when the manager settles the render as `cancelled` before
+  the follower begins post-render delivery. Once a render is `completed` and
+  delivery has begun, render cancellation cannot revoke the copy. The
+  delivery target lock and publication checks govern that phase.
+- **Render failure:** Worker failure/cancellation ends the action as
+  `render_failed`/`cancelled` and blocks its dependent bundle. A manager
+  `completed` state alone never authorizes a copy: the executor re-inspects
+  the track and requires a current canonical export. If output or manifest
+  is missing/stale, the action is `blocked` and no new render is started in
+  the same bounded wait.
+- **Delivery and history:** Post-render delivery goes through `deliverExport`.
+  Its per-target lock, staged atomic publication, receipt commit, and
+  idempotent history recording remain authoritative. Concurrent followers
+  may produce one `completed` and one `skipped_already_fixed`, or a truthful
+  `delivery_failed` on lock contention; the test observed one remediation
+  history entry and coherent health after two callers woke on one render.
+  Retrying a failed delivery can use a current canonical export as a
+  redelivery without rerendering.
+- **Bundles:** Only selected bundle actions run. A bundle requiring a
+  delivery waits for that action to complete; failed, cancelled, timed-out,
+  or merely queued prerequisites block it. Other tracks continue. A bundle
+  failure does not retroactively mark a successful copy failed.
+- **Health scope:** `healthConfirmed` is set only for a completed result with
+  a followed job id, after the whole selected action loop. It is a scan of
+  the named track(s), not a global catalogue claim. A missing selected bundle,
+  manual finding, unexpected file, scan error, or changed root can leave it
+  false even when delivery was completed. Unrelated tracks are outside this
+  confirmation scope.
+- **UI/SSE:** The panel keeps showing an in-progress state until its exact
+  job ids settle and the server confirms delivery. Apply and plan buttons
+  are disabled during the follow-up. The SSE route replays terminal manager
+  state at the subscription boundary; the hook deduplicates terminal
+  callbacks and uses `GET /api/renders/:id` on SSE error. SSE carries
+  progress; server job state and the apply result decide the outcome.
+- **HTTP/restart:** A disconnected waiting HTTP caller does not cancel its
+  server-side apply or render; the request handler can finish work after the
+  socket closes. Jobs and waiters are in memory. A server restart loses them
+  and does not fabricate delivery or health confirmation; a later fresh plan
+  can inspect canonical export and destination state and remediate manually.
+
+### 48.3 Regression and resource evidence
+
+The lifecycle file grew from 7 to 17 tests. New cases include exact failed,
+cancelled, successful, absent-output, and wrong-target job confirmation;
+terminal events at the follow and SSE subscription boundary; live destination
+config change; unexpected-file health; and 40 concurrent followers mixing
+short timeouts with full waits. The latter asserted listener counts return to
+baseline after timeout/completion and finished in about 7 ms in an isolated
+run. The server wait uses one subscription and one timer per caller, with no
+polling. Existing render-manager and delivery tests cover worker exit/error,
+locks, receipts, history deduplication, bundle publication, and cancellation
+of queued/active jobs. API input validation and CLI timeout parsing gained one
+test each. The full suite grew from 374 to 386 tests.
+
+A default-concurrency run briefly failed in an existing single-track planner
+test: its catalogue scan included another test's temporary `public/tracks`
+fixture just as that fixture was deleted, yielding `ENOENT` for its metadata.
+The new lifecycle tests use explicit slug scopes; the pre-existing planner
+tests that assert only one/two tracks were narrowed to those fixture slugs.
+The intentionally catalogue-wide orphan test remained catalogue-wide. The
+subsequent default-concurrency full suite passed **386/386**; the lifecycle
+file was also rerun repeatedly without failure. This is a test-fixture race,
+not evidence of a render/delivery correctness failure. A wider change to all
+shared-directory fixtures was outside this pass.
+
+Verification: `npm run lint` (ESLint + TypeScript), `npm test` at default
+concurrency, `npx vite build`, `npm run validate-track -- ghetto-geek`,
+`npm run prepare-track -- ghetto-geek`, and `git diff --check` all passed.
+The Vite large-chunk advisory remains. `public/tracks` and `out` contained
+only Ghetto Geek after the suite. No real render was run. A focused
+`/usr/bin/time -l` attempt showed the 40-waiter test itself passing but the
+macOS `sysctl kern.clockrate` memory report was denied by the sandbox; no
+quantitative memory claim is made.
+
+### 48.4 Remaining medium/low limits
+
+- There is no durable in-memory-job handoff after server restart, browser
+  refresh, component unmount, or a CLI timeout. The user can re-open a fresh
+  plan; no background follow-up is promised.
+- The CLI polls job state once per second solely for terminal progress text;
+  the server waiter is event-driven. A CLI deadline can expire just before a
+  terminal transition; `timed_out` then reports the caller's observation,
+  and a retry can inspect the completed job/fresh plan.
+- A destination settings change after the last explicit root check but before
+  a copy commit is a small residual window. The delivery pipeline still
+  enforces its root identity, target lock, source freshness, and safe path
+  checks. An in-flight apply does not get retroactively cancelled.
+- An HTTP disconnect does not abort a waiting executor, so a long request can
+  continue until its bounded timeout; it does not corrupt manager state.
+- The panel does not persist queued action/job pairs across refresh. It
+  cannot display a completed delivery it never confirmed. Recovery requires
+  a new plan/apply interaction.
+
+### 48.5 Local commits
+
+1. `2c1d198` — exact-job confirmation, render/SSE lost-event protection,
+   live-root guards, truthful results, and UI/CLI follow-up behavior.
+2. `9237921` — lifecycle/API/CLI regressions and single-track test isolation.
+3. (this commit) — this audit record.
+
+No push was made.
+
 *End of handoff. If anything in this document conflicts with the live
 repository, the repository is correct — verify with §31 before proceeding.*
