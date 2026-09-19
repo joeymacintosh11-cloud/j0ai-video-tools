@@ -4302,5 +4302,163 @@ actually click?"
 
 ---
 
+## 45. Destination Health audit and hardening (2026-09-19)
+
+This pass audited the completed feature in §44. It did not add remediation,
+change render output, or write to a configured destination. The repository,
+not the historical descriptions above, remains authoritative.
+
+### 45.1 Findings and fixes
+
+No confirmed critical issue required a design change. The following high-risk
+issues were reproduced and fixed:
+
+1. A configured root replaced by a symlink was *reported* but then scanned
+   through the link. The scanner now refuses it before `resolveDeliveryRoot`
+   can inspect the target. It pins the root's device and inode for the scan,
+   checks its canonical path again after local inspection and before subsequent
+   destination work, and stops with `error` if the root changes. Destination
+   directory listings are synchronous, avoiding an event-loop gap between a
+   check and the corresponding read. A deterministic directory-swap test proves
+   the scan stops before track reads.
+2. A delivered leaf replaced by a symlink could pass the shared delivery-state
+   size/mtime comparison if its target copied those attributes. The shared
+   state check now uses `lstat` and requires a regular file; the health scanner
+   reports a receipt-backed link as `delivered_file_changed` without following
+   it. A regression fixture copies the recorded attributes.
+3. The unexpected-export sweep used `stat` on links, and bundle freshness used
+   ordinary file reads on bundle leaves. The sweep now reports a link without
+   statting its target. Bundle reads use `O_NOFOLLOW` plus `fstat` on the opened
+   descriptor. The health scanner reports a linked bundle leaf as unreadable.
+4. A receipt for a previous delivery folder could suppress an unreceipted
+   file with the same basename in the new folder. A receipt now covers an
+   export only when both its root and complete relative path match the active
+   folder. A moved-folder regression proves the file is reported.
+5. A track folder replaced by a link was described as gone. It is now an
+   unreadable/non-directory entry and bundle inspection is skipped. An unknown
+   named track now makes a scan `error` while preserving other results. Named
+   slugs are validated even when no destination is configured. The API rejects
+   empty and over-100 track lists instead of silently widening an empty scope
+   to a catalogue scan; the CLI rejects unknown options.
+6. A UI result could be carried between selected tracks or remain as a
+   catalogue badge after the configured destination changed. The track detail
+   is keyed by slug, catalogue badges are cleared when settings change, and
+   the display explicitly says when the scan ran and that content was not
+   compared. A partial/failed scan cannot display the healthy message.
+
+### 45.2 Guarantees and limits
+
+- The configured root must still be a real directory at its stored canonical
+  path. During a scan, its device/inode is pinned and rechecked before the
+  scanner proceeds. A root that is missing before the scan is `unavailable`;
+  a root that changes during it is `error` with a root finding. A root that
+  merely loses listing permission produces `destination_folder_unreadable`.
+- Receipt-backed delivered leaves are checked as regular files with `lstat`.
+  A symlink, FIFO, socket, or directory cannot be called a current delivered
+  file. Size and mtime are compared with the receipt. **Neither those fields
+  nor inode alone prove content identity.** A regular replacement with the
+  same size and copied mtime can still appear current because old receipts do
+  not record destination inode or a content digest. No MP4 hashing was added.
+- Track folders must be real directories before listing. Unexpected export
+  links are named but their targets are not statted. Bundle leaves are opened
+  with `O_NOFOLLOW`. Relative path construction still goes through the
+  existing delivery-folder and destination fences. The scanner does not
+  recurse into arbitrary subfolders.
+- A concurrent process can mutate a pathname in the small interval between
+  a parent check and a path-based operation. Node's path-based directory APIs
+  do not provide a portable `openat`-style pinned subtree here. The checks
+  make ordinary mutation fail closed, but this scan is **not a security
+  boundary against an adversarial process continuously swapping directories**.
+  It takes no lock and is a best-effort point-in-time report, not a transaction.
+- Receipt parsing remains the existing service's policy: malformed or
+  unsupported receipts read as absent. A file with a matching managed name
+  then appears unexpected; if that file is also gone, the scan cannot infer
+  the old delivery. Receipts for retired current-build presets are read even
+  when the format is no longer intended. A format never delivered is not
+  flagged simply for being intended.
+- Release freshness remains delegated to `releaseBundleStateFor`. The scan
+  only distinguishes a readable pair mismatch from the service's ordinary
+  outdated result. A malformed JSON bundle is treated by that service as
+  missing; an unreadable half is not distinguished from an absent half.
+- Delivery history is independent: no log is read to derive health. A missing,
+  corrupt, unsupported, repaired-tail, or duplicated history cannot change
+  receipt/file/bundle findings.
+
+### 45.3 Finding evidence and uncertainty
+
+| Code | Triggering evidence | Plausible false positive | Plausible false negative |
+|---|---|---|---|
+| `destination_root_identity_changed` | Stored path resolves elsewhere, is a link, or changes dev:ino during scan | Intentional remount or replacement | Replacement already present before first scan with the same canonical path cannot be compared with a persisted identity |
+| `destination_folder_unreadable` | Listing or checking a required directory fails; an entry is not a real directory | Transient permission or mount change | Permission restored before the check |
+| `track_folder_missing` | Folder absent and a matching receipt claims a delivery | Folder being renamed during scan | No valid current receipt survives to establish the claim |
+| `delivered_file_missing` | Matching receipt, `ENOENT` on delivered leaf | File appears just after check | File disappears after check |
+| `delivered_file_changed` | Matching receipt, link/nonfile or size/mtime mismatch | Metadata-only touch or same content copied anew | Regular replacement with same size and copied mtime |
+| `destination_file_unreadable` | Claimed leaf or bundle entry cannot be examined as a regular file | Brief access failure | Access restored after check |
+| `unexpected_export_file` | File in active track folder follows `<slug>-*.mp4`, no receipt for that exact root/path | A manually copied user MP4 with matching name | Old slug, different case/Unicode spelling, nested file, malformed name |
+| `unexpected_track_folder` | Unclaimed root folder contains release bookkeeping or a current-preset-shaped MP4 | Unrelated folder with generic `release.json`/`release.md` or matching filename | Retired preset only, nested files, empty orphan, case/Unicode spelling |
+| `release_bundle_missing` | Readable bundle absent according to bundle-state service, and a current matching receipt exists | Malformed or unreadable JSON also reads missing | No valid receipt even though a bundle used to exist |
+| `release_bundle_outdated` | Bundle-state service says outdated, pair IDs not demonstrably different | Concurrent metadata/delivery edit during scan | A state change after scan; no content hashing |
+| `release_bundle_pair_mismatch` | Both readable files carry different IDs | One half updated during scan | A missing, malformed, or unreadable half is classified by broader bundle state |
+
+Managed-looking filenames are *signals*, not proof of app ownership. Dotfiles,
+temporary files without `.mp4`, files with `.mp4.bak`, and unrelated nested
+files are outside this nonrecursive rule. Case and Unicode variants are not
+normalized. Those conservative choices leave known false negatives and avoid
+claiming that arbitrary user files were delivered by the app.
+
+### 45.4 Performance and verification
+
+Fresh local synthetic fixtures were created and removed in `finally` blocks.
+The catalogue measurements include the repository's existing track. Dense
+file measurements use one named synthetic track. RSS and heap deltas are
+post-GC process measurements, so they are indicative rather than isolated
+per-scan allocations.
+
+| Scale | Time | RSS delta | Heap delta |
+|---|---:|---:|---:|
+| 101 tracks / 100 managed files | 42.0 ms | 6.3 MB | 0.4 MB |
+| 501 tracks / 500 managed files | 160.2 ms | 12.1 MB | 0.4 MB |
+| 1 track / 1,001 managed files | 3.4 ms | 0.1 MB | 0.4 MB |
+| 1 track / 5,001 managed files | 13.5 ms | 0.6 MB | 1.5 MB |
+
+Instrumented runs used 101 and 501 tracks respectively. `readdirSync`
+calls were 101/501, `lstatSync` 1,918/9,518, `statSync` 609/3,009,
+`realpathSync` 2,217/11,017, and `readFileSync` 1,215/6,015. These totals
+include existing track inspection, coverage and bundle-state services, not
+only the new scanner. No video was read, hashed, decoded or probed.
+
+Regression tests cover root symlink and mid-scan directory replacement,
+metadata-matched delivered symlink, unexpected export link, moved-folder
+receipt, linked bundle, validation without config, invalid/partial named
+scope, API scope limits and CLI malformed arguments. The destination suite
+was rerun repeatedly. Full test, lint/TypeScript, Vite build, `validate-track`,
+`prepare-track`, and `git diff --check` were run. The first sandboxed full
+test run could not bind localhost (`listen EPERM`); the authorized rerun
+passed. Final verification: **342/342 tests**, **40/40 destination-health
+tests** (run repeatedly), lint/TypeScript clean, Vite build passed with its
+existing chunk-size advisory, and both track commands exited 0. The project
+had no `delivery.local.json` before or after this pass. Benchmark fixtures,
+temporary files, locks and Remotion workers were absent at the end. Existing
+user Chrome processes were not touched. No production destination was written.
+
+### 45.5 Remaining medium/low risks
+
+- Exact copied size and mtime on a regular replacement remains undetectable
+  without a stronger receipt and migrated history; this pass kept the current
+  stat-based contract explicit.
+- A malformed receipt loses evidence of a missing delivered file, and bundle
+  state collapses unreadable/malformed published JSON into `missing`.
+- Orphan and export naming can produce both false positives and false
+  negatives as listed above. The scanner does not inspect MP4 contents.
+- A scan can combine observations from adjacent moments during delivery or
+  metadata edits. A rescan is the correct way to check the settled state.
+- The directory-parent swap race described in §45.2 would require a different
+  filesystem access primitive for a strict adversarial guarantee.
+
+**Audit commits:** `de44b71` — harden the scanner and its shared read paths,
+API/CLI/UI edge states, and regression tests; companion documentation commit
+records this audit.
+No push was made.
+
 *End of handoff. If anything in this document conflicts with the live
 repository, the repository is correct — verify with §31 before proceeding.*
