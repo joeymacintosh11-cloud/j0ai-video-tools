@@ -834,6 +834,14 @@ export type DestinationFixPlanBody = {
 
 export type DestinationFixApplyBody = DestinationFixPlanBody & {
   readonly actionIds: readonly string[];
+  /**
+   * Follow a rerender_and_deliver action's render job through to a final,
+   * confirmed result before this call returns, instead of returning `queued`
+   * immediately. Off by default.
+   */
+  readonly waitForCompletion?: boolean;
+  /** Bounded wait in milliseconds; default 5 minutes, capped at 30. */
+  readonly timeoutMs?: number;
 };
 
 /**

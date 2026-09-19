@@ -2,6 +2,8 @@ import {
   applyDestinationFixPlan,
   planDestinationFix,
 } from "../server/services/destinationFixPlan.ts";
+import { renderManager } from "../server/services/renderManager.ts";
+import { isTerminalStatus } from "../server/types.ts";
 import { readDeliverySettings } from "../services/delivery/deliverySettings.ts";
 import type { RemediationAction, RemediationActionResult } from "../src/domain/delivery/destinationFixPlan.ts";
 import type { DestinationHealthStatus } from "../src/domain/delivery/destinationHealth.ts";
@@ -15,6 +17,15 @@ import { runCli } from "./cli.ts";
  * Dry run by default, exactly like the API and the UI: this command always
  * shows the plan before anything runs. Uses the same planner/executor as the
  * API, so there is no second copy of the finding-to-action policy in scripts/.
+ *
+ * --wait follows a rerender_and_deliver action through to a confirmed final
+ * result. It works exactly like the UI does: a first, fast apply-plan call
+ * queues any render and reports its job id; this script then polls the same
+ * in-process render manager the API itself reads from (a short, bounded
+ * interval, purely for what to print here — never a new job store), and once
+ * every followed job is terminal, a second apply-plan call with
+ * waitForCompletion chains delivery, a bundle update, and a health
+ * confirmation through to the real final outcome.
  */
 
 const printUsage = () => {
@@ -22,9 +33,11 @@ const printUsage = () => {
     [
       "Usage: npm run destination-fix-plan -- [<options>]",
       "",
-      "  --track <slug>    Plan only this track (repeatable)",
-      "  --json            Print the full result as JSON instead",
-      "  --apply           Run the safe actions this plan proposes",
+      "  --track <slug>     Plan only this track (repeatable)",
+      "  --json             Print the full result as JSON instead",
+      "  --apply            Run the safe actions this plan proposes",
+      "  --wait             Follow a queued render through to delivery",
+      "  --timeout <secs>   Bound the wait (default 300, only with --wait)",
       "",
       "With no --track, plans for every track under public/tracks/.",
       "",
@@ -32,19 +45,28 @@ const printUsage = () => {
       "the destination is. Manual-review items are never run, with or without",
       "--apply — nothing here deletes or replaces a file it did not deliver.",
       "",
+      "Without --wait, a rerender_and_deliver action only ever queues its",
+      "render and reports [queued] — never a false success. --timeout stops",
+      "this script from waiting, not the render itself, which keeps going.",
+      "",
       "Examples:",
       "  npm run destination-fix-plan",
       "  npm run destination-fix-plan -- --track ghetto-geek",
       "  npm run destination-fix-plan -- --apply",
+      "  npm run destination-fix-plan -- --apply --wait --timeout 600",
     ].join("\n"),
   );
 };
+
+const DEFAULT_WAIT_SECONDS = 300;
 
 const parseArgs = (argv: string[]) => {
   const tracks: string[] = [];
   let json = false;
   let help = false;
   let apply = false;
+  let wait = false;
+  let timeoutSeconds = DEFAULT_WAIT_SECONDS;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -59,6 +81,16 @@ const parseArgs = (argv: string[]) => {
       json = true;
     } else if (arg === "--apply") {
       apply = true;
+    } else if (arg === "--wait") {
+      wait = true;
+    } else if (arg === "--timeout") {
+      const value = argv[index + 1];
+      const parsed = value === undefined ? NaN : Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new TrackError(trackIssue("INVALID_REQUEST", "--timeout needs a positive number of seconds."));
+      }
+      timeoutSeconds = parsed;
+      index += 1;
     } else if (arg === "--help") {
       help = true;
     } else {
@@ -66,7 +98,7 @@ const parseArgs = (argv: string[]) => {
     }
   }
 
-  return { tracks, json, help, apply };
+  return { tracks, json, help, apply, wait, timeoutSeconds };
 };
 
 const STATUS_LABEL: Record<DestinationHealthStatus, string> = {
@@ -83,19 +115,65 @@ const printAction = (a: RemediationAction) => {
   console.log(`      ${a.reason}`);
 };
 
+const FAILURE_STATUSES: ReadonlySet<RemediationActionResult["status"]> = new Set([
+  "failed",
+  "blocked",
+  "render_failed",
+  "delivery_failed",
+  "cancelled",
+]);
+
 const printResult = (r: RemediationActionResult) => {
-  const mark =
-    r.status === "completed"
-      ? "✓"
-      : r.status === "failed" || r.status === "blocked"
-        ? "✗"
-        : "·";
+  const mark = r.status === "completed" ? "✓" : FAILURE_STATUSES.has(r.status) ? "✗" : "·";
   console.log(`  ${mark} [${r.status}] ${r.kind}${r.slug ? ` — ${r.slug}` : ""}${r.presetId ? ` / ${r.presetId}` : ""}`);
   if (r.reason !== null) console.log(`      ${r.reason}`);
+  if (r.healthConfirmed === true) console.log("      Destination health confirmed for this track.");
+};
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Polls the in-process render manager — the same store the API reads —
+ * purely to print progress while waiting, at a short bounded interval, never
+ * a busy loop. Returns once every named job is terminal or the deadline
+ * passes; either way, no job is ever cancelled by this.
+ */
+const POLL_INTERVAL_MS = 1000;
+
+const followQueuedJobs = async (
+  jobs: readonly { readonly title: string; readonly jobId: string }[],
+  timeoutMs: number,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  const lastPrinted = new Map<string, string>();
+
+  for (;;) {
+    let allTerminal = true;
+
+    for (const { title, jobId } of jobs) {
+      let job;
+      try {
+        job = renderManager.getJob(jobId);
+      } catch {
+        continue; // Gone from the server's memory; the confirm call will report this plainly.
+      }
+
+      const label =
+        job.status === "rendering" ? `rendering ${Math.round(job.progress * 100)}%` : job.status;
+      if (lastPrinted.get(jobId) !== label) {
+        console.log(`  [${label}] ${title}`);
+        lastPrinted.set(jobId, label);
+      }
+      if (!isTerminalStatus(job.status)) allTerminal = false;
+    }
+
+    if (allTerminal || Date.now() >= deadline) return;
+    await sleep(POLL_INTERVAL_MS);
+  }
 };
 
 runCli("planning destination remediation", async () => {
-  const { tracks, json, help, apply } = parseArgs(process.argv.slice(2));
+  const { tracks, json, help, apply, wait, timeoutSeconds } = parseArgs(process.argv.slice(2));
 
   if (help) {
     printUsage();
@@ -149,23 +227,47 @@ runCli("planning destination remediation", async () => {
     return;
   }
 
+  const actionIds = executable.map((a) => a.id);
+  const titleById = new Map(plan.actions.map((a) => [a.id, a.title]));
+
   console.log(`\nApplying ${executable.length} safe action(s)...`);
-  const { results } = await applyDestinationFixPlan({
-    slugs,
-    settings,
-    actionIds: executable.map((a) => a.id),
-  });
+  const first = await applyDestinationFixPlan({ slugs, settings, actionIds });
+
+  const queuedJobs = first.results
+    .filter((r): r is RemediationActionResult & { jobId: string } => r.status === "queued" && r.jobId !== null)
+    .map((r) => ({ jobId: r.jobId, title: titleById.get(r.actionId) ?? r.kind }));
+
+  let results = first.results;
+
+  if (queuedJobs.length > 0 && wait) {
+    console.log(`\nWaiting up to ${timeoutSeconds}s for ${queuedJobs.length} render(s)...`);
+    await followQueuedJobs(queuedJobs, timeoutSeconds * 1000);
+
+    const confirmed = await applyDestinationFixPlan({
+      slugs,
+      settings,
+      actionIds,
+      waitForCompletion: true,
+      timeoutMs: 30000,
+    });
+    results = confirmed.results;
+  }
 
   if (json) {
     console.log(JSON.stringify(results, null, 2));
   } else {
     console.log("");
     for (const r of results) printResult(r);
+    if (queuedJobs.length > 0 && !wait) {
+      console.log(
+        `\n${queuedJobs.length} render(s) queued but not followed. Add --wait to follow them through delivery.`,
+      );
+    }
   }
 
-  if (results.some((r) => r.status === "failed")) {
+  if (results.some((r) => FAILURE_STATUSES.has(r.status))) {
     throw new TrackError(
-      trackIssue("INVALID_REQUEST", "At least one action failed. See results above."),
+      trackIssue("INVALID_REQUEST", "At least one action did not complete cleanly. See results above."),
     );
   }
 });

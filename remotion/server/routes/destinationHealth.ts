@@ -127,6 +127,15 @@ export const handlePlanDestinationFix = async (
  * actually run is one `planDestinationFix` independently proposes right now,
  * from current state, not from anything the client sent beyond an id. See
  * `applyDestinationFixPlan` for the full revalidation and dependency rules.
+ *
+ * `waitForCompletion` (off by default) makes a rerender_and_deliver action
+ * follow its render job through to a final, confirmed result —
+ * completed/render_failed/delivery_failed/cancelled/timed_out — instead of
+ * returning `queued` immediately. This call then does not return until that
+ * happens or `timeoutMs` elapses (default 5 minutes, capped at 30), so a
+ * caller that wants live progress meanwhile should use the `jobId` this
+ * still returns for a `queued` result and the existing per-job SSE endpoint,
+ * then call this again with `waitForCompletion` once that job is terminal.
  */
 export const handleApplyDestinationFix = async (
   request: IncomingMessage,
@@ -148,10 +157,20 @@ export const handleApplyDestinationFix = async (
     return id;
   });
 
+  const { waitForCompletion, timeoutMs } = body;
+  if (waitForCompletion !== undefined && typeof waitForCompletion !== "boolean") {
+    throw new TrackError(trackIssue("INVALID_REQUEST", '"waitForCompletion" must be true or false.'));
+  }
+  if (timeoutMs !== undefined && typeof timeoutMs !== "number") {
+    throw new TrackError(trackIssue("INVALID_REQUEST", '"timeoutMs" must be a number.'));
+  }
+
   const { plan, results } = await applyDestinationFixPlan({
     slugs: readSlugs(body),
     settings,
     actionIds: ids,
+    waitForCompletion,
+    timeoutMs,
   });
 
   const payload: DestinationFixApplyView = { plan: toPlanView(plan), results };

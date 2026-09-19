@@ -463,14 +463,22 @@ export const planDestinationFix = (
  * Runs the named safe action ids, after the server re-derives the plan fresh
  * and revalidates each one against current state. `tracks` must match the
  * scope the plan was made with.
+ *
+ * `waitForCompletion` follows a rerender_and_deliver action's render job
+ * through to a final, confirmed result before this call returns, rather than
+ * returning `queued` immediately — see `useRenderJob`/the fix plan panel for
+ * how the UI gets live progress meanwhile via the render job's own SSE
+ * endpoint instead of blocking on this alone.
  */
 export const applyDestinationFix = (
   tracks: readonly string[] | null,
   actionIds: readonly string[],
+  options: { readonly waitForCompletion?: boolean; readonly timeoutMs?: number } = {},
 ): Promise<DestinationFixApplyView> => {
   const body: DestinationFixApplyBody = {
     ...(tracks === null ? { catalogue: true } : { tracks }),
     actionIds,
+    ...options,
   };
   return jsonRequest<DestinationFixApplyView>("/api/destination-health/apply-plan", "POST", body);
 };
