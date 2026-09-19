@@ -32,7 +32,9 @@ import {
 import { generateReleaseBundle } from "../../services/delivery/releaseBundle.ts";
 import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
 import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
+import { isTerminalStatus } from "../types.ts";
 import { scanDestinationHealth } from "./destinationHealth.ts";
+import { followRenderJob } from "./renderFollow.ts";
 import { renderManager } from "./renderManager.ts";
 
 /**
@@ -373,6 +375,28 @@ export type ApplyDestinationFixInput = {
   readonly slugs?: readonly string[];
   readonly settings?: DeliverySettings;
   readonly actionIds: readonly string[];
+  /**
+   * Whether a rerender_and_deliver action should follow its render job to a
+   * final result (completed/render_failed/delivery_failed/cancelled/timed_out)
+   * before this call returns, rather than returning `queued` immediately.
+   * Off by default — the existing, unchanged behaviour — so every prior
+   * caller of this function keeps working exactly as it did.
+   */
+  readonly waitForCompletion?: boolean;
+  /** Bounded wait, clamped to `MAX_WAIT_TIMEOUT_MS`. Ignored without waitForCompletion. */
+  readonly timeoutMs?: number;
+};
+
+/** Long enough for most renders; short enough that one request cannot hang forever. */
+const DEFAULT_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
+const MAX_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
+
+const resolveTimeoutMs = (value: number | undefined): number => {
+  if (value === undefined) return DEFAULT_WAIT_TIMEOUT_MS;
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new TrackError(trackIssue("INVALID_REQUEST", "timeoutMs must be a positive number."));
+  }
+  return Math.min(value, MAX_WAIT_TIMEOUT_MS);
 };
 
 export type ApplyDestinationFixResult = {
@@ -384,6 +408,12 @@ const settle = (
   action: RemediationAction,
   status: RemediationActionResult["status"],
   reason: string | null,
+  extra: {
+    readonly jobId?: string | null;
+    readonly startedAt?: string | null;
+    readonly completedAt?: string | null;
+    readonly healthConfirmed?: boolean | null;
+  } = {},
 ): RemediationActionResult => ({
   actionId: action.id,
   kind: action.kind,
@@ -391,6 +421,10 @@ const settle = (
   presetId: action.presetId,
   status,
   reason,
+  jobId: extra.jobId ?? null,
+  startedAt: extra.startedAt ?? null,
+  completedAt: extra.completedAt ?? null,
+  healthConfirmed: extra.healthConfirmed ?? null,
 });
 
 export const applyDestinationFixPlan = async (
@@ -403,6 +437,8 @@ export const applyDestinationFixPlan = async (
   }
 
   const settings = input.settings ?? (await readDeliverySettings());
+  const waitForCompletion = input.waitForCompletion === true;
+  const timeoutMs = resolveTimeoutMs(input.timeoutMs);
   const plan = await planDestinationFix({ slugs: input.slugs, settings });
 
   const requestedIds = new Set(input.actionIds);
@@ -427,6 +463,10 @@ export const applyDestinationFixPlan = async (
         presetId: null,
         status: "skipped_already_fixed",
         reason: "This action no longer appears in a fresh plan — the underlying drift is already gone.",
+        jobId: null,
+        startedAt: null,
+        completedAt: null,
+        healthConfirmed: null,
       });
       continue;
     }
@@ -471,7 +511,7 @@ export const applyDestinationFixPlan = async (
           ),
         );
       } else {
-        settled.set(id, await executeAction(action, settings));
+        settled.set(id, await executeAction(action, settings, { waitForCompletion, timeoutMs }));
       }
 
       pending.delete(id);
@@ -489,16 +529,46 @@ export const applyDestinationFixPlan = async (
     }
   }
 
+  // Health confirmation runs once, after every action in this call has
+  // settled — so a bundle update this same call performed for the same
+  // track is already reflected, rather than confirming health mid-sequence
+  // against a track that is still, correctly, mid-fix.
+  const confirmSlugs = [
+    ...new Set(
+      [...requestedIds]
+        .map((id) => settled.get(id)!)
+        .filter((r) => r.kind === "rerender_and_deliver" && r.status === "completed" && r.jobId !== null)
+        .map((r) => r.slug)
+        .filter((slug): slug is string => slug !== null),
+    ),
+  ];
+
+  if (confirmSlugs.length > 0) {
+    const confirmedSlugs = await confirmHealthForSlugs(confirmSlugs, settings);
+    for (const id of requestedIds) {
+      const result = settled.get(id)!;
+      if (result.kind === "rerender_and_deliver" && result.status === "completed" && result.slug !== null) {
+        settled.set(id, { ...result, healthConfirmed: confirmedSlugs.has(result.slug) });
+      }
+    }
+  }
+
   const results = [...requestedIds].map((id) => settled.get(id)!);
   return { plan, results };
+};
+
+type ExecuteOptions = {
+  readonly waitForCompletion: boolean;
+  readonly timeoutMs: number;
 };
 
 const executeAction = async (
   action: RemediationAction,
   settings: DeliverySettings,
+  options: ExecuteOptions,
 ): Promise<RemediationActionResult> => {
   if (action.kind === "redeliver" || action.kind === "rerender_and_deliver") {
-    return executeDeliveryAction(action, settings);
+    return executeDeliveryAction(action, settings, options);
   }
   if (action.kind === "regenerate_release_bundle") {
     return executeBundleAction(action, settings);
@@ -506,9 +576,183 @@ const executeAction = async (
   return settle(action, "manual", "This action is not one apply-plan ever runs automatically.");
 };
 
+/**
+ * Finds a render job already queued or running for this exact track/format,
+ * or queues a new one — via the render manager's own batch dedup, in one
+ * call, so there is no window between "check" and "queue" for a second
+ * caller to slip through. Two concurrent apply calls for the same target
+ * converge on one job id this way, never two.
+ */
+const queueOrAdoptRender = (
+  slug: string,
+  presetId: RenderPresetId,
+): { readonly jobId: string } | { readonly blocked: string } => {
+  const { batch, locked } = renderManager.startBatch([{ slug, preset: presetId }]);
+  const ownJob = batch.jobs.find((job) => job.slug === slug && job.presetId === presetId);
+  if (ownJob) return { jobId: ownJob.id };
+
+  if (locked.some((target) => target.slug === slug && target.preset === presetId)) {
+    return {
+      blocked: `Track "${slug}" is already rendering ${presetId} in another process. Wait for it to finish, then re-run the fix plan.`,
+    };
+  }
+
+  // Not ours and not locked elsewhere: skipped because this exact target is
+  // already queued or running in this same render manager, started by
+  // another apply call, a render batch, or the render UI. Adopt it — this is
+  // the "reuse existing job, never duplicate it" case §13 calls for.
+  const existing = renderManager
+    .listJobs()
+    .find((job) => job.slug === slug && job.presetId === presetId && !isTerminalStatus(job.status));
+  if (existing) return { jobId: existing.id };
+
+  return { blocked: `Could not find or queue a render for "${slug}" / ${presetId}.` };
+};
+
+/**
+ * Attempts delivery right now, revalidating everything fresh from disk.
+ *
+ * Shared by an immediate redeliver and by the post-render step of a followed
+ * rerender_and_deliver — a wait can take real time, so nothing computed
+ * before it (track existence, coverage, root) is trusted afterward; this
+ * re-fetches all of it. `postRender` only changes wording and which failure
+ * code a delivery failure gets, never the logic.
+ */
+const deliverIfNeeded = async (
+  action: RemediationAction,
+  settings: DeliverySettings,
+  slug: string,
+  presetId: RenderPresetId,
+  jobId: string | null,
+  startedAt: string | null,
+  postRender: boolean,
+): Promise<RemediationActionResult> => {
+  const { root } = resolveDeliveryRoot(settings);
+  if (root === null) {
+    return settle(action, "blocked", "No destination is configured any more.", { jobId, startedAt });
+  }
+
+  const inspection = await inspectTrack(slug);
+  if (!inspection.facts.trackDirExists) {
+    return settle(action, "blocked", `Track "${slug}" no longer exists.`, { jobId, startedAt });
+  }
+
+  const coverage = trackExportCoverage(slug, inspection.metadata);
+  const facts = coverage.find((entry) => entry.presetId === presetId);
+  const folder = inspection.metadata?.deliveryFolder ?? null;
+
+  if (facts === undefined || facts.freshness !== "current") {
+    // Reachable after a render that just succeeded only if the export
+    // changed again in the meantime (a metadata edit racing the render, most
+    // plausibly). Never queue a second render from inside an already-bounded
+    // wait — report plainly and let a fresh plan decide what happens next.
+    const message = postRender
+      ? "The export changed again while this render was running, so it is still not current. Re-run the fix plan."
+      : "The canonical export is no longer current. Re-run the fix plan.";
+    return settle(action, "blocked", message, { jobId, startedAt });
+  }
+
+  const state = deliveryStateForTarget(slug, presetId, facts, root, folder);
+  if (state.status === "delivered") {
+    return settle(action, "skipped_already_fixed", "Already matches what was delivered.", { jobId, startedAt });
+  }
+
+  const outcome = await deliverExport({ slug, presetId, settings });
+  const completedAt = new Date().toISOString();
+
+  if (outcome.status === "delivered") {
+    return settle(action, "completed", outcome.message, { jobId, startedAt, completedAt });
+  }
+  return settle(
+    action,
+    postRender ? "delivery_failed" : "failed",
+    outcome.message ?? `Delivery reported status "${outcome.status}".`,
+    { jobId, startedAt, completedAt },
+  );
+};
+
+/**
+ * A narrow health check — scoped to exactly the tracks named, never the
+ * catalogue — to confirm a fix actually landed. One scan covers every track
+ * this apply call fixed, rather than one scan per track.
+ *
+ * A root problem (the destination itself now untrustworthy) taints every
+ * name at once: none of them can honestly be called confirmed. A scan
+ * failure is reported the same way — unconfirmed, never turned into the
+ * delivery itself being reported as failed, since it already succeeded.
+ */
+const confirmHealthForSlugs = async (
+  slugs: readonly string[],
+  settings: DeliverySettings,
+): Promise<ReadonlySet<string>> => {
+  try {
+    const health = await scanDestinationHealth({ slugs, settings });
+    if (health.rootFindings.length > 0) return new Set();
+    return new Set(health.tracks.filter((track) => track.findings.length === 0).map((track) => track.slug));
+  } catch {
+    return new Set();
+  }
+};
+
+/**
+ * Follows a just-queued (or adopted) render job to a terminal state, then —
+ * only if it completed — attempts delivery and a narrow health confirmation.
+ *
+ * A cancelled or failed render never reaches delivery. A timeout never
+ * cancels the job or claims it failed: it means this call stopped waiting,
+ * nothing more.
+ */
+const followRenderThenDeliver = async (
+  action: RemediationAction,
+  settings: DeliverySettings,
+  jobId: string,
+  startedAt: string,
+  timeoutMs: number,
+): Promise<RemediationActionResult> => {
+  const followed = await followRenderJob(jobId, timeoutMs);
+
+  if (followed.outcome === "timed_out") {
+    return settle(
+      action,
+      "timed_out",
+      `Still waiting after ${Math.round(timeoutMs / 1000)}s (job ${jobId}, currently "${followed.job.status}"). ` +
+        "The render was not cancelled and may still finish on its own — re-run the fix plan to confirm.",
+      { jobId, startedAt },
+    );
+  }
+
+  const job = followed.job;
+  const completedAt = new Date().toISOString();
+
+  if (job.status === "cancelled") {
+    return settle(action, "cancelled", "The render was cancelled before delivery could run.", {
+      jobId,
+      startedAt,
+      completedAt,
+    });
+  }
+  if (job.status === "failed") {
+    return settle(action, "render_failed", job.error?.message ?? "The render failed.", {
+      jobId,
+      startedAt,
+      completedAt,
+    });
+  }
+
+  const slug = action.slug!;
+  const presetId = action.presetId!;
+  // Health confirmation deliberately happens once, after the whole apply
+  // call settles (see applyDestinationFixPlan) rather than here: a bundle
+  // action in the same call that depends on this delivery has not run yet
+  // at this point, and checking health this early would misreport a still-
+  // pending bundle update as an unconfirmed fix.
+  return deliverIfNeeded(action, settings, slug, presetId, jobId, startedAt, true);
+};
+
 const executeDeliveryAction = async (
   action: RemediationAction,
   settings: DeliverySettings,
+  options: ExecuteOptions,
 ): Promise<RemediationActionResult> => {
   const slug = action.slug;
   const presetId = action.presetId;
@@ -516,6 +760,9 @@ const executeDeliveryAction = async (
     return settle(action, "failed", "This action is missing the track or format it names.");
   }
 
+  // Checked before ever considering a render: queueing real render work for
+  // a destination that is not even configured would be pure waste, and the
+  // world may have changed this much since the plan was made.
   const { root } = resolveDeliveryRoot(settings);
   if (root === null) {
     return settle(action, "blocked", "No destination is configured any more.");
@@ -528,33 +775,35 @@ const executeDeliveryAction = async (
 
   const coverage = trackExportCoverage(slug, inspection.metadata);
   const facts = coverage.find((entry) => entry.presetId === presetId);
-  const folder = inspection.metadata?.deliveryFolder ?? null;
 
-  if (facts === undefined || facts.freshness !== "current") {
-    if (action.kind === "redeliver") {
-      // The canonical export changed since the plan was made; blindly
-      // delivering it now would not be the fix this action described.
-      return settle(action, "blocked", "The canonical export is no longer current. Re-run the fix plan.");
-    }
+  if (facts !== undefined && facts.freshness === "current") {
+    return deliverIfNeeded(action, settings, slug, presetId, null, null, false);
+  }
 
-    const batch = renderManager.startBatch([{ slug, preset: presetId }]);
+  if (action.kind === "redeliver") {
+    // The canonical export changed since the plan was made; blindly
+    // delivering it now would not be the fix this action described.
+    return settle(action, "blocked", "The canonical export is no longer current. Re-run the fix plan.");
+  }
+
+  const queued = queueOrAdoptRender(slug, presetId);
+  if ("blocked" in queued) {
+    return settle(action, "blocked", queued.blocked);
+  }
+
+  const jobId = queued.jobId;
+  const startedAt = new Date().toISOString();
+
+  if (!options.waitForCompletion) {
     return settle(
       action,
       "queued",
-      `Render queued (batch ${batch.batch.id}). Delivery happens automatically only if auto-deliver is on; otherwise re-run the fix plan once the render finishes.`,
+      `Render queued (job ${jobId}). Re-run the fix plan once it finishes, or apply again with waitForCompletion to follow it through delivery.`,
+      { jobId, startedAt },
     );
   }
 
-  const state = deliveryStateForTarget(slug, presetId, facts, root, folder);
-  if (state.status === "delivered") {
-    return settle(action, "skipped_already_fixed", "Already matches what was delivered.");
-  }
-
-  const outcome = await deliverExport({ slug, presetId, settings });
-  if (outcome.status === "delivered") {
-    return settle(action, "completed", outcome.message);
-  }
-  return settle(action, "failed", outcome.message ?? `Delivery reported status "${outcome.status}".`);
+  return followRenderThenDeliver(action, settings, jobId, startedAt, options.timeoutMs);
 };
 
 const executeBundleAction = async (
