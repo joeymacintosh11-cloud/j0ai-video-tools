@@ -1,5 +1,9 @@
-import type { TrackSummaryView } from "../../src/domain/api/views.ts";
+import type {
+  DestinationHealthView,
+  TrackSummaryView,
+} from "../../src/domain/api/views.ts";
 import { DeliverySummary } from "./DeliveryStatus.tsx";
+import { DestinationHealthBadge } from "./DestinationHealthPanel.tsx";
 import { ReleaseBundleBadge } from "./ReleaseBundlePanel.tsx";
 import { ExportStatus } from "./ExportStatus.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
@@ -17,7 +21,14 @@ export const TrackList: React.FC<{
   readonly onSelect: (slug: string) => void;
   readonly checked: readonly string[];
   readonly onToggleChecked: (slug: string) => void;
-}> = ({ tracks, selectedSlug, onSelect, checked, onToggleChecked }) => (
+  /**
+   * The last catalogue-wide destination scan, or null if none has been run
+   * this session. Never fetched here, and never implied to be current — a scan
+   * is always an explicit action, so a badge only ever reflects whatever that
+   * last click found.
+   */
+  readonly health?: DestinationHealthView | null;
+}> = ({ tracks, selectedSlug, onSelect, checked, onToggleChecked, health = null }) => (
   <nav className="tracklist" aria-label="Tracks">
     <div className="tracklist__head">
       <span>Tracks</span>
@@ -68,6 +79,23 @@ export const TrackList: React.FC<{
               {track.releaseBundle.freshness === "not_configured" ? null : (
                 <ReleaseBundleBadge status={track.releaseBundle} />
               )}
+              {/* Only shown once a scan has actually named this track — no
+                  badge at all reads honestly as "not scanned", rather than
+                  implying a live answer this list never fetches on its own. */}
+              {(() => {
+                const found = health?.tracks.find((entry) => entry.slug === track.slug);
+                if (found === undefined) return null;
+                return (
+                  <DestinationHealthBadge
+                    status={found.findings.length > 0 ? "drift" : "healthy"}
+                    title={
+                      found.findings.length > 0
+                        ? `${found.findings.length} finding${found.findings.length === 1 ? "" : "s"} as of the last scan`
+                        : "No drift as of the last scan"
+                    }
+                  />
+                );
+              })()}
             </span>
           </button>
         </div>

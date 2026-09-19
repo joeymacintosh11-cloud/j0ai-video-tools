@@ -6,6 +6,7 @@ import { deliveryFolderFor } from "../../src/domain/delivery/deliveryPaths.ts";
 import { revealDelivery } from "../api/client.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
 import { DeliverPanel } from "./DeliverPanel.tsx";
+import { DestinationHealthPanel } from "./DestinationHealthPanel.tsx";
 import { TrackDeliveryHistory } from "./DeliveryHistoryPanel.tsx";
 import { DeliveryStatus } from "./DeliveryStatus.tsx";
 import {
@@ -188,6 +189,14 @@ export const TrackDetail: React.FC<{
           {/* When this last went out, which the marks above cannot say: they
               describe the destination's current contents, not its past. */}
           <TrackDeliveryHistory slug={track.slug} />
+
+          {/* Whether the destination still holds what these records say it
+              should — a filesystem fact the marks above never check, since
+              they describe recorded state, not what a sweep actually finds. */}
+          <p className="exports__intent">
+            <span className="exports__intentlabel">Destination health</span>
+          </p>
+          <DestinationHealthPanel label="Check this track" tracks={[track.slug]} />
 
           <div className="form__actions">
             <DeliverPanel

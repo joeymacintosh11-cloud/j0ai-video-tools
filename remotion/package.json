@@ -48,6 +48,7 @@
     "release-bundles": "node scripts/release-bundle.mts --all-tracks",
     "delivery-history": "node scripts/delivery-history.mts",
     "delivery-history-reconcile": "node scripts/delivery-history.mts --reconcile",
+    "destination-health": "node scripts/destination-health.mts",
     "test": "node --test tests/*.test.mts",
     "render-all-formats": "node scripts/render-track.mts --all-formats"
   }

@@ -640,6 +640,10 @@ body {
   border-left-color: var(--vintage-gold);
   background: var(--gold-wash);
 }
+.note--info {
+  border-left-color: var(--text-faint);
+  background: var(--surface-3);
+}
 
 .note__code {
   font-family: var(--font-mono);
@@ -1695,4 +1699,58 @@ body {
   .history__path {
     display: none;
   }
+}
+
+/* ---------------------------------------------------------------- *
+ * Destination health
+ *
+ * Shares the release bundle badge's shape, and the finding list reuses the
+ * validation notes' three severities plus the export list's grid — a
+ * destination-drift finding is presented as the same kind of fact as a
+ * validation problem, not a new visual language.
+ * ---------------------------------------------------------------- */
+
+.healthbadge {
+  font-family: var(--font-label);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.healthbadge--healthy {
+  color: var(--status-ready);
+  background: var(--ready-wash);
+}
+.healthbadge--drift {
+  color: var(--vintage-gold);
+  background: var(--gold-wash);
+}
+.healthbadge--unavailable,
+.healthbadge--error {
+  color: var(--status-invalid);
+  background: var(--invalid-wash);
+}
+.healthbadge--not_configured {
+  color: var(--text-faint);
+  opacity: 0.6;
+}
+
+.health__findings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.health__group {
+  font-family: var(--font-label);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 10px 0 2px;
 }

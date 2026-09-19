@@ -3,6 +3,7 @@ import {
   DEFAULT_RENDER_PRESET_ID,
   type RenderPresetId,
 } from "../src/domain/video/renderPresets.ts";
+import type { DestinationHealthView } from "../src/domain/api/views.ts";
 import {
   createRenderBatch,
   getDeliverySettings,
@@ -13,6 +14,7 @@ import { ApiRequestError } from "./api/client.ts";
 import { DeliverPanel } from "./components/DeliverPanel.tsx";
 import { DeliveryHistoryPanel } from "./components/DeliveryHistoryPanel.tsx";
 import { DeliverySettingsPanel } from "./components/DeliverySettingsPanel.tsx";
+import { DestinationHealthPanel } from "./components/DestinationHealthPanel.tsx";
 import { ReleaseBundlePanel } from "./components/ReleaseBundlePanel.tsx";
 import { ErrorBanner } from "./components/ErrorBanner.tsx";
 import { ExportMissingPanel } from "./components/ExportMissingPanel.tsx";
@@ -34,6 +36,13 @@ export const App: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [showingSettings, setShowingSettings] = useState(false);
   const [showingHistory, setShowingHistory] = useState(false);
+  /**
+   * The last catalogue-wide destination scan, held in memory only. A scan is
+   * always explicit (never run automatically on a poll or a render), so this
+   * is simply whatever the last "Scan destination" click produced — never
+   * persisted, never treated as live.
+   */
+  const [health, setHealth] = useState<DestinationHealthView | null>(null);
 
   /**
    * Which formats to render. Shared by the single-track Render button and by
@@ -268,6 +277,7 @@ export const App: React.FC = () => {
             onSelect={select}
             checked={checked}
             onToggleChecked={toggleChecked}
+            health={health}
           />
         )}
 
@@ -290,10 +300,23 @@ export const App: React.FC = () => {
         ) : showingSettings ? (
           <div className="detail">
             {delivery.data ? (
-              <DeliverySettingsPanel
-                settings={delivery.data}
-                onChanged={refreshAll}
-              />
+              <>
+                <DeliverySettingsPanel
+                  settings={delivery.data}
+                  onChanged={refreshAll}
+                />
+                {delivery.data.root === null ? null : (
+                  <section className="section">
+                    <h3 className="section__title">Destination health</h3>
+                    <p className="muted">
+                      Compares the destination&rsquo;s actual contents against
+                      current delivery receipts and release bundles. Nothing
+                      here is ever written or deleted.
+                    </p>
+                    <DestinationHealthPanel tracks={null} onScanned={setHealth} />
+                  </section>
+                )}
+              </>
             ) : (
               <div className="placeholder">Loading…</div>
             )}

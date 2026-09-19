@@ -9,6 +9,7 @@ import {
   handleRevealDelivery,
   handleUpdateDeliverySettings,
 } from "./routes/delivery.ts";
+import { handleGetDestinationHealth } from "./routes/destinationHealth.ts";
 import {
   handleGetDeliveryHistory,
   handleReconcileDeliveryHistory,
@@ -177,6 +178,15 @@ const route = async (
       return;
     }
 
+    sendNotFound(response, "Endpoint");
+    return;
+  }
+
+  if (collection === "destination-health" && segments.length === 2) {
+    if (method === "GET") {
+      await handleGetDestinationHealth(request, response);
+      return;
+    }
     sendNotFound(response, "Endpoint");
     return;
   }

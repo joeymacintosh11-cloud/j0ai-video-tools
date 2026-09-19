@@ -14,6 +14,11 @@ import type {
   DeliveryLogProblem,
   DeliveryLogStatus,
 } from "../delivery/deliveryHistory.ts";
+import type {
+  DestinationFinding,
+  DestinationHealthCounts,
+  DestinationHealthStatus,
+} from "../delivery/destinationHealth.ts";
 import type { ReleaseBundleFreshness } from "../delivery/releaseBundle.ts";
 import type { TrackErrorCode, TrackIssue } from "../tracks/errors.ts";
 import type {
@@ -763,6 +768,46 @@ export type DeliveryHistoryReconcileView = {
   readonly problem: string | null;
 };
 
+/* ------------------------------------------------------------------ *
+ * Destination health
+ * ------------------------------------------------------------------ */
+
+/**
+ * One track's destination-drift findings.
+ *
+ * `folder` is the track's effective delivery folder, even when there are no
+ * findings — so a clean result can still say where it looked.
+ */
+export type DestinationTrackHealthView = {
+  readonly slug: string;
+  readonly folder: string | null;
+  readonly findings: readonly DestinationFinding[];
+};
+
+/**
+ * GET /api/destination-health
+ *
+ * Compares what current delivery receipts and release bundles say should be
+ * at the destination against what a filesystem sweep actually finds there.
+ * Read-only: nothing here is ever written or deleted. A snapshot, not a
+ * transaction — see `scannedAt`.
+ */
+export type DestinationHealthView = {
+  readonly status: DestinationHealthStatus;
+  /** True for a whole-catalogue scan; false when specific tracks were named. */
+  readonly catalogue: boolean;
+  readonly root: string | null;
+  readonly rootProblem: string | null;
+  /** Findings about the destination itself, not any one track. */
+  readonly rootFindings: readonly DestinationFinding[];
+  readonly tracks: readonly DestinationTrackHealthView[];
+  readonly counts: DestinationHealthCounts;
+  /** When this scan ran. Held in memory only — nothing here is cached to disk. */
+  readonly scannedAt: string;
+  /** Named tracks that could not be scanned at all (not found locally). */
+  readonly invalid: readonly { readonly slug: string; readonly reason: string }[];
+};
+
 /** GET /api/renders/:jobId/logs */
 export type RenderLogsView = {
   readonly id: string;
@@ -796,3 +841,12 @@ export type {
   DeliveryLogProblem,
   DeliveryLogStatus,
 };
+
+/** Destination health types, re-exported so clients need one import. */
+export type {
+  DestinationFinding,
+  DestinationFindingCode,
+  DestinationFindingSeverity,
+  DestinationHealthCounts,
+  DestinationHealthStatus,
+} from "../delivery/destinationHealth.ts";

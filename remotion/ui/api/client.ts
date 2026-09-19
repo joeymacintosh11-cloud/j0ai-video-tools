@@ -13,6 +13,7 @@ import type {
   DeliveryHistoryQuery,
   DeliveryHistoryReconcileView,
   DeliveryHistoryView,
+  DestinationHealthView,
   DeliveryRevealBody,
   DeliveryRevealView,
   DeliverySettingsBody,
@@ -408,6 +409,35 @@ export const reconcileDeliveryHistory = (): Promise<DeliveryHistoryReconcileView
     "POST",
     {},
   );
+
+/* ------------------------------------------------------------------ *
+ * Destination health
+ * ------------------------------------------------------------------ */
+
+/**
+ * Scans the destination for drift against current delivery records.
+ *
+ * `tracks` of null scans the whole catalogue; a list scans only those tracks,
+ * which also skips the root-wide orphaned-folder sweep — judging a folder
+ * orphaned needs every active track's folder loaded, which a narrowed request
+ * does not have. Read-only: nothing this calls ever writes or deletes
+ * anything.
+ */
+export const scanDestinationHealth = (
+  tracks: readonly string[] | null,
+): Promise<DestinationHealthView> => {
+  const params = new URLSearchParams();
+
+  if (tracks !== null) {
+    for (const slug of tracks) params.append("track", slug);
+  }
+
+  const search = params.toString();
+
+  return request<DestinationHealthView>(
+    `/api/destination-health${search ? `?${search}` : ""}`,
+  );
+};
 
 /** SSE endpoint for a batch's aggregate; consumed with EventSource. */
 export const renderBatchEventsUrl = (batchId: string): string =>
