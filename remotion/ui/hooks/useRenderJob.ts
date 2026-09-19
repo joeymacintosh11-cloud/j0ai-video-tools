@@ -37,6 +37,7 @@ export const useRenderJob = (
   // Kept in a ref so reconnecting is not triggered by the callback changing.
   const finishedRef = useRef(onFinished);
   finishedRef.current = onFinished;
+  const notifiedJobRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (jobId === null) {
@@ -47,6 +48,13 @@ export const useRenderJob = (
     }
 
     setMissing(false);
+    notifiedJobRef.current = null;
+
+    const notifyFinished = () => {
+      if (notifiedJobRef.current === jobId) return;
+      notifiedJobRef.current = jobId;
+      finishedRef.current();
+    };
 
     const source = new EventSource(renderEventsUrl(jobId));
 
@@ -56,7 +64,7 @@ export const useRenderJob = (
 
     const onTerminal = (event: MessageEvent<string>) => {
       setJob(JSON.parse(event.data) as RenderJobView);
-      finishedRef.current();
+      notifyFinished();
     };
 
     source.addEventListener("status", onJob);
@@ -77,6 +85,10 @@ export const useRenderJob = (
       void getRender(jobId)
         .then((current) => {
           setJob(current);
+          if (current.status === "completed" || current.status === "failed" || current.status === "cancelled") {
+            notifyFinished();
+            source.close();
+          }
         })
         .catch(() => {
           setMissing(true);

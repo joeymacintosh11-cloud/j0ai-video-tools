@@ -385,6 +385,8 @@ export type ApplyDestinationFixInput = {
   readonly waitForCompletion?: boolean;
   /** Bounded wait, clamped to `MAX_WAIT_TIMEOUT_MS`. Ignored without waitForCompletion. */
   readonly timeoutMs?: number;
+  /** Confirm these exact jobs from an earlier non-waiting apply, never queue replacements. */
+  readonly followJobs?: readonly { readonly actionId: string; readonly jobId: string }[];
 };
 
 /** Long enough for most renders; short enough that one request cannot hang forever. */
@@ -437,8 +439,18 @@ export const applyDestinationFixPlan = async (
   }
 
   const settings = input.settings ?? (await readDeliverySettings());
+  const settingsStillCurrent = async (): Promise<boolean> =>
+    input.settings !== undefined || (await readDeliverySettings()).root === settings.root;
   const waitForCompletion = input.waitForCompletion === true;
   const timeoutMs = resolveTimeoutMs(input.timeoutMs);
+  const followJobs = new Map<string, string>();
+  for (const follow of input.followJobs ?? []) {
+    if (!waitForCompletion || !input.actionIds.includes(follow.actionId) ||
+        follow.jobId.length === 0 || followJobs.has(follow.actionId)) {
+      throw new TrackError(trackIssue("INVALID_REQUEST", "followJobs must name distinct selected actions and requires waitForCompletion."));
+    }
+    followJobs.set(follow.actionId, follow.jobId);
+  }
   const plan = await planDestinationFix({ slugs: input.slugs, settings });
 
   const requestedIds = new Set(input.actionIds);
@@ -461,8 +473,10 @@ export const applyDestinationFixPlan = async (
         kind: "manual_review",
         slug: null,
         presetId: null,
-        status: "skipped_already_fixed",
-        reason: "This action no longer appears in a fresh plan — the underlying drift is already gone.",
+        status: plan.summary.blocked ? "blocked" : "skipped_already_fixed",
+        reason: plan.summary.blocked
+          ? "The destination cannot be trusted, so this action cannot be confirmed or applied."
+          : "This action no longer appears in a fresh plan — the underlying drift is already gone.",
         jobId: null,
         startedAt: null,
         completedAt: null,
@@ -511,7 +525,7 @@ export const applyDestinationFixPlan = async (
           ),
         );
       } else {
-        settled.set(id, await executeAction(action, settings, { waitForCompletion, timeoutMs }));
+        settled.set(id, await executeAction(action, settings, { waitForCompletion, timeoutMs, followJobs, settingsStillCurrent }));
       }
 
       pending.delete(id);
@@ -537,17 +551,19 @@ export const applyDestinationFixPlan = async (
     ...new Set(
       [...requestedIds]
         .map((id) => settled.get(id)!)
-        .filter((r) => r.kind === "rerender_and_deliver" && r.status === "completed" && r.jobId !== null)
+        .filter((r) => r.status === "completed" && r.jobId !== null)
         .map((r) => r.slug)
         .filter((slug): slug is string => slug !== null),
     ),
   ];
 
   if (confirmSlugs.length > 0) {
-    const confirmedSlugs = await confirmHealthForSlugs(confirmSlugs, settings);
+    const confirmedSlugs = await settingsStillCurrent()
+      ? await confirmHealthForSlugs(confirmSlugs, settings)
+      : new Set<string>();
     for (const id of requestedIds) {
       const result = settled.get(id)!;
-      if (result.kind === "rerender_and_deliver" && result.status === "completed" && result.slug !== null) {
+      if (result.status === "completed" && result.jobId !== null && result.slug !== null) {
         settled.set(id, { ...result, healthConfirmed: confirmedSlugs.has(result.slug) });
       }
     }
@@ -560,6 +576,8 @@ export const applyDestinationFixPlan = async (
 type ExecuteOptions = {
   readonly waitForCompletion: boolean;
   readonly timeoutMs: number;
+  readonly followJobs: ReadonlyMap<string, string>;
+  readonly settingsStillCurrent: () => Promise<boolean>;
 };
 
 const executeAction = async (
@@ -571,7 +589,7 @@ const executeAction = async (
     return executeDeliveryAction(action, settings, options);
   }
   if (action.kind === "regenerate_release_bundle") {
-    return executeBundleAction(action, settings);
+    return executeBundleAction(action, settings, options.settingsStillCurrent);
   }
   return settle(action, "manual", "This action is not one apply-plan ever runs automatically.");
 };
@@ -626,7 +644,11 @@ const deliverIfNeeded = async (
   jobId: string | null,
   startedAt: string | null,
   postRender: boolean,
+  settingsStillCurrent: () => Promise<boolean>,
 ): Promise<RemediationActionResult> => {
+  if (!(await settingsStillCurrent())) {
+    return settle(action, "blocked", "The configured destination changed while this action was running. Create a fresh plan.", { jobId, startedAt });
+  }
   const { root } = resolveDeliveryRoot(settings);
   if (root === null) {
     return settle(action, "blocked", "No destination is configured any more.", { jobId, startedAt });
@@ -687,7 +709,9 @@ const confirmHealthForSlugs = async (
 ): Promise<ReadonlySet<string>> => {
   try {
     const health = await scanDestinationHealth({ slugs, settings });
-    if (health.rootFindings.length > 0) return new Set();
+    if (health.status === "error" || health.status === "unavailable" ||
+        health.status === "not_configured" || health.rootFindings.length > 0 ||
+        health.invalid.length > 0) return new Set();
     return new Set(health.tracks.filter((track) => track.findings.length === 0).map((track) => track.slug));
   } catch {
     return new Set();
@@ -708,6 +732,7 @@ const followRenderThenDeliver = async (
   jobId: string,
   startedAt: string,
   timeoutMs: number,
+  settingsStillCurrent: () => Promise<boolean>,
 ): Promise<RemediationActionResult> => {
   const followed = await followRenderJob(jobId, timeoutMs);
 
@@ -746,7 +771,7 @@ const followRenderThenDeliver = async (
   // action in the same call that depends on this delivery has not run yet
   // at this point, and checking health this early would misreport a still-
   // pending bundle update as an unconfirmed fix.
-  return deliverIfNeeded(action, settings, slug, presetId, jobId, startedAt, true);
+  return deliverIfNeeded(action, settings, slug, presetId, jobId, startedAt, true, settingsStillCurrent);
 };
 
 const executeDeliveryAction = async (
@@ -758,6 +783,26 @@ const executeDeliveryAction = async (
   const presetId = action.presetId;
   if (slug === null || presetId === null) {
     return settle(action, "failed", "This action is missing the track or format it names.");
+  }
+
+  const followedJobId = options.followJobs.get(action.id);
+  if (followedJobId !== undefined) {
+    let job;
+    try {
+      job = renderManager.getJob(followedJobId);
+    } catch {
+      return settle(action, "blocked", `Render job ${followedJobId} is no longer known. Create a fresh plan to recover.`);
+    }
+    if (job.slug !== slug || job.presetId !== presetId) {
+      return settle(action, "blocked", "The supplied render job does not belong to this track and format.");
+    }
+    return followRenderThenDeliver(
+      action, settings, followedJobId, job.startedAt ?? job.queuedAt, options.timeoutMs, options.settingsStillCurrent,
+    );
+  }
+
+  if (!(await options.settingsStillCurrent())) {
+    return settle(action, "blocked", "The configured destination changed. Create a fresh plan.");
   }
 
   // Checked before ever considering a render: queueing real render work for
@@ -777,7 +822,7 @@ const executeDeliveryAction = async (
   const facts = coverage.find((entry) => entry.presetId === presetId);
 
   if (facts !== undefined && facts.freshness === "current") {
-    return deliverIfNeeded(action, settings, slug, presetId, null, null, false);
+    return deliverIfNeeded(action, settings, slug, presetId, null, null, false, options.settingsStillCurrent);
   }
 
   if (action.kind === "redeliver") {
@@ -803,16 +848,21 @@ const executeDeliveryAction = async (
     );
   }
 
-  return followRenderThenDeliver(action, settings, jobId, startedAt, options.timeoutMs);
+  return followRenderThenDeliver(action, settings, jobId, startedAt, options.timeoutMs, options.settingsStillCurrent);
 };
 
 const executeBundleAction = async (
   action: RemediationAction,
   settings: DeliverySettings,
+  settingsStillCurrent: () => Promise<boolean>,
 ): Promise<RemediationActionResult> => {
   const slug = action.slug;
   if (slug === null) {
     return settle(action, "failed", "This action is missing the track it names.");
+  }
+
+  if (!(await settingsStillCurrent())) {
+    return settle(action, "blocked", "The configured destination changed. Create a fresh plan.");
   }
 
   const result = await generateReleaseBundle({ slug, settings });

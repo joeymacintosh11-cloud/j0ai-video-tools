@@ -12,6 +12,7 @@ import { scanDestinationHealth } from "../services/destinationHealth.ts";
 import {
   applyDestinationFixPlan,
   planDestinationFix,
+  type ApplyDestinationFixInput,
   type DestinationFixPlan,
 } from "../services/destinationFixPlan.ts";
 
@@ -135,14 +136,15 @@ export const handlePlanDestinationFix = async (
  * happens or `timeoutMs` elapses (default 5 minutes, capped at 30), so a
  * caller that wants live progress meanwhile should use the `jobId` this
  * still returns for a `queued` result and the existing per-job SSE endpoint,
- * then call this again with `waitForCompletion` once that job is terminal.
+ * then call this again with `waitForCompletion` and the returned action/job
+ * pair in `followJobs`. That second call follows the exact job; it never
+ * starts a replacement if the first job failed or was cancelled.
  */
 export const handleApplyDestinationFix = async (
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> => {
   const body = await readJsonBody(request);
-  const settings = await readDeliverySettings();
 
   const { actionIds } = body;
   if (!Array.isArray(actionIds) || actionIds.length === 0) {
@@ -157,20 +159,25 @@ export const handleApplyDestinationFix = async (
     return id;
   });
 
-  const { waitForCompletion, timeoutMs } = body;
+  const { waitForCompletion, timeoutMs, followJobs } = body;
   if (waitForCompletion !== undefined && typeof waitForCompletion !== "boolean") {
     throw new TrackError(trackIssue("INVALID_REQUEST", '"waitForCompletion" must be true or false.'));
   }
   if (timeoutMs !== undefined && typeof timeoutMs !== "number") {
     throw new TrackError(trackIssue("INVALID_REQUEST", '"timeoutMs" must be a number.'));
   }
+  if (followJobs !== undefined && (!Array.isArray(followJobs) ||
+      followJobs.some((entry) => typeof entry !== "object" || entry === null ||
+        typeof entry.actionId !== "string" || typeof entry.jobId !== "string"))) {
+    throw new TrackError(trackIssue("INVALID_REQUEST", '"followJobs" must be an array of actionId/jobId pairs.'));
+  }
 
   const { plan, results } = await applyDestinationFixPlan({
     slugs: readSlugs(body),
-    settings,
     actionIds: ids,
     waitForCompletion,
     timeoutMs,
+    followJobs: followJobs as ApplyDestinationFixInput["followJobs"],
   });
 
   const payload: DestinationFixApplyView = { plan: toPlanView(plan), results };

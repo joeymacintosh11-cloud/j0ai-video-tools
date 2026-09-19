@@ -24,7 +24,7 @@ import { runCli } from "./cli.ts";
  * in-process render manager the API itself reads from (a short, bounded
  * interval, purely for what to print here — never a new job store), and once
  * every followed job is terminal, a second apply-plan call with
- * waitForCompletion chains delivery, a bundle update, and a health
+ * waitForCompletion and the exact job ids chains delivery, a bundle update, and a health
  * confirmation through to the real final outcome.
  */
 
@@ -89,7 +89,7 @@ const parseArgs = (argv: string[]) => {
       if (!Number.isFinite(parsed) || parsed <= 0) {
         throw new TrackError(trackIssue("INVALID_REQUEST", "--timeout needs a positive number of seconds."));
       }
-      timeoutSeconds = parsed;
+      timeoutSeconds = Math.min(parsed, 1800);
       index += 1;
     } else if (arg === "--help") {
       help = true;
@@ -121,6 +121,7 @@ const FAILURE_STATUSES: ReadonlySet<RemediationActionResult["status"]> = new Set
   "render_failed",
   "delivery_failed",
   "cancelled",
+  "timed_out",
 ]);
 
 const printResult = (r: RemediationActionResult) => {
@@ -143,7 +144,7 @@ const POLL_INTERVAL_MS = 1000;
 const followQueuedJobs = async (
   jobs: readonly { readonly title: string; readonly jobId: string }[],
   timeoutMs: number,
-): Promise<void> => {
+): Promise<boolean> => {
   const deadline = Date.now() + timeoutMs;
   const lastPrinted = new Map<string, string>();
 
@@ -167,7 +168,7 @@ const followQueuedJobs = async (
       if (!isTerminalStatus(job.status)) allTerminal = false;
     }
 
-    if (allTerminal || Date.now() >= deadline) return;
+    if (allTerminal || Date.now() >= deadline) return allTerminal;
     await sleep(POLL_INTERVAL_MS);
   }
 };
@@ -231,7 +232,7 @@ runCli("planning destination remediation", async () => {
   const titleById = new Map(plan.actions.map((a) => [a.id, a.title]));
 
   console.log(`\nApplying ${executable.length} safe action(s)...`);
-  const first = await applyDestinationFixPlan({ slugs, settings, actionIds });
+  const first = await applyDestinationFixPlan({ slugs, actionIds });
 
   const queuedJobs = first.results
     .filter((r): r is RemediationActionResult & { jobId: string } => r.status === "queued" && r.jobId !== null)
@@ -241,16 +242,27 @@ runCli("planning destination remediation", async () => {
 
   if (queuedJobs.length > 0 && wait) {
     console.log(`\nWaiting up to ${timeoutSeconds}s for ${queuedJobs.length} render(s)...`);
-    await followQueuedJobs(queuedJobs, timeoutSeconds * 1000);
-
-    const confirmed = await applyDestinationFixPlan({
-      slugs,
-      settings,
-      actionIds,
-      waitForCompletion: true,
-      timeoutMs: 30000,
-    });
-    results = confirmed.results;
+    const allTerminal = await followQueuedJobs(queuedJobs, timeoutSeconds * 1000);
+    if (allTerminal) {
+      const confirmed = await applyDestinationFixPlan({
+        slugs,
+        actionIds,
+        waitForCompletion: true,
+        timeoutMs: 30000,
+        followJobs: first.results
+          .filter((r): r is RemediationActionResult & { jobId: string } => r.status === "queued" && r.jobId !== null)
+          .map((r) => ({ actionId: r.actionId, jobId: r.jobId })),
+      });
+      results = confirmed.results;
+    } else {
+      // The caller's deadline has passed. Return the queued actions as
+      // timed-out observations; the jobs keep running, without a late confirm
+      // call extending this CLI invocation or starting delivery afterward.
+      results = first.results.map((result) => result.status === "queued"
+        ? { ...result, status: "timed_out" as const,
+            reason: `Stopped waiting after ${timeoutSeconds}s. Job ${result.jobId} continues independently.` }
+        : result);
+    }
   }
 
   if (json) {

@@ -87,4 +87,15 @@ export const handleRenderEvents = (
   });
 
   stream.onClose(unsubscribe);
+
+  // A terminal transition at the replay/subscribe boundary must be visible
+  // even if its event was emitted before this listener was registered.
+  const current = renderManager.getJob(jobId);
+  if (isTerminalStatus(current.status)) {
+    stream.send(
+      current.status === "completed" ? "completed" : current.status === "cancelled" ? "cancelled" : "failed",
+      current,
+    );
+    stream.close();
+  }
 };

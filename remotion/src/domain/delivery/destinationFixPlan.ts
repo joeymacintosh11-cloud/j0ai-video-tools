@@ -316,8 +316,8 @@ export type RemediationActionResult = {
   readonly completedAt: string | null;
   /**
    * Whether a narrow, single-track health scan confirmed the fix afterward.
-   * Only ever attempted after a fully confirmed rerender_and_deliver
-   * (render, then delivery, both settled); null for every other action or
+   * Only ever attempted after a fully confirmed followed render and delivery
+   * (even if the fresh plan now calls that delivery `redeliver`); null for other actions or
    * outcome — this is a confirmation of one specific success, not a general
    * health field. A scan failure here is reported as `false`, never turned
    * into the action itself being reported as failed.

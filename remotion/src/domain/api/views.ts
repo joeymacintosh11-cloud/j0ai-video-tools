@@ -842,6 +842,8 @@ export type DestinationFixApplyBody = DestinationFixPlanBody & {
   readonly waitForCompletion?: boolean;
   /** Bounded wait in milliseconds; default 5 minutes, capped at 30. */
   readonly timeoutMs?: number;
+  /** Exact job ids returned by an earlier queued apply, keyed by action id. */
+  readonly followJobs?: readonly { readonly actionId: string; readonly jobId: string }[];
 };
 
 /**

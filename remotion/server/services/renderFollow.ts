@@ -21,9 +21,8 @@ export const followRenderJob = (
   jobId: string,
   timeoutMs: number,
 ): Promise<FollowRenderJobResult> => {
-  // Checked synchronously before subscribing, so a job that already settled
-  // (a very fast render, or one this call adopted after it finished) is
-  // reported immediately rather than waiting on events that already fired.
+  // Fast path for a job that was terminal before this call began. The state is
+  // checked again after subscribing, closing the read/subscribe boundary.
   const initial = renderManager.getJob(jobId);
   if (isTerminalStatus(initial.status)) {
     return Promise.resolve({ outcome: "settled", job: initial });
@@ -31,23 +30,48 @@ export const followRenderJob = (
 
   return new Promise((resolve) => {
     let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribe = () => {};
 
     const finish = (result: FollowRenderJobResult) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer !== null) clearTimeout(timer);
       unsubscribe();
       resolve(result);
     };
 
-    const unsubscribe = renderManager.subscribe(jobId, (event) => {
+    unsubscribe = renderManager.subscribe(jobId, (event) => {
       if (event.type === "completed" || event.type === "failed" || event.type === "cancelled") {
         finish({ outcome: "settled", job: event.job });
       }
     });
 
-    const timer = setTimeout(() => {
-      finish({ outcome: "timed_out", job: renderManager.getJob(jobId) });
+    // A test hook or future subscribe implementation may synchronously emit
+    // while registering. In that case finish ran before unsubscribe existed;
+    // remove the listener now. Otherwise re-read authoritative state to catch
+    // a terminal transition at the subscription boundary.
+    if (settled) {
+      unsubscribe();
+      return;
+    }
+    let current: RenderJobView;
+    try {
+      current = renderManager.getJob(jobId);
+    } catch (error) {
+      unsubscribe();
+      throw error;
+    }
+    if (isTerminalStatus(current.status)) {
+      finish({ outcome: "settled", job: current });
+      return;
+    }
+
+    timer = setTimeout(() => {
+      const job = renderManager.getJob(jobId);
+      finish(isTerminalStatus(job.status)
+        ? { outcome: "settled", job }
+        : { outcome: "timed_out", job });
     }, timeoutMs);
   });
 };

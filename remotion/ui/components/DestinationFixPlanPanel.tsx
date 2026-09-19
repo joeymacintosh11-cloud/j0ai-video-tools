@@ -88,11 +88,14 @@ const FollowedRender: React.FC<{
   readonly jobId: string;
   readonly onSettled: () => void;
 }> = ({ title, jobId, onSettled }) => {
-  const { job } = useRenderJob(jobId, onSettled);
+  const { job, missing } = useRenderJob(jobId, onSettled);
+  useEffect(() => {
+    if (missing) onSettled();
+  }, [missing, onSettled]);
 
   const label =
     job === null
-      ? "Queued"
+      ? missing ? "Job no longer available" : "Queued"
       : job.status === "queued"
         ? "Queued"
         : job.status === "preparing"
@@ -124,7 +127,8 @@ const FollowedRender: React.FC<{
  * success: this panel follows the job it was given through the existing
  * per-job SSE endpoint (the same one the render UI already uses) and, once it
  * settles, automatically calls apply-plan a second time with
- * `waitForCompletion` — which re-derives everything fresh, delivers the
+ * `waitForCompletion` and the exact action/job pairs — which re-derives
+ * everything fresh, delivers the
  * export now that its render is real, and returns the actually-confirmed
  * final outcome. Reusing the render job's own progress this way means no
  * second progress transport is needed here at all.
@@ -220,6 +224,7 @@ export const DestinationFixPlanPanel: React.FC<{
       const result = await applyDestinationFix(tracks, pendingIdsRef.current, {
         waitForCompletion: true,
         timeoutMs: 30000,
+        followJobs: following.map(({ actionId, jobId }) => ({ actionId, jobId })),
       });
       setPlan(result.plan);
       setApplied(result);
@@ -257,7 +262,7 @@ export const DestinationFixPlanPanel: React.FC<{
         <button
           className="button button--quiet"
           type="button"
-          disabled={disabled || busy || tracks?.length === 0}
+          disabled={disabled || busy || following.length > 0 || tracks?.length === 0}
           title="Proposes safe, reviewed remediation for current destination drift. Nothing is changed until you select actions and apply them."
           onClick={() => void createPlan()}
         >
@@ -294,7 +299,7 @@ export const DestinationFixPlanPanel: React.FC<{
                 selectable
                 selected={selected.has(action.id)}
                 onToggle={() => toggle(action.id)}
-                busy={busy}
+                busy={busy || following.length > 0}
               />
             ))}
           </ul>
@@ -302,7 +307,7 @@ export const DestinationFixPlanPanel: React.FC<{
             <button
               className="button"
               type="button"
-              disabled={busy || selected.size === 0}
+              disabled={busy || following.length > 0 || selected.size === 0}
               onClick={() => void apply()}
             >
               {busy ? "Applying…" : `Apply ${selected.size} safe action${selected.size === 1 ? "" : "s"}`}

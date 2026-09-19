@@ -473,7 +473,7 @@ export const planDestinationFix = (
 export const applyDestinationFix = (
   tracks: readonly string[] | null,
   actionIds: readonly string[],
-  options: { readonly waitForCompletion?: boolean; readonly timeoutMs?: number } = {},
+  options: { readonly waitForCompletion?: boolean; readonly timeoutMs?: number; readonly followJobs?: readonly { readonly actionId: string; readonly jobId: string }[] } = {},
 ): Promise<DestinationFixApplyView> => {
   const body: DestinationFixApplyBody = {
     ...(tracks === null ? { catalogue: true } : { tracks }),
