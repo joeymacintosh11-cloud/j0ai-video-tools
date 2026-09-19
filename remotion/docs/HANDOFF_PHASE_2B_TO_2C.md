@@ -4460,5 +4460,295 @@ API/CLI/UI edge states, and regression tests; companion documentation commit
 records this audit.
 No push was made.
 
+## 46. Current State — Destination-Wide Dry-Run Fix Plan (2026-09-19)
+
+Destination health (§44–45) could only ever say what was wrong. This turns a
+health scan's findings into a reviewed, typed plan of remediation actions —
+and, only on a second, explicit step, runs the safe part of it. Detection and
+remediation stay two separate concerns in two separate modules, exactly as
+health detection stayed separate from delivery and release bundles: nothing
+in the planner re-derives freshness or bundle state, and nothing in the
+executor re-implements a copy, a render, or a bundle write.
+
+### 46.1 Action model
+
+`src/domain/delivery/destinationFixPlan.ts` is browser-safe and holds the
+action shape, the fixed safety table, deterministic ids, deduplication, and
+the execution-result vocabulary.
+
+Four action kinds, each with a fixed safety:
+
+| Kind | Safety | What it reuses |
+|---|---|---|
+| `redeliver` | safe | `deliverExport` |
+| `rerender_and_deliver` | safe | the existing render queue (`renderManager.startBatch`), never a synchronous in-process render |
+| `regenerate_release_bundle` | safe | `generateReleaseBundle` |
+| `manual_review` | manual | nothing — never run, with or without `--apply` |
+
+There is no `no_action` kind, though the original brief suggested one: every
+finding this scanner currently raises maps to one of the four above, and an
+unreachable fifth kind would be exactly the unused abstraction this project
+avoids. If a finding is ever added that truly implies no action, the kind
+should arrive together with that finding, not before it.
+
+**Action ids are deliberately not a hash of every field.** `redeliver` and
+`rerender_and_deliver` share one id "family" — `remediationActionId` folds
+`rerender_and_deliver` onto `redeliver` before hashing (see the `idKind`
+comment in the domain module) — because they are mutually exclusive
+alternatives for fixing the exact same delivered-file drift, and which one
+applies can flip purely because the canonical export's freshness changed
+between a `plan` call and the `apply-plan` call that follows it. Without this,
+an apply call started against a `redeliver` id would find nothing in a freshly
+re-derived plan the moment the export went stale, and — before this was
+caught in testing — would have been reported `skipped_already_fixed`, which
+is false: nothing was fixed, the plan just needed to do something different.
+Hashing is FNV-1a, not cryptographic; the id is a matching key inside one
+plan/apply pair, never a security boundary; see the CLI/API section (46.5)
+for why the client cannot use it to invent an operation.
+
+### 46.2 Finding → action mapping
+
+Built in `server/services/destinationFixPlan.ts`, which is impure by
+necessity — deciding *which* action applies means asking whether the
+canonical export is current, which means calling `trackExportCoverage`, the
+same function delivery and export planning already call.
+
+- **`delivered_file_missing` / `delivered_file_changed`** — `redeliver` if
+  `trackExportCoverage` reports the canonical export `current`, else
+  `rerender_and_deliver`. `invalid` freshness (unreadable inputs) counts as
+  "not current" too, so it is never silently redelivered.
+- **`release_bundle_missing` / `release_bundle_outdated` /
+  `release_bundle_pair_mismatch`** — `regenerate_release_bundle`, one action
+  per track regardless of which of the three codes fired; §46.3 covers the
+  merge.
+- **`unexpected_export_file`, `unexpected_track_folder`,
+  `destination_file_unreadable`** — `manual_review`. An unreadable entry is
+  manual rather than assumed-missing for the same reason the scanner itself
+  distinguishes `ENOENT` from everything else (§44.11): guessing "it's gone"
+  when it might just be unreadable could propose a redelivery over content
+  that was never actually lost.
+- **`track_folder_missing`** — folded into whichever per-preset
+  redeliver/rerender actions already exist for that track (a missing folder
+  always co-occurs with per-preset delivered-file findings, since the
+  scanner checks each receipt before it checks the folder itself), rather
+  than becoming a fifth action kind of its own. `deliverExport` recreates a
+  missing folder as an ordinary part of delivering into it.
+- **`destination_root_identity_changed`, and a track-level
+  `destination_folder_unreadable`** — blocks planning for the affected scope
+  entirely (§46.4), never proposes anything.
+- **A whole-plan root problem** (`unavailable`/`error` status, or a
+  blocking root finding) — the plan is exactly the root finding(s) as
+  `manual_review`, nothing else. Never proposes re-rendering as a fix for a
+  missing mount, per the brief's explicit instruction.
+
+### 46.3 Deduplication
+
+`dedupeActions` merges actions that share an id, folding their finding codes
+together. The only case this matters for today: a track can have up to three
+release-bundle finding codes (missing, outdated, pair-mismatch) at once —
+only one is possible per scan in practice, since bundle freshness is a single
+categorical value, but the merge is exercised directly by a unit-style
+scenario (a missing delivery *and* a missing bundle) that proves exactly two
+actions come out, not one per finding.
+
+### 46.4 Dependency model
+
+Deliberately not a generic workflow engine — two tiers, not a general DAG. A
+track's `regenerate_release_bundle` action `dependsOn` every
+redeliver/rerender action the same plan proposed for that track; nothing else
+declares a dependency. The executor runs an iterative settle loop: an action
+runs once every dependency *named in the same apply call* has settled, and is
+reported `blocked` — never silently skipped, never silently run early — if a
+dependency was left out of the apply call entirely, or did not itself
+complete or get skipped-as-already-fixed. A queued rerender is not a settled
+success for this purpose: its dependent bundle action is blocked until a
+later plan confirms the delivery it implies actually landed.
+
+### 46.5 Dry-run and apply semantics
+
+`planDestinationFix` never writes anything; it calls `scanDestinationHealth`
+and `trackExportCoverage`, both already read-only. `applyDestinationFixPlan`
+takes only action ids (plus the same track-scope the plan was made with) and
+**re-derives the plan fresh before doing anything else**. Every id it is
+asked to run is looked up in that fresh plan, never trusted from what the
+caller remembers:
+
+- An id absent from the fresh plan and never replaced by one sharing its
+  identity → `skipped_already_fixed` — the drift is genuinely gone.
+- An id present but not safe/executable (a manual item) → `manual`, never run.
+- An id present and safe → revalidated a second time, immediately before the
+  underlying operation runs (`executeDeliveryAction` re-checks freshness and
+  current delivery state; bundle regeneration and delivery are themselves
+  already idempotent no-ops when nothing has changed, so a second identical
+  apply naturally settles to `skipped_already_fixed`/no-op rather than
+  duplicating work).
+
+No lock is taken across an apply call. Each underlying operation already owns
+its own safety — `deliverExport`'s render-target lock, `generateReleaseBundle`'s
+own idempotent, order-safe two-file publish, the render queue's own
+per-target lock — so two concurrent applies interleave exactly as two
+concurrent manual deliveries already would. This is an existing,
+already-relied-upon guarantee, not a new one made here, and it is why no new
+locking primitive was added for this milestone.
+
+### 46.6 No-delete guarantee
+
+Nothing added here can delete or overwrite a file the app did not itself
+deliver. `unexpected_export_file`, `unexpected_track_folder`, and every
+unreadable-entry finding map only to `manual_review`, which the executor
+refuses to run regardless of what a client asks for (its safety is fixed in
+the domain module's table, not computed at the call site). Verified directly:
+a test applies every safe action from a full plan and asserts a manually
+planted unexpected file's content is byte-for-byte unchanged afterward.
+
+### 46.7 API
+
+`POST /api/destination-health/plan` — always dry-run; body mirrors delivery
+and export-missing (`{"tracks":[...]}` or `{"catalogue":true}`).
+`POST /api/destination-health/apply-plan` — same body plus `"actionIds"`. The
+client can never supply a filesystem path or an operation kind — only ids,
+which the server matches against its own freshly-derived plan before running
+anything. This is the "server-authoritative execution" pattern the brief
+asked for, achieved without inventing a persisted plan store: the plan is
+recomputed, not looked up.
+
+### 46.8 CLI
+
+`npm run destination-fix-plan [-- --track <slug>]... [--json] [--apply]`.
+Dry run by default; `--apply` is required to run anything, and even then only
+executable actions run — printed with a `DRY RUN — no files were changed`
+line when `--apply` is absent, matching the brief's explicit labelling
+requirement. Shares `planDestinationFix`/`applyDestinationFixPlan` with the
+API, so there is exactly one finding-to-action policy in the codebase.
+
+### 46.9 UI
+
+`DestinationFixPlanPanel` extends the destination health flow: "Create fix
+plan" (which runs its own health scan internally, so it never depends on
+`DestinationHealthPanel` having already been used) shows SAFE actions as
+pre-selected, individually-deselectable checkboxes and MANUAL items as plain,
+unselectable rows, then "Apply N safe actions" runs only the selected ones and
+shows a per-action result list afterward with a reminder to re-scan. No
+automatic action ever runs when a scan or a plan completes — Apply is always
+a second, explicit click. Wired into both the catalogue-wide Delivery
+settings section and a track's own Delivery section, next to
+`DestinationHealthPanel` in each.
+
+### 46.10 Race handling
+
+Tested directly, not just reasoned about: a redeliver whose canonical export
+is deleted between `plan` and `apply` is reclassified into a queued rerender
+(never blindly delivers a now-wrong file); a delivery that genuinely fails at
+apply time (a read-only destination folder, simulated via `chmod`) blocks its
+dependent bundle action but never touches an unrelated track's own action in
+the same apply call; applying the same plan twice is idempotent
+(`skipped_already_fixed` the second time, confirmed via a subsequent health
+scan still reporting `healthy`); an apply against an action id a fresh plan no
+longer produces at all is reported `skipped_already_fixed` rather than an
+error. Two concurrent applies were not given a dedicated regression test — the
+guarantee they rely on (each underlying operation's own lock) is exercised
+directly by the existing render-lock and delivery-history duplicate-protection
+suites, and re-deriving that coverage here would only duplicate it.
+
+### 46.11 Failure handling
+
+A `redeliver`/`rerender_and_deliver` action failure never marks unrelated
+actions failed — only its own dependents, and only within the same apply
+call. `applyDestinationFixPlan`'s settle loop reports each action
+independently; nothing here rolls back an action that already completed
+because a later one in the same call failed.
+
+### 46.12 Tests added
+
+25 tests in `tests/destination-fix-plan.test.mts`, same conventions as the
+destination-health suite: real temp directories, delivery always through the
+real pipeline, drift created by mutating only the destination. Two design
+bugs were found and fixed *while writing these tests, before any assertion
+failed* — both are documented at the point they are fixed in the code and
+summarized in §46.1 and §46.10: the id-family normalization (without it, a
+plan/apply pair the very first regression test exercised would have silently
+misreported real drift as fixed), and the earlier session's already-known
+`t.after` FIFO-ordering pitfall (a `chmod`-restore hook registered after
+`destination(t)`'s own cleanup hook fires after it, not before — restored
+inline in the test body instead, not via a second `t.after`).
+
+### 46.13 End-to-end results
+
+A full synthetic probe was run twice: once purely over HTTP against a
+locally-started API server (configure a temp destination, deliver a real
+current export, delete the destination copy, `POST .../plan`, confirm a
+`redeliver` action, `POST .../apply-plan` with every proposed action id,
+confirm every result `completed`, re-`GET` health and confirm `healthy`), and
+once end-to-end through a real headless Chrome instance driven over a raw CDP
+WebSocket (no puppeteer/`@remotion/renderer` wrapper — `openBrowser`'s
+`newPage()` is shaped for render-page pooling, not general navigation, so a
+plain Chrome process launched with `--headless=new --remote-debugging-port=0`
+was driven directly): loaded the app, selected the synthetic track, clicked
+"Check this track", clicked "Create fix plan", confirmed both a redeliver and
+a bundle-regeneration action appeared with a working "Apply" button, clicked
+it, and confirmed a "Results" section appeared showing both actions
+`[Done]`. All probe artifacts (the synthetic track, the temp destination, the
+API/Vite/Chrome processes, `delivery.local.json`) were removed afterward and
+verified gone; `public/tracks/` and `out/` were confirmed back to holding
+only `ghetto-geek`. Ghetto Geek itself was never re-rendered.
+
+### 46.14 Verification results
+
+`npm run lint` (eslint + tsc) clean. Full suite: **367/367 tests** (342
+existing + 25 new), rerun and stable. `npx vite build` passed (existing
+chunk-size advisory, unrelated). `validate-track`/`prepare-track` against
+`ghetto-geek` both exit 0. `git diff --check` clean. Working tree clean after
+every commit; no `delivery.local.json` before or after any of the work above.
+
+### 46.15 Performance
+
+Planning is exactly one health scan (already measured at §45.4) plus, only
+for tracks with a finding, one `inspectTrack` + `trackExportCoverage` call —
+work already paid for elsewhere in the app for any track being looked at.
+Execution cost is dominated entirely by the underlying operation it reuses
+(a copy, a bundle write, or — via the existing render queue — a render); no
+new scan, no new filesystem sweep, no polling loop was added for this
+milestone.
+
+### 46.16 Remaining limitations
+
+- A queued rerender's delivery is not confirmed within the same apply call —
+  by design (no synchronous in-request rendering, no new progress transport,
+  per the brief). A later plan/apply, or the existing render UI, confirms it
+  landed.
+- `manual_review` items never get a "Reveal in Finder" affordance in this
+  milestone; `DeliveryRevealPanel`'s existing reveal action is one track/preset
+  away from being wired to a manual finding's slug, deferred rather than
+  bolted on without a concrete need.
+- No stale-plan detection beyond id-based revalidation — a plan object itself
+  carries no version or timestamp check; `apply-plan` simply never trusts
+  anything from the client except ids, which is the guarantee that actually
+  matters.
+- Concurrent-apply safety is inherited, not independently proven for this
+  milestone specifically (§46.10).
+
+### 46.17 Commits
+
+1. `a23bf63` — define the remediation action model (domain).
+2. `f0d4bc9` — the planner and the safe executor/revalidation (service).
+3. `71244dd` — API, CLI, UI.
+4. `3e833f7` — tests.
+5. (this commit) — documentation.
+
+No push was made.
+
+### 46.18 Recommended next feature
+
+**Confirmed delivery after a queued render.** Right now a `rerender_and_deliver`
+action queues a render and stops — its dependent bundle update is left
+`blocked` until someone re-runs the plan by hand. A small, explicitly-scoped
+follow-up could let the *existing* render job view (already polled/SSE'd by
+the UI) trigger a one-shot "finish this plan" re-check once a specific queued
+job reaches a terminal state — never a new watcher or background polling loop
+of its own, just reusing the job status the render queue already tracks, the
+same "reuse, don't invent" boundary this milestone kept throughout.
+
+Not started, per instruction.
+
 *End of handoff. If anything in this document conflicts with the live
 repository, the repository is correct — verify with §31 before proceeding.*

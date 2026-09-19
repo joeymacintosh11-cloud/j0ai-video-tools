@@ -632,6 +632,54 @@ recovers the running job from the server on load, so reloading the page or
 switching tracks re-attaches to a render in progress rather than offering to
 start another.
 
+### Destination fix plan
+
+Destination health finds drift; this turns a finding into a reviewed plan of
+what could be done about it, and — only when told to — runs the safe part.
+Detection and remediation stay two separate steps: nothing here is executed
+just because a plan was made.
+
+```console
+npm run destination-fix-plan
+npm run destination-fix-plan -- --track ghetto-geek
+npm run destination-fix-plan -- --apply
+```
+
+A plan proposes, for each finding, one of:
+
+- **redeliver** — the canonical export is current; copy it again.
+- **rerender_and_deliver** — the canonical export is missing or stale, so it
+  is queued on the existing render queue first (never rendered synchronously
+  inside a plan/apply call); delivery only happens automatically if
+  auto-deliver is on, so a queued rerender's own dependents (a bundle update)
+  are reported blocked until a later plan confirms delivery actually landed.
+- **regenerate_release_bundle** — one action per track, however many of its
+  three finding codes (missing, outdated, pair-mismatch) triggered it.
+- **manual_review** — never run, with or without `--apply`. Covers an
+  unexpected file or folder, anything unreadable, and any problem with the
+  destination root itself. Nothing here ever deletes or replaces a file it
+  did not itself deliver.
+
+A bundle action never runs before every delivery action the same plan
+proposed for that track has settled. `--apply` (or selecting actions and
+pressing Apply in the app) re-derives the plan fresh first and only ever runs
+an action that plan still produces itself: a stale id from an old plan is
+revalidated, not trusted, and one already fixed by the time apply runs is
+reported `skipped_already_fixed` rather than repeated.
+
+```console
+curl -X POST http://127.0.0.1:4600/api/destination-health/plan \
+  -H 'content-type: application/json' \
+  -d '{"tracks":["ghetto-geek"]}'
+
+curl -X POST http://127.0.0.1:4600/api/destination-health/apply-plan \
+  -H 'content-type: application/json' \
+  -d '{"tracks":["ghetto-geek"],"actionIds":["<id from the plan above>"]}'
+```
+
+No plan is ever persisted — it is a point-in-time answer, same as a health
+scan, and can go stale the moment something else touches the destination.
+
 ### Editing metadata while something else changes it
 
 Saves are conditional. The API reports a `metadataRevision` for each track, the
@@ -751,6 +799,8 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | GET | `/api/delivery-history` | Read the destination's delivery log; `track`, `preset`, `from`, `to`, `limit`, `order` |
 | POST | `/api/delivery-history/reconcile` | Append events for deliveries whose receipts exist but were never recorded |
 | GET | `/api/destination-health` | Compare the destination against current records; `track` may repeat for a named subset, omitted scans the catalogue |
+| POST | `/api/destination-health/plan` | Dry-run remediation plan for current drift; `{"tracks":[...]}` or `{"catalogue":true}` |
+| POST | `/api/destination-health/apply-plan` | Run named safe action ids, revalidated against a freshly re-derived plan; same body plus `"actionIds"` |
 
 Successful responses are `{"ok":true,"data":...}`. Failures are
 `{"ok":false,"error":{"code","message","path?"}}`, where `code` is the shared
