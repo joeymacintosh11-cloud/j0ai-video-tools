@@ -643,16 +643,16 @@ just because a plan was made.
 npm run destination-fix-plan
 npm run destination-fix-plan -- --track ghetto-geek
 npm run destination-fix-plan -- --apply
+npm run destination-fix-plan -- --apply --wait --timeout 600
 ```
 
 A plan proposes, for each finding, one of:
 
 - **redeliver** — the canonical export is current; copy it again.
 - **rerender_and_deliver** — the canonical export is missing or stale, so it
-  is queued on the existing render queue first (never rendered synchronously
-  inside a plan/apply call); delivery only happens automatically if
-  auto-deliver is on, so a queued rerender's own dependents (a bundle update)
-  are reported blocked until a later plan confirms delivery actually landed.
+  is queued on the existing render queue first, never rendered synchronously
+  inside a plan/apply call. See "Confirmed delivery after a queued render"
+  below for what happens after it queues.
 - **regenerate_release_bundle** — one action per track, however many of its
   three finding codes (missing, outdated, pair-mismatch) triggered it.
 - **manual_review** — never run, with or without `--apply`. Covers an
@@ -679,6 +679,54 @@ curl -X POST http://127.0.0.1:4600/api/destination-health/apply-plan \
 
 No plan is ever persisted — it is a point-in-time answer, same as a health
 scan, and can go stale the moment something else touches the destination.
+
+#### Confirmed delivery after a queued render
+
+Queuing a render is not the same as knowing it worked. `apply-plan` accepts
+`waitForCompletion` (and a bounded `timeoutMs`, default 5 minutes, capped at
+30): with it on, a `rerender_and_deliver` action follows its render job
+through the existing render manager to one of these final outcomes, rather
+than returning `queued` and leaving the rest to hope —
+
+- **completed** — rendered, delivered, and (if the same call also included
+  the track's bundle action) the release bundle is current too.
+- **render_failed** / **cancelled** — the render never reached delivery;
+  a dependent bundle action is reported `blocked`, never run.
+- **delivery_failed** — the render succeeded but the copy afterward failed;
+  the newly rendered canonical export is kept, so a later apply can retry
+  delivery alone without rendering again.
+- **timed_out** — this call stopped waiting; the render itself was **not**
+  cancelled and may still finish on its own. Re-run the fix plan to confirm.
+
+Two apply calls for the same track and format converge on one render job,
+never two — the render manager's own dedup decides that, the same guarantee
+an ordinary render queue already gives. A confirmed `completed` result
+includes `healthConfirmed`, from one narrow health check scoped to exactly
+the tracks this call fixed, never the whole catalogue.
+
+Without `--wait`, the CLI reports `[queued]` and stops, exactly as before.
+With it, the CLI polls the same in-process render manager purely to print
+progress, then makes one more call once the render settles to get the
+confirmed result:
+
+```console
+$ npm run destination-fix-plan -- --track ghetto-geek --apply --wait
+Applying 2 safe action(s)...
+
+Waiting up to 300s for 1 render(s)...
+  [preparing] Re-render and deliver ghetto-geek / YouTube 16:9
+  [rendering 42%] Re-render and deliver ghetto-geek / YouTube 16:9
+
+  ✓ [completed] rerender_and_deliver — ghetto-geek / youtube-16x9
+  ✓ [completed] regenerate_release_bundle — ghetto-geek
+```
+
+The UI panel follows the identical shape, but for live progress it reuses
+the existing per-job SSE stream (the same one the render panel already
+shows) instead of polling: Apply's first call reports a job id for anything
+queued, the panel shows that job's real status inline, and once it settles
+the panel automatically re-applies with `waitForCompletion` to get the
+confirmed result. It never implies success while an action is only queued.
 
 ### Editing metadata while something else changes it
 
@@ -800,7 +848,7 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | POST | `/api/delivery-history/reconcile` | Append events for deliveries whose receipts exist but were never recorded |
 | GET | `/api/destination-health` | Compare the destination against current records; `track` may repeat for a named subset, omitted scans the catalogue |
 | POST | `/api/destination-health/plan` | Dry-run remediation plan for current drift; `{"tracks":[...]}` or `{"catalogue":true}` |
-| POST | `/api/destination-health/apply-plan` | Run named safe action ids, revalidated against a freshly re-derived plan; same body plus `"actionIds"` |
+| POST | `/api/destination-health/apply-plan` | Run named safe action ids, revalidated against a freshly re-derived plan; same body plus `"actionIds"`, optional `"waitForCompletion"`/`"timeoutMs"` |
 
 Successful responses are `{"ok":true,"data":...}`. Failures are
 `{"ok":false,"error":{"code","message","path?"}}`, where `code` is the shared

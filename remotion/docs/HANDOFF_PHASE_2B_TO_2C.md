@@ -4750,5 +4750,315 @@ same "reuse, don't invent" boundary this milestone kept throughout.
 
 Not started, per instruction.
 
+## 47. Current State — Confirmed Delivery After a Queued Render (2026-09-19)
+
+§46.18 named the gap: a `rerender_and_deliver` action could only ever queue
+a render and stop. This closes it — the render manager remains the one
+source of truth for a job's status; nothing here adds a second store, a
+watcher, or a new queue.
+
+### 47.1 Render-job correlation
+
+`queueOrAdoptRender` (in `server/services/destinationFixPlan.ts`) makes one
+call, `renderManager.startBatch([{slug, preset}])`, and reads the job id back
+from either `batch.jobs` (this call queued it) or, if the render manager's
+own dedup skipped it as already active, `renderManager.listJobs()` (adopts
+the existing job). One call, no window between "check" and "queue" for a
+second caller to slip through — the correlation is exactly as strong as the
+render manager's own guarantee that one track/format pair never has two
+jobs. Every result that queued or followed a render carries that job's id.
+
+### 47.2 Waiting/follow mechanism
+
+`server/services/renderFollow.ts` — `followRenderJob(jobId, timeoutMs)` —
+checks the job's current status first (a very fast render, or a job this
+call adopted after it already finished, is reported immediately), then
+subscribes to the render manager's own event emitter and resolves on
+`completed`/`failed`/`cancelled`, or on a `setTimeout` if none arrives in
+time. No polling inside the server. Both the CLI and the UI panel do poll —
+the CLI directly against the in-process render manager, the UI via the
+existing per-job SSE endpoint — but only ever to *display* progress; the
+authoritative wait lives entirely in `followRenderJob`.
+
+### 47.3 Timeout semantics
+
+A `timed_out` result means this call stopped watching, nothing about the
+render. `followRenderJob`'s timer only ever resolves the promise; it never
+touches the job, never sends a cancel, never marks anything failed. Verified
+directly: a test follows a job with a 50ms timeout, confirms the result is
+`timed_out` and the job is still `preparing`/`rendering` (not `cancelled`),
+then lets the same job complete normally afterward — proving the render
+manager's own state was never touched by the timeout.
+
+### 47.4 Cancellation
+
+A cancelled render never reaches delivery — `followRenderThenDeliver` checks
+`job.status === "cancelled"` before ever calling `deliverIfNeeded`, and
+returns `cancelled` with no attempt at delivery. Covers a job cancelled by
+this apply call's own timeout region (never happens — see §47.3), a job
+cancelled by an unrelated call to `POST /api/renders/:jobId/cancel` while
+this one is watching (the render manager's own event fires `cancelled`
+regardless of who asked), and a job cancelled before it ever started
+rendering (the render manager already finishes a queued-then-cancelled job
+as `cancelled` with no worker involved at all; `followRenderJob`'s own
+already-terminal check catches this the same way it catches a fast
+completion).
+
+### 47.5 Render failure behaviour
+
+`render_failed` carries the render manager's own error message. Nothing is
+delivered, nothing on disk is touched, and any dependent bundle action —
+via the same dependency/settle logic §46.4 already built — is reported
+`blocked`, never attempted, because `render_failed` is not `completed` or
+`skipped_already_fixed`.
+
+### 47.6 Delivery behaviour
+
+Delivery, after a successful followed render, goes through the exact same
+`deliverIfNeeded` helper an ordinary immediate redeliver uses — never a
+direct file copy — with everything revalidated fresh rather than trusted
+from before the wait: `resolveDeliveryRoot` again, `inspectTrack` again,
+`trackExportCoverage` again. If the export is somehow still not current at
+this point (the only realistic cause: metadata changed again while the
+render was running), the result is `blocked` with a plain explanation,
+*not* a second render queued from inside an already-bounded wait — that
+would turn one apply call into an unbounded chain. A fresh plan/apply
+decides what happens next.
+
+### 47.7 Bundle follow-up
+
+Unchanged in mechanism from §46.4 — a bundle action still only runs once
+every delivery action the same apply call named has settled cleanly. What
+changed is that a `render_failed`/`delivery_failed`/`cancelled`/`timed_out`
+delivery result now correctly blocks its dependent bundle the same way a
+plain `failed`/`blocked` one always did, without the dependency logic itself
+needing to change at all — it already treats "anything other than completed
+or skipped_already_fixed" as unmet.
+
+### 47.8 Revalidation during the wait
+
+Covered by §47.6: `deliverIfNeeded` re-derives destination root, track
+existence, and export freshness from scratch, every time it runs, whether
+called immediately or after a wait. Nothing computed before `followRenderJob`
+is trusted afterward.
+
+### 47.9 Duplicate/concurrent apply
+
+Two concurrent `applyDestinationFixPlan` calls for the same action converge
+on one render job (§47.1) and both `subscribe` to it — the render manager's
+listener set already supports multiple subscribers per job, so both callers
+are notified once it settles. Delivery itself is protected by the same
+target lock `deliverExport` has always taken: whichever caller's copy runs
+first holds it; the other, revalidating fresh, most often sees `delivered`
+already and reports `skipped_already_fixed`, or — if it raced into the copy
+before the first one released the lock — a clean `delivery_failed` rather
+than a corrupted double-write. No new locking was added; this is the same
+guarantee ordinary concurrent manual deliveries already relied on. Verified
+directly with two concurrent apply calls sharing one render job: exactly one
+render manager job is ever created, at least one caller reports `completed`,
+neither reports a crash, and the destination ends up correctly delivered.
+
+### 47.10 Restart / lost waiter
+
+**Not durable, and not made durable.** An HTTP request `await`ing inside
+`applyDestinationFixPlan` holds its wait entirely in that request's own
+process memory. If the server process is killed or crashes mid-wait, that
+waiter is gone with it — no fake "completed" result is ever invented, and
+none is persisted anywhere to survive the restart. The render job itself is
+a separate question: a graceful shutdown (`renderManager.shutdown()`, the
+same one `SIGINT`/`SIGTERM` already trigger) cancels anything in flight; a
+hard kill leaves an orphaned child process not tracked by anything. Either
+way, a later `plan`/`apply-plan` call is what recovers: it re-scans current
+state and proposes whatever is actually true then, never assumes what an
+earlier, now-gone wait might have found.
+
+### 47.11 API changes
+
+`POST /api/destination-health/apply-plan` gains optional
+`waitForCompletion` (boolean, default `false`) and `timeoutMs` (number,
+default 5 minutes, clamped to 30). Both are request-body fields the server
+validates and clamps itself — never trusted as-is — matching the existing
+"server re-derives the plan, the client only ever names ids" contract. No
+new endpoint: this was a deliberate, conservative extension of the one that
+already existed, per the brief's own instruction to prefer that over adding
+surface area.
+
+### 47.12 UI changes
+
+`DestinationFixPlanPanel` now makes Apply a two-call flow when a
+`rerender_and_deliver` action is involved: a fast call without
+`waitForCompletion` queues renders and collects their job ids, a
+`FollowedRender` row per job reuses the existing `useRenderJob` SSE hook to
+show live status inline (Queued/Preparing/`Rendering NN%`), and once every
+followed job has settled (tracked via a small `settledJobIds` set and a
+guarded `useEffect`) the panel automatically re-applies the same action ids
+with `waitForCompletion` to get the authoritative, confirmed result. No
+second progress transport was added — the SSE stream is the exact one the
+render panel elsewhere in the app already consumes.
+
+### 47.13 CLI changes
+
+`npm run destination-fix-plan -- --apply` gains `--wait` and
+`--timeout <seconds>` (default 300). Without `--wait`, behaviour is
+unchanged: `[queued]` and a note to add `--wait`. With it, the script polls
+the same in-process render manager the API reads from, printing a status
+line only when it changes, until every queued job is terminal or the
+timeout elapses — then makes one more `applyDestinationFixPlan` call with
+`waitForCompletion` to fetch the confirmed final results. This polling is
+purely for what the terminal prints; it is not a second implementation of
+the wait itself, which still lives entirely in `followRenderJob`.
+
+### 47.14 Result model
+
+`RemediationActionResult` gained `jobId`, `startedAt`, `completedAt`, and
+`healthConfirmed` (all `| null`, defaulting to `null` via `settle`'s new
+optional fourth argument). Deliberately did not add nested `renderResult`/
+`deliveryResult`/`bundleResult` objects as the brief's own suggestion listed:
+`status` plus `reason` already say what happened in each phase without
+duplicating state the render job's own (already fetchable) view already
+carries, and the brief itself warns against dumping internal process
+objects across the wire.
+
+### 47.15 Health confirmation
+
+Runs once per `applyDestinationFixPlan` call, after the whole settle loop
+finishes — not inside `followRenderThenDeliver` itself. This was a real
+design correction made while writing the tests (§47.16): confirming health
+immediately after a delivery, before a same-call dependent bundle action has
+even run yet, would falsely report `healthConfirmed: false` for the single
+most common real scenario (rerender + bundle applied together). One scan
+now covers every track this call successfully rerendered-and-delivered,
+never the whole catalogue, and a root problem or scan failure taints the
+confirmation without ever pretending the delivery itself failed.
+
+### 47.16 Tests added
+
+7 tests in `tests/destination-fix-plan-render.test.mts`, run against the
+real `renderManager` singleton with `child_process.fork` mocked, discovered
+the hard way to need scoping *only* to the render-worker call: mocking it
+globally made a genuine delivery attempt hang forever, because
+`stageDelivery.ts` forks its own, separate copy-worker process for the same
+cross-process-safe-copy reason renders use a lock, and a fake, silent
+process standing in for it left `deliverExport` waiting on IPC that would
+never arrive. Every other fork call is passed through to the real
+implementation. A second, unrelated timing bug surfaced investigating that
+same hang: a test helper bounded a wait by iteration count rather than
+elapsed time, and bare `setImmediate` ticks with nothing else queued can
+burn through hundreds of iterations in under a millisecond — nowhere near
+enough real time for the production code's own genuine async work (a forked
+subprocess, a health scan) to interleave and finish. Rewritten to a
+wall-clock deadline. Both fixes, and the `healthConfirmed` timing correction
+in §47.15, are documented here exactly because none of them were caught by
+a failing assertion first — they were process hangs and false negatives
+found by tracing execution, the harder and more honest way.
+
+Covers: the full happy path through a confirmed bundle update and a
+confirmed health check; a render that fails while followed; a render
+cancelled while followed; a caller timeout that never cancels the
+underlying job (proven by letting it complete afterward); a delivery that
+fails right after a successful followed render, with the new export kept;
+two concurrent callers for the same target converging on one job; two
+different presets for the same track each following their own distinct job
+within one apply call.
+
+### 47.17 End-to-end results
+
+A real, unmodified API server (`server/app.ts`'s `handleRequest`, in-process
+so its render manager singleton could be driven) with only the render-worker
+`fork()` call replaced by a fast fake — delivery's own copy-worker fork left
+completely real — proved, over genuine HTTP:
+
+- **Happy path**: plan proposed `rerender_and_deliver` + `regenerate_release_bundle`;
+  apply with `waitForCompletion` returned `completed`/`completed`,
+  `healthConfirmed: true`; a follow-up `GET /api/destination-health` reported
+  `healthy`.
+- **Render failure**: a simulated worker error produced `render_failed`
+  with the render manager's own message, as its own distinct final state.
+- **Delivery failure**: a successful simulated render followed by a
+  read-only destination folder produced `delivery_failed`, distinct from
+  both the happy path and the render failure.
+
+Then a real headless Chrome session, driven over a raw CDP WebSocket exactly
+as the previous milestone's own UI verification did, loaded the app,
+selected a synthetic track, clicked "Check this track", "Create fix plan",
+and Apply, observed the panel's "In progress" section appear (live,
+SSE-backed job status), settled the simulated render, and watched the panel
+automatically re-apply and land on `[Done] redeliver` / `[Done] regenerate_release_bundle`
+— the action correctly read as a plain redeliver on the confirm call, since
+the render it had just followed made the canonical export current again,
+demonstrating the redeliver/rerender identity-sharing from §46.1 doing
+exactly the job it was built for. All synthetic tracks, the temp
+destination, the API/Vite/Chrome processes, and `delivery.local.json` were
+removed and verified gone afterward; `public/tracks/` and `out/` were
+confirmed back to holding only `ghetto-geek`, never re-rendered.
+
+### 47.18 Verification results
+
+`npm run lint` (eslint + tsc) clean. Full suite: **374/374 tests** (367
+existing + 7 new), the new file rerun 3 additional times for stability.
+`npx vite build` passed (existing chunk-size advisory, unrelated).
+`validate-track`/`prepare-track` against `ghetto-geek` both exit 0.
+`git diff --check` clean. Working tree clean after every commit; no
+`delivery.local.json`, no leftover processes, and `public/tracks/`/`out/`
+confirmed holding only `ghetto-geek` at the end of every verification pass,
+including after the debugging sessions that required force-killing hung
+processes (§47.16) — those left orphaned fixture directories once, found
+and removed before continuing.
+
+### 47.19 Performance
+
+No polling inside the server at all — `followRenderJob` is purely
+event-subscription plus one timer. The CLI's and the UI's own polling exist
+only to print/display progress and are bounded (1s interval, capped by the
+same timeout) and outside the server process entirely. Confirmation adds
+exactly one additional narrow health scan per apply call that used
+`waitForCompletion` and had at least one successful rerender, never one per
+track and never the catalogue.
+
+### 47.20 Remaining limitations
+
+- Multiple `rerender_and_deliver` actions in one `waitForCompletion` apply
+  call are followed sequentially, not concurrently — the settle loop awaits
+  each action fully before starting the next. Since the render manager only
+  ever runs one render at a time regardless, this costs wait-call overhead,
+  never actual render time, and only matters when several rerenders land in
+  the same apply call with waiting on.
+- No mechanism confirms a `timed_out` or a not-`--wait`ed `queued` action
+  later on its own — per §46.18/this milestone's own scope, that would need
+  a new trigger (a UI/CLI re-check, or the recommended-but-deferred
+  job-status-driven re-check), never a background watcher.
+- A root problem discovered mid-wait (destination unplugged while a render
+  was in flight) is caught by `deliverIfNeeded`'s fresh `resolveDeliveryRoot`
+  check after the render settles, reported `blocked` — but the render itself
+  still ran to completion having no way to know the destination had become
+  unreachable, since nothing here watches destination state during a render.
+
+### 47.21 Commits
+
+1. `eeb79e0` — define the confirmed-render outcome vocabulary and result fields (domain).
+2. `22b6733` — `followRenderJob` and the executor's wait/confirm/revalidate logic (service).
+3. `54c9143` — API, CLI, UI.
+4. `53f1a6a` — tests.
+5. (this commit) — documentation.
+
+No push was made.
+
+### 47.22 Recommended next feature
+
+**A durable, opt-in "notify me" for a still-running remediation.** Right now
+closing the tab or the terminal after `--wait`/an unconfirmed apply loses
+the wait; the render itself keeps going, tracked by the render manager as
+it always was, but nothing chains delivery to it automatically afterward. A
+small, narrowly-scoped follow-up: when the *existing* render job reaches a
+terminal state, check whether a fix-plan action is still known to be
+waiting on it (kept in memory only, tied to the render manager's own job
+lifecycle, never a new persisted store) and, if so, run exactly the
+confirm step this milestone already built. Still no watcher polling the
+filesystem, no database, no cron — purely reacting to an event the render
+manager already emits, the same "reuse, don't invent" boundary every
+milestone in this project has kept.
+
+Not started, per instruction.
+
 *End of handoff. If anything in this document conflicts with the live
 repository, the repository is correct — verify with §31 before proceeding.*
