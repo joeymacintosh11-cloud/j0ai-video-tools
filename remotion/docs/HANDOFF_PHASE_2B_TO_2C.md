@@ -3870,6 +3870,436 @@ All commits are local only. **Do not push without a new instruction.**
 
 Unchanged from §42.19: **destination health and drift detection**.
 
+## 44. Current State — Destination Health & Drift Detection (2026-09-19)
+
+Every delivered track can now be checked against what is physically at the
+destination, not only against the records the app keeps about it. No
+composition, layout, presets, render output, locking, delivery, release-bundle
+or delivery-history behaviour changed. No dependencies were added. Nothing
+here ever writes to or deletes from the destination — detection and reporting
+only, exactly as asked.
+
+### 44.1 What it answers
+
+A release bundle says what a track *currently ships*, computed from receipts
+and manifests — it never looks at the destination's own contents. The
+delivery log says what *went out*, as a history. Neither has ever noticed a
+file deleted by a sync client, a folder renamed by hand, or a leftover export
+from a preset that no longer exists. This closes that gap:
+
+- Which files should exist and do?
+- Which files should exist but are missing?
+- Which files exist but are no longer expected?
+- Which delivered files were externally replaced or modified?
+- Which release bundles are missing or outdated?
+- Which track folders disappeared or were renamed?
+- Is the destination root itself healthy?
+
+### 44.2 Health model
+
+`src/domain/delivery/destinationHealth.ts` is browser-safe and holds the
+finding codes, their severities, the filename rules, and the messages — one
+policy, read by the server, the CLI and the UI alike.
+
+**Top-level status**, one of five:
+
+| Status | Meaning |
+|---|---|
+| `not_configured` | no destination — nothing to scan |
+| `healthy` | scanned cleanly, nothing found |
+| `drift` | scanned cleanly, at least one finding of any severity |
+| `unavailable` | the configured root cannot be reached at all — the same fact delivery and release bundles already call `rootProblem` |
+| `error` | reserved for the scan itself failing to run; in practice unreachable, because every per-item failure below is caught and turned into a finding rather than aborting |
+
+**Finding severity** is a fixed function of the code, never a judgment call
+made where a finding is raised:
+
+| Severity | Codes |
+|---|---|
+| `error` | `destination_root_identity_changed`, `destination_folder_unreadable`, `track_folder_missing`, `delivered_file_missing`, `destination_file_unreadable` |
+| `warning` | `delivered_file_changed`, `unexpected_export_file`, `release_bundle_outdated`, `release_bundle_pair_mismatch` |
+| `info` | `unexpected_track_folder`, `release_bundle_missing` |
+
+### 44.3 Finding codes
+
+The brief's suggested list included two pairs that name one fact twice:
+`receipt_without_file` is `delivered_file_missing`, and
+`file_without_matching_receipt` is `unexpected_export_file`. Two names for one
+finding would only make call sites guess which to check, so each pair is one
+code here, and the choice is documented in the domain module itself.
+
+- **`delivered_file_missing`** — a receipt says a file was delivered; it is
+  not there any more.
+- **`delivered_file_changed`** — a receipt says a file was delivered; what is
+  there now does not match what was recorded (size or modification time —
+  never a hash). Includes a file replaced by a symlink, worded specifically as
+  such.
+- **`track_folder_missing`** — a track has at least one delivery receipt, but
+  its entire folder is gone. A roll-up: the per-preset
+  `delivered_file_missing` findings still fire alongside it.
+- **`destination_file_unreadable`** / **`destination_folder_unreadable`** — a
+  path a receipt names, or a folder the scan needs to list, could not be
+  examined — a permissions problem, not absence. See §44.5.
+- **`unexpected_export_file`** — a file in a track's own folder matches this
+  app's naming (`<slug>-…mp4`) but no current receipt accounts for it. Covers
+  an export from a retired preset, a manually copied MP4, or a leftover from a
+  changed delivery folder.
+- **`unexpected_track_folder`** — a root-level folder looks app-managed
+  (carries `release.json`/`release.md`, or an mp4 named for a *current*
+  preset) but no active track's folder resolves to it. Catalogue scans only.
+- **`destination_root_identity_changed`** — the configured root no longer
+  resolves to itself; see §44.4.
+- **`release_bundle_missing`** / **`release_bundle_outdated`** /
+  **`release_bundle_pair_mismatch`** — see §44.7.
+
+### 44.4 Expected-vs-actual, and root identity
+
+"Expected" is entirely records the rest of the app already trusts:
+`deliveryStateForTarget` (the exact function delivery itself calls) for every
+preset's receipt, and `releaseBundleStateFor` (the exact function release
+bundles call) for bundle state. Neither is re-implemented; both are called
+precisely as their existing owners call them, so "drift" means one consistent
+thing everywhere in the app.
+
+Receipts are read for **every** `RENDER_PRESET_IDS`, not only a track's
+currently intended formats — a receipt is a strong claim regardless of whether
+the format is still intended today, and dropping a format from intent does not
+un-deliver a file that is genuinely still sitting there. Section 4's caution is
+followed precisely: a format that was never delivered produces no finding at
+all, intended or not.
+
+**Root identity** is a check nothing else in the app makes.
+`resolveDeliveryRoot` re-resolves the stored path fresh on every call, so if
+that path has quietly started resolving somewhere else — a parent directory
+swapped, or the leaf itself replaced by a symlink — it would otherwise be
+followed in silence, with delivery and release bundles both simply starting to
+use the new target without complaint. The health scan checks
+`realpathSync(settings.root) === settings.root` once per scan and reports
+`destination_root_identity_changed` when it is not, without changing
+`resolveDeliveryRoot`'s own behaviour anywhere else.
+
+### 44.5 Delivered-file checks: missing versus unreadable
+
+Kept apart everywhere, using `lstat` rather than the broader exception a
+permissions problem and a genuinely absent path otherwise both collapse into.
+A destination with its permission bits removed must never read as "every
+delivered file is gone" — that would send someone to re-deliver files that
+were never actually lost. Concretely:
+
+- `deliveryStateFor`'s `destination_missing` reason collapses ENOENT with
+  several other causes (a refused symlinked parent, a broken symlink). The
+  scan `lstat`s the same path itself afterwards: ENOENT means genuinely
+  missing (`delivered_file_missing`); anything else means something is there
+  but could not be read as expected (`destination_file_unreadable`).
+- The same distinction is made for a track's own folder: `lstat` succeeding
+  with `ENOENT` means the folder is gone (`track_folder_missing`, only when a
+  receipt says it should exist); any other error means it could not be seen
+  (`destination_folder_unreadable`) — found and fixed while building the test
+  for a permission-denied root (§44.11).
+- Only filesize and modification time are compared, never a hash, per the
+  brief. A same-sized replacement is still caught, because a genuine copy
+  changes the modification time too — tested explicitly.
+- A delivered file replaced by a symlink is `delivered_file_changed`, worded
+  as a replacement by a link rather than left to read as an ordinary
+  modification.
+
+### 44.6 Unexpected files and folders — the "managed filename" rule
+
+Centralised in one place, `looksLikeManagedExportFile(filename, slug)`:
+`filename.startsWith(`${slug}-`) && filename.toLowerCase().endsWith(".mp4")` —
+exactly the scheme `deliveryRelativePath()` writes, read back rather than
+duplicated. A file that does not start with the track's own slug is left alone
+completely, however export-like it looks: a stray `trailer.mp4`, a home movie,
+or `notes.txt` sitting in the folder is never this scanner's business. Dotfiles
+(`.DS_Store`, this app's own transient `.delivery-log.lock`) and the two bundle
+files (`release.json`, `release.md`) are recognised and never flagged.
+
+A file passing that check is `unexpected_export_file` unless a current receipt
+(for any preset, matched by basename, checked against the *currently
+configured* root) names it — covering an export from a preset that has since
+been retired, since the naming check does not require the preset id to be one
+this build still knows.
+
+**Orphaned folders** use a narrower, separate predicate,
+`looksLikeManagedTrackFolder`, checked only against *current* preset ids —
+deliberately narrower, since an orphan is worth a look specifically when it
+still carries today's naming, which is what a track renamed or removed
+recently leaves behind. Checked only for a **catalogue-wide** scan: judging a
+folder orphaned needs every active track's folder loaded, which a scan
+narrowed to specific tracks does not have.
+
+### 44.7 Release bundle health
+
+Entirely delegated to `releaseBundleStateFor` — the exact function release
+bundles themselves call, per the brief's "do not rewrite bundle logic." Its
+`missing`/`outdated`/`current` freshness maps to:
+
+- `missing` **and** something has actually been delivered → `release_bundle_missing`.
+  `missing` with nothing delivered is not a finding at all — bundle generation
+  may simply not have been run yet, which is normal.
+- `outdated` → `release_bundle_outdated`, *unless* a light, additional,
+  read-only comparison finds the two published files' own ids disagreeing with
+  **each other** — using only the already-exported `releaseBundlePaths`,
+  `readMarkdownBundleId` and `shortBundleId` — in which case it is the more
+  specific `release_bundle_pair_mismatch`. One file missing while the other is
+  present falls back to the general `outdated` finding, since a genuinely
+  absent half is not a *disagreement* between two present files; documented as
+  a deliberate choice rather than an oversight.
+- `current` → no finding.
+
+Changing the delivered file itself (§44.5) correctly cascades into
+`release_bundle_outdated` too, since the bundle's own fingerprint incorporates
+delivery state — a real, expected second finding, not a duplicate report of
+one fact. Verified by test.
+
+### 44.8 Destination root health
+
+Reuses `resolveDeliveryRoot`/`assertDeliveryRoot` exactly as delivery and
+release bundles do — no broadened semantics. A missing root, one that is not a
+directory, or one inside the project all surface as `unavailable` with the
+same `rootProblem` message those other features already produce. A root that
+resolves fine but cannot be **listed** (permissions) is a `drift` finding
+(`destination_folder_unreadable`), not `unavailable` — the destination is
+reachable, the scan simply could not see inside it, and the distinction
+matters because `unavailable` would otherwise wrongly suggest delivery itself
+is broken.
+
+### 44.9 Point-in-time semantics
+
+A scan is a snapshot, not a transaction. No lock is taken anywhere — a health
+scan has no business holding a render or delivery-log lock, since it changes
+nothing. Every filesystem call is wrapped so a file, folder, or track
+disappearing between one call and the next produces a coherent (if slightly
+stale) finding rather than a thrown exception:
+
+- a file vanishing between `readdir` and the follow-up `stat` for its size
+  yields the finding with no size, rather than crashing the whole scan —
+  verified by injecting an `ENOENT` on exactly that call;
+- a track's delivery folder changing between one scan and the next is simply
+  reflected in the next scan, reading current metadata each time;
+- a delivery happening concurrently with a scan is not fenced against, on
+  purpose — the scan would either see the delivery's result or not, both
+  coherent outcomes, and serialising a read-only report behind the render lock
+  would slow down real work to protect a value that is stale the instant it is
+  returned regardless.
+
+This is documented, not hidden: `scannedAt` is part of every result, and nothing here claims to be live.
+
+### 44.10 Path safety
+
+Reuses the existing fencing throughout — `deliveryFolderFor` for every folder
+name, `deliveryStateFor`/`assertDeliveryDestination` for every delivered-file
+path — rather than inventing a parallel check. Two additions came directly out
+of testing this scan specifically:
+
+- **A track folder replaced by a symlink is never followed.** The
+  folder-existence check uses `lstat`, which a symlink can never report as
+  `isDirectory()`, so it reads as `track_folder_missing` and the
+  unexpected-file sweep (which needs `readdir`) never runs through it.
+  Verified by pointing such a symlink at a folder holding a file named
+  `secret.txt` and confirming it never appears anywhere in the result.
+- **A `deliveryFolder` value crafted to escape the root** (`"../../etc"`,
+  written directly to `metadata.json`, bypassing the normal validated write
+  path) is neutralised twice over: strict metadata parsing already rejects the
+  whole document over it, so the scan falls back to the track's own slug; and
+  the scan's own `try`/`catch` around `deliveryFolderFor` is real
+  defence-in-depth, not merely unreachable code, proven by calling it directly
+  with the same value.
+
+No shell-string copying anywhere; every path is built with `path.join`/`path.resolve` and validated before use.
+
+### 44.11 A gap found while testing, and fixed
+
+The folder-existence check originally treated any `lstat` failure the same
+way — `ENOENT` and `EACCES` both became `folderExists = false`. Under a
+permission-denied root, that meant every track with receipts was reported as
+`track_folder_missing`, even though the folder was sitting there untouched —
+misleading, and exactly the kind of finding that would send someone to
+re-deliver files that were never lost. Found while writing the
+permission-denied-root test, fixed before it landed: `ENOENT` alone means
+missing; anything else means `destination_folder_unreadable`. The equivalent
+distinction for individual files (§44.5) was designed in from the start.
+
+### 44.12 API
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/destination-health` | `track` (repeatable) for named tracks; omitted scans the catalogue |
+
+Read-only, matching delivery history's shape. No path is ever accepted — the
+destination comes from stored settings. Each `track` value is validated as a
+slug; an invalid one is refused before anything is scanned.
+
+### 44.13 UI
+
+- **Delivery settings** gains a "Destination health" section with a "Scan
+  destination" action. One step, not two: unlike delivery and release bundles
+  there is nothing to confirm, since a scan never writes anything.
+- The same `DestinationHealthPanel` component, parameterised by `tracks`,
+  reused inside a track's own Delivery section as "Check this track" —
+  exactly how `DeliverPanel`/`ReleaseBundlePanel` are already shared between
+  the catalogue and single-track contexts.
+- A small badge per track in the list, but **only once a catalogue scan has
+  actually named that track** — no badge reads honestly as "not scanned this
+  session," never as a stale or invented answer. Held in React state only,
+  fed by the settings panel's scan; never fetched automatically, never
+  persisted.
+- Findings render with the same three severities the validation notes already
+  use (`.note--error`/`.note--warning`/`.note--info`, the last one added by
+  this milestone).
+- Repair actions (re-deliver, regenerate a bundle) are not duplicated inline
+  per finding — they already sit one section away in the same Delivery panel.
+  No "Fix All" anywhere, and no action here ever touches the destination.
+
+### 44.14 CLI
+
+```console
+npm run destination-health
+npm run destination-health -- --track ghetto-geek
+npm run destination-health -- --json
+```
+
+Shares `scanDestinationHealth` with the API — no filesystem-walking logic in
+`scripts/`. The human view groups findings by track; `--json` prints the raw
+result for scripting. Exits non-zero when at least one `error`-severity
+finding is present, or the destination is unavailable — never merely because a
+scan ran, and it changes nothing regardless of the exit code.
+
+### 44.15 Performance
+
+Measured on this machine:
+
+| Scale | Scan time |
+|---|---|
+| 10 tracks, 10 managed files | 3.5 ms |
+| 100 tracks, 100 managed files | 27.7 ms |
+| 50 tracks, ~1,000 managed files (dense) | 16.4 ms |
+
+Roughly linear in the number of files touched, as a `readdir`-based sweep must
+be. One `readdir` per folder that matters (the root, once, for a catalogue
+scan; each track's own folder), a handful of `stat`/`lstat` calls per track,
+and the delegated `deliveryStateForTarget`/`releaseBundleStateFor` calls the
+rest of the app already pays for elsewhere. No video is hashed, decoded, or
+even opened; no `ffprobe`; no recursive scan of anything outside the
+destination's top level and each track's own folder; no watchers; no
+Chromium; no new dependencies. No new persisted state anywhere — a result is
+computed fresh every call and held, if at all, only in the caller's own
+memory.
+
+### 44.16 Tests (30 added, 331 total)
+
+`tests/destination-health.test.mts`, real directories, every fixture delivered
+through the genuine pipeline (`publishExport` + `deliverExport`) so every
+receipt starts internally consistent, then drifted by mutating the
+*destination* only — never the receipt — matching what the scanner actually
+exists to notice.
+
+Covers all 30 scenarios in the brief: a healthy destination and an
+unconfigured one; a root that is gone, one that cannot be listed, and one
+silently replaced by a symlink; a delivered file matching, deleted, resized,
+replaced by same-sized content caught only through mtime, and replaced by a
+symlink; a managed-looking file with no receipt and a file clearly outside the
+naming convention (including a filename that is literally the bare slug);
+an orphaned folder found only on a catalogue scan; every release-bundle
+finding, including the deliberate pair-mismatch-versus-outdated distinction; a
+partial delivery and an empty one, both healthy; a missing file and an
+unaccounted-for file reported together in one scan; a file vanishing between
+listing and inspection (via a targeted `statSync` mock, the same technique
+used in the delivery-history hardening pass); a folder rename reflected in the
+next scan; a folder replaced by a symlink, never followed, with an outside
+secret file proven absent from the result; a traversal-shaped `deliveryFolder`
+neutralised twice over; single-track versus catalogue scope; and a full scan
+over every kind of drift at once, followed by a byte-for-byte comparison of
+the whole destination before and after, proving nothing was written.
+
+The first draft of this suite had eight failing tests. All eight were the
+suite's own mistakes, not product bugs — traced individually before any fix
+was applied: three tests never generated a release bundle and were then
+surprised by the (correct) `release_bundle_missing` finding; one compared two
+strings of different lengths twice in a row while trying to prove a
+same-length replacement is still caught; one registered a redundant
+permission-restoring cleanup hook that ran after the directory was already
+removed (Node's test hooks run in registration order, not reverse); one
+expected an exact track list from a catalogue scan without accounting for this
+repository's own `ghetto-geek`; and the traversal test's original premise was
+wrong — strict metadata parsing already rejects the whole document over an
+invalid `deliveryFolder`, so the value never reaches the scanner's own
+defence, which the test now proves separately and directly.
+
+### 44.17 Verification performed
+
+- `npm run lint` (ESLint + TypeScript) clean; **331 tests pass**, the
+  destination-health suite specifically run three further times (30/30 each).
+- Vite production build passes (the pre-existing >500 kB advisory is
+  unchanged).
+- `validate-track` and `prepare-track` on `ghetto-geek` exit 0;
+  `git diff --check` clean.
+- A real synthetic probe, end to end: a 2-second track rendered, delivered,
+  bundled — confirmed healthy (0 findings) — then one delivered file deleted
+  and one unexpected managed-looking export added — confirmed exactly the
+  three expected findings (missing, unexpected, and the correctly cascaded
+  outdated bundle) — then every fixture removed.
+- A separate benchmark run (10 / 100 / ~1,000 managed files) confirmed
+  near-linear scaling with no surprises, then fully cleaned up.
+- **Ghetto Geek was not re-rendered and its assets were not touched.**
+- Final state: no leaked locks, no leftover fixtures, no temp files, no
+  orphaned workers or Chromium, `delivery.local.json` back to not existing.
+
+### 44.18 Limitations
+
+- **A scan is read-only and point-in-time**, by design (§44.9) — it is a
+  report, not a guarantee, and nothing here re-checks itself after returning.
+- **`unexpected_track_folder` only runs for a catalogue-wide scan.** A
+  single-track request cannot safely judge "orphaned" without the whole
+  catalogue's folder set loaded.
+- **The managed-filename rule is a naming convention, not a content check.**
+  A file that happens to be named `<slug>-<anything>.mp4` is judged purely by
+  its name; nothing here opens or inspects file contents, exactly as the brief
+  asks.
+- **A malformed delivery receipt reads as no receipt** (the existing
+  `readDeliveryReceipt` behaviour, reused as-is), so a track whose receipt is
+  corrupted is treated as never having been delivered there rather than as a
+  specific "receipt unreadable" finding.
+- **Reconciling `release_bundle_missing` under a permission-denied root**
+  behaves the same as a genuinely absent bundle, because the bundle read
+  treats `EACCES` and `ENOENT` identically — reasonable (either way nothing
+  readable was found), but slightly less precise than the delivered-file
+  checks' own missing-versus-unreadable distinction. Documented rather than
+  fixed, since reaching in to change that would mean touching
+  `releaseBundleState`'s internals, which this milestone deliberately does
+  not do.
+- **No optional safe actions are embedded per finding** (reveal, re-deliver,
+  regenerate a bundle) — those already sit one section away in the same
+  Delivery panel for the same track, so duplicating them inline was judged
+  unnecessary rather than valuable. Documented as a deliberate scope decision.
+- **No new persisted state, by design.** A destination scanned once and never
+  again simply shows no badge — there is nothing to go stale, because nothing
+  is kept.
+
+### 44.19 Commits
+
+- `0bbc49d` — the health model: finding codes, severities, the managed-filename
+  rule, messages.
+- `ca36c10` — the scanning service: expected-vs-actual, root identity,
+  missing-versus-unreadable, release bundle checks.
+- `25a1e8e` — API, CLI and UI.
+- `598ff15` — tests.
+- Documentation follow-up: this section.
+
+All commits are local only. **Do not push without a new instruction.**
+
+### 44.20 Recommended next major feature (not started)
+
+**A destination-wide dry-run "fix" plan** — not an automatic fix, which every
+instruction for this milestone was explicit about avoiding, but a *planned*
+one: given the findings this scan already produces, generate the exact list of
+safe, reversible actions that would resolve each one (re-deliver a missing or
+changed file, regenerate an outdated bundle) using entirely existing
+operations, present it for review, and let the person run it — or not. This
+keeps detection and remediation as two separate, explicit steps, with a human
+between them, while finally answering "now that I know what's wrong, what do I
+actually click?"
+
 ---
 
 *End of handoff. If anything in this document conflicts with the live

@@ -580,6 +580,38 @@ finishing together cannot interleave. If a process is killed while holding it,
 process on this machine still holds it, and refuses a lock from another
 machine, where it cannot tell.
 
+### Destination health
+
+Delivery receipts and release bundles say what the app *believes* is at the
+destination. Nothing checks that against what is actually there — until now. A
+health scan compares the two: every delivered file a receipt names, every
+track's release bundle, and (for a catalogue-wide scan) every folder at the
+destination root that looks like one of this app's own.
+
+```console
+npm run destination-health
+npm run destination-health -- --track ghetto-geek
+npm run destination-health -- --json
+```
+
+It answers: which delivered files are missing or have been changed since; which
+export-looking files sit at the destination with no receipt behind them (an old
+export, a leftover from a renamed delivery folder); which release bundles are
+missing, outdated, or have two files that disagree with each other; whether the
+destination root itself is still the folder that was configured, rather than
+something a symlink now quietly points elsewhere. Findings are `error`,
+`warning` or `info`, fixed per finding rather than judged case by case.
+
+**Detection only.** A scan never writes to or deletes from the destination —
+not even the file it is reporting on. It is a read-only sweep: a `readdir` per
+folder that matters and a handful of `stat` calls, reusing exactly the same
+checks delivery and release bundles already trust, never a video hashed,
+decoded, or even opened.
+
+In the app, run it from **Delivery** settings for the whole catalogue, or from
+a track's own Delivery section to check just that one. A scan is a single
+step — there is nothing to confirm, because nothing is ever written.
+
 ```console
 curl -X POST http://127.0.0.1:4600/api/render-batches \
   -H 'content-type: application/json' \
@@ -718,6 +750,7 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | POST | `/api/release-bundles` | Write release.json/release.md; `{"tracks":[...]}` or `{"catalogue":true}`, optional `dryRun`/`force` |
 | GET | `/api/delivery-history` | Read the destination's delivery log; `track`, `preset`, `from`, `to`, `limit`, `order` |
 | POST | `/api/delivery-history/reconcile` | Append events for deliveries whose receipts exist but were never recorded |
+| GET | `/api/destination-health` | Compare the destination against current records; `track` may repeat for a named subset, omitted scans the catalogue |
 
 Successful responses are `{"ok":true,"data":...}`. Failures are
 `{"ok":false,"error":{"code","message","path?"}}`, where `code` is the shared
