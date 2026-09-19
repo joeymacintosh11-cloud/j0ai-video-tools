@@ -90,7 +90,7 @@ test("a healthy destination produces an empty plan", async (t) => {
   await f.deliver(root);
   await generateReleaseBundle({ slug: f.slug, settings: settingsFor(root) });
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
 
   assert.equal(plan.status, "healthy");
   assert.deepEqual(plan.actions, []);
@@ -110,7 +110,7 @@ test("a missing delivered file with a current canonical export proposes a redeli
   const outcome = await f.deliver(root);
   await rm(outcome.destinationPath!);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
 
   const redeliver = action(plan, "redeliver", f.slug);
   assert.ok(redeliver, JSON.stringify(plan.actions));
@@ -129,7 +129,7 @@ test("a missing delivered file with a stale canonical export proposes a rerender
   await rm(outcome.destinationPath!);
   await rm(trackOutputLocation(f.slug, "youtube-16x9").path);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
 
   const rerender = action(plan, "rerender_and_deliver", f.slug);
   assert.ok(rerender, JSON.stringify(plan.actions));
@@ -143,7 +143,7 @@ test("a changed delivered file with a current canonical export proposes a redeli
   const outcome = await f.deliver(root);
   await writeFile(outcome.destinationPath!, "not the same file at all, different length");
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
 
   const redeliver = action(plan, "redeliver", f.slug);
   assert.ok(redeliver, JSON.stringify(plan.actions));
@@ -158,7 +158,7 @@ test("a changed delivered file with a stale canonical export proposes a rerender
   await writeFile(outcome.destinationPath!, "not the same file at all, different length");
   await rm(trackOutputLocation(f.slug, "youtube-16x9").path);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
 
   assert.ok(action(plan, "rerender_and_deliver", f.slug));
 });
@@ -173,7 +173,7 @@ test("a missing release bundle proposes regenerating it", async (t) => {
   await f.publish();
   await f.deliver(root);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
 
   const bundle = action(plan, "regenerate_release_bundle", f.slug);
   assert.ok(bundle);
@@ -190,7 +190,7 @@ test("an outdated release bundle proposes regenerating it", async (t) => {
   await f.publish("youtube-16x9", "a longer finished video than before");
   await f.deliver(root);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
 
   const bundle = action(plan, "regenerate_release_bundle", f.slug);
   assert.ok(bundle, JSON.stringify(plan.actions));
@@ -209,7 +209,7 @@ test("a pair-mismatched release bundle proposes regenerating it", async (t) => {
   const json = JSON.parse(await readFile(paths.json, "utf8")) as { bundleId: string };
   await writeFile(paths.markdown, (await readFile(paths.markdown, "utf8")).replace(json.bundleId.slice(0, 8), "aaaaaaaa"));
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
 
   const bundle = action(plan, "regenerate_release_bundle", f.slug);
   assert.ok(bundle, JSON.stringify(plan.actions));
@@ -226,7 +226,7 @@ test("an unexpected export file is manual review only, never a safe action", asy
   await f.deliver(root);
   await writeFile(path.join(root, f.slug, `${f.slug}-vertical-9x16.mp4`), "a stray file");
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
 
   const manual = action(plan, "manual_review", f.slug);
   assert.ok(manual);
@@ -278,7 +278,7 @@ test("a missing delivery and a missing bundle for the same track produce two act
   const outcome = await f.deliver(root);
   await rm(outcome.destinationPath!);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
 
   const trackActions = plan.actions.filter((a) => a.slug === f.slug);
   assert.equal(trackActions.length, 2, JSON.stringify(trackActions));
@@ -298,10 +298,11 @@ test("applying a bundle action without its prerequisite is blocked, not silently
   const outcome = await f.deliver(root);
   await rm(outcome.destinationPath!);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
   const bundle = action(plan, "regenerate_release_bundle", f.slug)!;
 
   const { results } = await applyDestinationFixPlan({
+    slugs: [f.slug],
     settings: settingsFor(root),
     actionIds: [bundle.id],
   });
@@ -344,7 +345,7 @@ test("planning never writes anything at the destination", async (t) => {
   await writeFile(path.join(root, f.slug, `${f.slug}-vertical-9x16.mp4`), "stray");
 
   const before = await stat(path.join(root, f.slug));
-  await planDestinationFix({ settings: settingsFor(root) });
+  await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
   const after = await stat(path.join(root, f.slug));
 
   assert.equal(before.mtimeMs, after.mtimeMs);
@@ -362,12 +363,13 @@ test("apply-plan cannot be made to run an action that does not exist in a fresh 
   await generateReleaseBundle({ slug: f.slug, settings: settingsFor(root) });
 
   const { results } = await applyDestinationFixPlan({
+    slugs: [f.slug],
     settings: settingsFor(root),
     actionIds: ["not-a-real-action-id"],
   });
 
   assert.equal(results[0]!.status, "skipped_already_fixed");
-  const health = await scanDestinationHealth({ settings: settingsFor(root) });
+  const health = await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
   assert.equal(health.status, "healthy");
 });
 
@@ -382,13 +384,14 @@ test("an action revalidated at apply time and found already fixed is skipped, no
   const outcome = await f.deliver(root);
   await rm(outcome.destinationPath!);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
   const redeliver = action(plan, "redeliver", f.slug)!;
 
   // Someone else fixes it by hand before apply runs.
   await f.deliver(root);
 
   const { results } = await applyDestinationFixPlan({
+    slugs: [f.slug],
     settings: settingsFor(root),
     actionIds: [redeliver.id],
   });
@@ -403,16 +406,16 @@ test("applying the same plan twice is safe: the second run does nothing further"
   const outcome = await f.deliver(root);
   await rm(outcome.destinationPath!);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
   const ids = plan.actions.filter((a) => a.executable).map((a) => a.id);
 
-  const first = await applyDestinationFixPlan({ settings: settingsFor(root), actionIds: ids });
+  const first = await applyDestinationFixPlan({ slugs: [f.slug], settings: settingsFor(root), actionIds: ids });
   assert.ok(first.results.some((r) => r.status === "completed"));
 
-  const second = await applyDestinationFixPlan({ settings: settingsFor(root), actionIds: ids });
+  const second = await applyDestinationFixPlan({ slugs: [f.slug], settings: settingsFor(root), actionIds: ids });
   assert.ok(second.results.every((r) => r.status === "skipped_already_fixed"), JSON.stringify(second.results));
 
-  const health = await scanDestinationHealth({ settings: settingsFor(root) });
+  const health = await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
   assert.equal(health.status, "healthy");
 });
 
@@ -427,7 +430,7 @@ test("a redeliver whose canonical export goes stale between plan and apply is qu
   const outcome = await f.deliver(root);
   await rm(outcome.destinationPath!);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
   const redeliver = action(plan, "redeliver", f.slug)!;
   const bundle = action(plan, "regenerate_release_bundle", f.slug)!;
 
@@ -438,6 +441,7 @@ test("a redeliver whose canonical export goes stale between plan and apply is qu
   await rm(trackOutputLocation(f.slug, "youtube-16x9").path);
 
   const { results } = await applyDestinationFixPlan({
+    slugs: [f.slug],
     settings: settingsFor(root),
     actionIds: [redeliver.id, bundle.id],
   });
@@ -457,7 +461,7 @@ test("a delivery that fails outright at apply time blocks its dependent bundle u
   const outcome = await f.deliver(root);
   await rm(outcome.destinationPath!);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
   const redeliver = action(plan, "redeliver", f.slug)!;
   const bundle = action(plan, "regenerate_release_bundle", f.slug)!;
 
@@ -471,6 +475,7 @@ test("a delivery that fails outright at apply time blocks its dependent bundle u
   chmodSync(trackFolder, 0o500);
 
   const { results } = await applyDestinationFixPlan({
+    slugs: [f.slug],
     settings: settingsFor(root),
     actionIds: [redeliver.id, bundle.id],
   });
@@ -498,7 +503,7 @@ test("one track's problem never stops another track's action from completing", a
   const outcomeB = await b.deliver(root);
   await rm(outcomeB.destinationPath!);
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [a.slug, b.slug], settings: settingsFor(root) });
   const redeliverA = action(plan, "redeliver", a.slug)!;
   const redeliverB = action(plan, "redeliver", b.slug)!;
 
@@ -508,6 +513,7 @@ test("one track's problem never stops another track's action from completing", a
   chmodSync(folderA, 0o500);
 
   const { results } = await applyDestinationFixPlan({
+    slugs: [a.slug, b.slug],
     settings: settingsFor(root),
     actionIds: [redeliverA.id, redeliverB.id],
   });
@@ -531,9 +537,9 @@ test("applying every safe action never removes the unexpected file a manual find
   const strayPath = path.join(root, f.slug, `${f.slug}-vertical-9x16.mp4`);
   await writeFile(strayPath, "stray content");
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
   const safeIds = plan.actions.filter((a) => a.executable).map((a) => a.id);
-  await applyDestinationFixPlan({ settings: settingsFor(root), actionIds: safeIds });
+  await applyDestinationFixPlan({ slugs: [f.slug], settings: settingsFor(root), actionIds: safeIds });
 
   const strayContent = await readFile(strayPath, "utf8");
   assert.equal(strayContent, "stray content");
@@ -550,15 +556,15 @@ test("applying a full safe plan brings the destination back to healthy", async (
   const outcome = await f.deliver(root);
   await rm(outcome.destinationPath!);
 
-  const before = await scanDestinationHealth({ settings: settingsFor(root) });
+  const before = await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
   assert.equal(before.status, "drift");
 
-  const plan = await planDestinationFix({ settings: settingsFor(root) });
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
   const ids = plan.actions.filter((a) => a.executable).map((a) => a.id);
-  const { results } = await applyDestinationFixPlan({ settings: settingsFor(root), actionIds: ids });
+  const { results } = await applyDestinationFixPlan({ slugs: [f.slug], settings: settingsFor(root), actionIds: ids });
   assert.ok(results.every((r) => r.status === "completed"), JSON.stringify(results));
 
-  const after = await scanDestinationHealth({ settings: settingsFor(root) });
+  const after = await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
   assert.equal(after.status, "healthy");
 });
 
@@ -575,4 +581,16 @@ test("the destination-fix-plan CLI documents that it defaults to a dry run and n
 test("the destination-fix-plan CLI runs without crashing when nothing is configured", async () => {
   const { stdout } = await execFileAsync("node", ["scripts/destination-fix-plan.mts"]);
   assert.match(stdout, /no destination|not.*configured/i);
+});
+
+test("the destination-fix-plan CLI refuses malformed wait timeouts", async () => {
+  for (const timeout of ["0", "nope", "-2"]) {
+    await assert.rejects(
+      execFileAsync("node", ["scripts/destination-fix-plan.mts", "--apply", "--wait", "--timeout", timeout]),
+      (error: { code?: number; stderr?: string }) =>
+        error.code !== 0 && /positive number/.test(error.stderr ?? ""),
+    );
+  }
+  const huge = await execFileAsync("node", ["scripts/destination-fix-plan.mts", "--timeout", "1000000000"]);
+  assert.match(huge.stdout, /DRY RUN/);
 });

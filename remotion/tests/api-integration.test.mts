@@ -523,6 +523,20 @@ test("destination health rejects empty, malformed and oversized track scopes", a
   assert.equal((await fetch(`${base}/api/destination-health`, { method: "POST" })).status, 404);
 });
 
+test("destination fix apply validates exact-job confirmation input", async (t) => {
+  const { base } = await api(t);
+  const post = (followJobs: unknown) => fetch(`${base}/api/destination-health/apply-plan`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tracks: ["ghetto-geek"], actionIds: ["action"], waitForCompletion: true, followJobs }),
+  });
+  for (const value of ["job", [{ actionId: "action" }], [{ actionId: 4, jobId: "job" }]]) {
+    const response = await post(value);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, "INVALID_REQUEST");
+  }
+});
+
 test("a render refused for a locked target answers 409, not a queued job", async (t) => {
   const { acquireRenderTargetLock, inspectRenderTargetLock } = await import(
     "../services/render/renderLock.ts"

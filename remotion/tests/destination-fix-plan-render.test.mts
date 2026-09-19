@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import childProcess, { type ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import type { ServerResponse } from "node:http";
+import fsPromises from "node:fs/promises";
 import { chmodSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
@@ -11,8 +14,10 @@ import {
   planDestinationFix,
 } from "../server/services/destinationFixPlan.ts";
 import { renderManager } from "../server/services/renderManager.ts";
+import { followRenderJob } from "../server/services/renderFollow.ts";
+import { handleRenderEvents } from "../server/routes/renders.ts";
 import { deliverExport } from "../services/delivery/deliverExport.ts";
-import type { DeliverySettings } from "../services/delivery/deliverySettings.ts";
+import { DELIVERY_SETTINGS_FILE, type DeliverySettings } from "../services/delivery/deliverySettings.ts";
 import { publishExport } from "../services/render/publishExport.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
@@ -340,6 +345,18 @@ test("a timed-out wait never cancels the render, which can still complete afterw
     () => renderManager.getJob(rerenderResult.jobId!).status === "completed",
     "the render to finish after the caller stopped waiting",
   );
+
+  const retry = await applyDestinationFixPlan({
+    slugs: [f.slug],
+    settings: settingsFor(root),
+    actionIds: [rerender.id],
+    waitForCompletion: true,
+    timeoutMs: 5000,
+    followJobs: [{ actionId: rerender.id, jobId: rerenderResult.jobId! }],
+  });
+  assert.equal(retry.results[0]?.status, "completed");
+  assert.equal(retry.results[0]?.jobId, rerenderResult.jobId);
+  assert.equal(workers.length, 1, "retry follows the original job instead of rendering again");
 });
 
 /* ------------------------------------------------------------------ *
@@ -467,6 +484,8 @@ test("two concurrent apply calls for the same target adopt one render job, never
     track!.findings.every((finding) => finding.code.startsWith("release_bundle_")),
     JSON.stringify(track!.findings),
   );
+  const history = (await readFile(path.join(root, "delivery-log.jsonl"), "utf8")).trim().split("\n");
+  assert.equal(history.length, 2, "initial delivery plus one remediation delivery");
 });
 
 /* ------------------------------------------------------------------ *
@@ -538,4 +557,309 @@ test("two different presets for the same track each follow their own distinct re
   assert.equal(resultB.status, "completed", JSON.stringify(resultB));
   assert.notEqual(resultA.jobId, resultB.jobId);
   assert.notEqual(resultA.presetId, resultB.presetId);
+});
+
+test("a terminal event at the subscribe boundary is recovered from manager state", async (t) => {
+  for (const terminal of ["done", "error", "cancelled"] as const) {
+    const workers: Worker[] = [];
+    fakeRenderWorkers(t, () => {
+      const w = new Worker();
+      w.pid = 9200 + workers.length;
+      workers.push(w);
+      return w;
+    });
+    const job = renderManager.startRender(`zz-follow-${terminal}-${Date.now()}`);
+    const subscribe = renderManager.subscribe.bind(renderManager);
+    const mock = t.mock.method(renderManager, "subscribe", ((jobId: string, listener: Parameters<typeof renderManager.subscribe>[1]) => {
+      const worker = workers[0]!;
+      if (terminal === "done") worker.emit("message", { type: "done", outputPath: "x", outputLabel: "x" });
+      if (terminal === "error") worker.emit("message", { type: "error", error: { code: "RENDER_FAILED", message: "injected" } });
+      if (terminal === "cancelled") worker.emit("message", { type: "cancelled" });
+      return subscribe(jobId, listener);
+    }) as typeof renderManager.subscribe);
+    const result = await followRenderJob(job.id, 1000);
+    assert.equal(result.outcome, "settled");
+    assert.equal(result.job.status, terminal === "done" ? "completed" : terminal === "error" ? "failed" : "cancelled");
+    mock.mock.restore();
+    workers[0]!.emit("exit", 0, null);
+    workers[0]!.emit("close", 0, null);
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
+test("render SSE replays terminal state when completion lands at subscription", async (t) => {
+  const workers: Worker[] = [];
+  fakeRenderWorkers(t, () => {
+    const w = new Worker();
+    w.pid = 9250;
+    workers.push(w);
+    return w;
+  });
+  const job = renderManager.startRender(`zz-sse-race-${Date.now()}`);
+  const subscribe = renderManager.subscribe.bind(renderManager);
+  t.mock.method(renderManager, "subscribe", ((jobId: string, listener: Parameters<typeof renderManager.subscribe>[1]) => {
+    workers[0]!.emit("message", { type: "done", outputPath: "x", outputLabel: "x" });
+    return subscribe(jobId, listener);
+  }) as typeof renderManager.subscribe);
+  const chunks: string[] = [];
+  let ended = false;
+  const fake = Object.assign(new EventEmitter(), {
+    writeHead: () => fake,
+    write: (chunk: string) => { chunks.push(chunk); return true; },
+    end: () => { ended = true; fake.emit("close"); },
+  });
+  Object.defineProperty(fake, "writableEnded", { get: () => ended });
+  const response = fake as unknown as ServerResponse;
+  handleRenderEvents(job.id, response);
+  assert.match(chunks.join(""), /event: completed/);
+  assert.equal(response.writableEnded, true);
+  workers[0]!.emit("exit", 0, null);
+  workers[0]!.emit("close", 0, null);
+});
+
+test("confirming a failed queued render reports that job without starting a replacement", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t);
+  await makeStaleDelivery(f, root);
+  const workers: Worker[] = [];
+  fakeRenderWorkers(t, () => {
+    const w = new Worker();
+    w.pid = 9301;
+    workers.push(w);
+    return w;
+  });
+  t.after(() => settleAnyRemainingJob(f.slug, "youtube-16x9"));
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
+  const rerender = action(plan, "rerender_and_deliver", f.slug)!;
+  const bundle = action(plan, "regenerate_release_bundle", f.slug)!;
+  const actionIds = [rerender.id, bundle.id];
+  const first = await applyDestinationFixPlan({ slugs: [f.slug], settings: settingsFor(root), actionIds });
+  const jobId = first.results.find((r) => r.actionId === rerender.id)!.jobId!;
+  workers[0]!.emit("message", { type: "error", error: { code: "RENDER_FAILED", message: "injected failure" } });
+  workers[0]!.emit("exit", 1, null);
+  workers[0]!.emit("close", 1, null);
+  const confirmed = await applyDestinationFixPlan({
+    slugs: [f.slug], settings: settingsFor(root), actionIds,
+    waitForCompletion: true, followJobs: [{ actionId: rerender.id, jobId }],
+  });
+  assert.equal(confirmed.results.find((r) => r.actionId === rerender.id)!.status, "render_failed");
+  assert.equal(confirmed.results.find((r) => r.actionId === bundle.id)!.status, "blocked");
+  assert.equal(workers.length, 1);
+});
+
+test("confirming a completed job with no current export blocks delivery without rerendering", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t);
+  await makeStaleDelivery(f, root);
+  const workers: Worker[] = [];
+  fakeRenderWorkers(t, () => {
+    const w = new Worker();
+    w.pid = 9302;
+    workers.push(w);
+    return w;
+  });
+  t.after(() => settleAnyRemainingJob(f.slug, "youtube-16x9"));
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
+  const rerender = action(plan, "rerender_and_deliver", f.slug)!;
+  const first = await applyDestinationFixPlan({ slugs: [f.slug], settings: settingsFor(root), actionIds: [rerender.id] });
+  const jobId = first.results[0]!.jobId!;
+  workers[0]!.emit("message", { type: "done", outputPath: "x", outputLabel: "x" });
+  workers[0]!.emit("exit", 0, null);
+  workers[0]!.emit("close", 0, null);
+  const confirmed = await applyDestinationFixPlan({
+    slugs: [f.slug], settings: settingsFor(root), actionIds: [rerender.id],
+    waitForCompletion: true, followJobs: [{ actionId: rerender.id, jobId }],
+  });
+  assert.equal(confirmed.results[0]!.status, "blocked");
+  assert.equal(workers.length, 1);
+});
+
+test("confirming the exact successful job survives rerender-to-redeliver reclassification", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t);
+  await makeStaleDelivery(f, root);
+  const workers: Worker[] = [];
+  fakeRenderWorkers(t, () => {
+    const w = new Worker();
+    w.pid = 9304;
+    workers.push(w);
+    return w;
+  });
+  t.after(() => settleAnyRemainingJob(f.slug, "youtube-16x9"));
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
+  const rerender = action(plan, "rerender_and_deliver", f.slug)!;
+  const bundle = action(plan, "regenerate_release_bundle", f.slug)!;
+  const actionIds = [rerender.id, bundle.id];
+  const first = await applyDestinationFixPlan({ slugs: [f.slug], settings: settingsFor(root), actionIds });
+  const jobId = first.results.find((r) => r.actionId === rerender.id)!.jobId!;
+  await f.publish();
+  workers[0]!.emit("message", { type: "done", outputPath: "x", outputLabel: "x" });
+  workers[0]!.emit("exit", 0, null);
+  workers[0]!.emit("close", 0, null);
+  const confirmed = await applyDestinationFixPlan({
+    slugs: [f.slug], settings: settingsFor(root), actionIds,
+    waitForCompletion: true, followJobs: [{ actionId: rerender.id, jobId }],
+  });
+  const delivery = confirmed.results.find((r) => r.actionId === rerender.id)!;
+  assert.equal(delivery.kind, "redeliver");
+  assert.equal(delivery.status, "completed");
+  assert.equal(delivery.healthConfirmed, true);
+  assert.equal(confirmed.results.find((r) => r.actionId === bundle.id)!.status, "completed");
+  assert.equal(workers.length, 1);
+});
+
+test("a changed live destination config blocks post-render delivery to the old root", async (t) => {
+  const root = await destination(t);
+  const replacementRoot = await destination(t);
+  const f = await setup(t);
+  await makeStaleDelivery(f, root);
+  const workers: Worker[] = [];
+  fakeRenderWorkers(t, () => {
+    const w = new Worker();
+    w.pid = 9305;
+    workers.push(w);
+    return w;
+  });
+  t.after(() => settleAnyRemainingJob(f.slug, "youtube-16x9"));
+  let configuredRoot = root;
+  const realReadFile = fsPromises.readFile.bind(fsPromises);
+  t.mock.method(fsPromises, "readFile", (async (...args: Parameters<typeof fsPromises.readFile>) => {
+    if (String(args[0]) === DELIVERY_SETTINGS_FILE) {
+      return JSON.stringify(settingsFor(configuredRoot));
+    }
+    return realReadFile(...args);
+  }) as typeof fsPromises.readFile);
+  syncBuiltinESMExports();
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
+  const rerender = action(plan, "rerender_and_deliver", f.slug)!;
+  const waiting = applyDestinationFixPlan({
+    slugs: [f.slug], actionIds: [rerender.id], waitForCompletion: true, timeoutMs: 5000,
+  });
+  await waitUntil(() => workers.length > 0, "live-settings render job");
+  await f.publish();
+  configuredRoot = replacementRoot;
+  workers[0]!.emit("message", { type: "done", outputPath: "x", outputLabel: "x" });
+  workers[0]!.emit("exit", 0, null);
+  workers[0]!.emit("close", 0, null);
+  const result = (await waiting).results[0]!;
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason ?? "", /configured destination changed/);
+  const health = await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
+  assert.ok(health.tracks[0]!.findings.some((finding) => finding.code === "delivered_file_missing"));
+});
+
+test("confirming a cancelled queued render never restarts it or delivers", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t);
+  await makeStaleDelivery(f, root);
+  const workers: Worker[] = [];
+  fakeRenderWorkers(t, () => {
+    const w = new Worker();
+    w.pid = 9306;
+    workers.push(w);
+    return w;
+  });
+  t.after(() => settleAnyRemainingJob(f.slug, "youtube-16x9"));
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
+  const rerender = action(plan, "rerender_and_deliver", f.slug)!;
+  const first = await applyDestinationFixPlan({ slugs: [f.slug], settings: settingsFor(root), actionIds: [rerender.id] });
+  const jobId = first.results[0]!.jobId!;
+  renderManager.cancelRender(jobId);
+  workers[0]!.emit("exit", null, "SIGTERM");
+  workers[0]!.emit("close", null, "SIGTERM");
+  const confirmed = await applyDestinationFixPlan({
+    slugs: [f.slug], settings: settingsFor(root), actionIds: [rerender.id],
+    waitForCompletion: true, followJobs: [{ actionId: rerender.id, jobId }],
+  });
+  assert.equal(confirmed.results[0]!.status, "cancelled");
+  assert.equal(workers.length, 1);
+  assert.ok((await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) })).tracks[0]!
+    .findings.some((finding) => finding.code === "delivered_file_missing"));
+});
+
+test("a confirm call refuses a job belonging to another target", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t);
+  await makeStaleDelivery(f, root);
+  const workers: Worker[] = [];
+  fakeRenderWorkers(t, () => {
+    const w = new Worker();
+    w.pid = 9307;
+    workers.push(w);
+    return w;
+  });
+  const wrongJob = renderManager.startRender(`zz-other-${Date.now()}`);
+  workers[0]!.emit("message", { type: "done", outputPath: "x", outputLabel: "x" });
+  workers[0]!.emit("exit", 0, null);
+  workers[0]!.emit("close", 0, null);
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
+  const rerender = action(plan, "rerender_and_deliver", f.slug)!;
+  const result = await applyDestinationFixPlan({
+    slugs: [f.slug], settings: settingsFor(root), actionIds: [rerender.id],
+    waitForCompletion: true, followJobs: [{ actionId: rerender.id, jobId: wrongJob.id }],
+  });
+  assert.equal(result.results[0]!.status, "blocked");
+  assert.match(result.results[0]!.reason ?? "", /does not belong/);
+  assert.equal(workers.length, 1);
+});
+
+test("a successful delivery remains unconfirmed while an unexpected file is present", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t);
+  await makeStaleDelivery(f, root);
+  const workers: Worker[] = [];
+  fakeRenderWorkers(t, () => {
+    const w = new Worker();
+    w.pid = 9308;
+    workers.push(w);
+    return w;
+  });
+  t.after(() => settleAnyRemainingJob(f.slug, "youtube-16x9"));
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
+  const rerender = action(plan, "rerender_and_deliver", f.slug)!;
+  const bundle = action(plan, "regenerate_release_bundle", f.slug)!;
+  const pending = applyDestinationFixPlan({
+    slugs: [f.slug], settings: settingsFor(root), actionIds: [rerender.id, bundle.id],
+    waitForCompletion: true, timeoutMs: 5000,
+  });
+  await waitUntil(() => workers.length > 0, "render before manual drift probe");
+  await f.publish();
+  await writeFile(path.join(root, f.slug, `${f.slug}-old-preset.mp4`), "manual file");
+  workers[0]!.emit("message", { type: "done", outputPath: "x", outputLabel: "x" });
+  workers[0]!.emit("exit", 0, null);
+  workers[0]!.emit("close", 0, null);
+  const result = (await pending).results.find((entry) => entry.actionId === rerender.id)!;
+  assert.equal(result.status, "completed");
+  assert.equal(result.healthConfirmed, false);
+});
+
+test("many render followers release listeners after timeout and completion", async (t) => {
+  const workers: Worker[] = [];
+  fakeRenderWorkers(t, () => {
+    const w = new Worker();
+    w.pid = 9303;
+    workers.push(w);
+    return w;
+  });
+  const job = renderManager.startRender(`zz-follow-stress-${Date.now()}`);
+  const subscribe = renderManager.subscribe.bind(renderManager);
+  let active = 0;
+  t.mock.method(renderManager, "subscribe", ((jobId: string, listener: Parameters<typeof renderManager.subscribe>[1]) => {
+    active++;
+    const unsubscribe = subscribe(jobId, listener);
+    return () => { active--; unsubscribe(); };
+  }) as typeof renderManager.subscribe);
+  const full = Array.from({ length: 20 }, () => followRenderJob(job.id, 5000));
+  const short = Array.from({ length: 20 }, () => followRenderJob(job.id, 5));
+  const timed = await Promise.all(short);
+  assert.ok(timed.every((result) => result.outcome === "timed_out"));
+  assert.equal(active, 20);
+  workers[0]!.emit("message", { type: "done", outputPath: "x", outputLabel: "x" });
+  workers[0]!.emit("exit", 0, null);
+  workers[0]!.emit("close", 0, null);
+  const settled = await Promise.all(full);
+  assert.ok(settled.every((result) => result.outcome === "settled" && result.job.status === "completed"));
+  assert.equal(active, 0);
 });
