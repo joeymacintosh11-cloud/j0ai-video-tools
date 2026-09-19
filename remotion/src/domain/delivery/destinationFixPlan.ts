@@ -261,17 +261,40 @@ export const summarizeRemediationPlan = (
  *                          condition that proposed this action was already
  *                          gone — nothing was done because nothing was needed
  * - queued:                a render was handed to the existing render queue;
- *                          it runs asynchronously, so this apply call does not
- *                          wait for it — re-run the planner afterwards
- * - blocked:               a dependency of this action did not complete, so
- *                          this action was never attempted
- * - failed:                the underlying operation ran and reported failure
+ *                          with waitForCompletion left off, this apply call
+ *                          does not wait for it — re-run the planner
+ *                          afterwards, or apply again with waitForCompletion
+ * - render_failed:         apply-plan followed the queued render to a
+ *                          terminal state and it failed; nothing was
+ *                          delivered, and the previous delivery (if any) is
+ *                          untouched
+ * - delivery_failed:       the render succeeded, but the delivery attempted
+ *                          straight afterward failed; the newly rendered
+ *                          canonical export is left in place, so a later
+ *                          apply can retry delivery alone, with no render
+ * - cancelled:             the render was cancelled (by this request or any
+ *                          other) before it could finish; never proceeds to
+ *                          delivery
+ * - timed_out:             apply-plan stopped waiting before the render
+ *                          reached a terminal state — this describes the
+ *                          apply call, not the render, which was never
+ *                          cancelled and may still finish on its own
+ * - blocked:               a dependency of this action did not complete (or
+ *                          was left out of this apply call), so this action
+ *                          was never attempted; also used when the
+ *                          destination or track cannot currently be trusted
+ * - failed:                an immediate (non-render) delivery or bundle
+ *                          operation ran and reported failure
  * - manual:                this action is not something apply-plan ever runs
  */
 export type RemediationOutcomeStatus =
   | "completed"
   | "skipped_already_fixed"
   | "queued"
+  | "render_failed"
+  | "delivery_failed"
+  | "cancelled"
+  | "timed_out"
   | "blocked"
   | "failed"
   | "manual";
@@ -283,4 +306,21 @@ export type RemediationActionResult = {
   readonly presetId: RenderPresetId | null;
   readonly status: RemediationOutcomeStatus;
   readonly reason: string | null;
+  /**
+   * The render job this action queued or adopted, when one was involved.
+   * Lets a caller correlate this action with the existing render job's own
+   * status/SSE endpoint for live progress — never a second progress source.
+   */
+  readonly jobId: string | null;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  /**
+   * Whether a narrow, single-track health scan confirmed the fix afterward.
+   * Only ever attempted after a fully confirmed rerender_and_deliver
+   * (render, then delivery, both settled); null for every other action or
+   * outcome — this is a confirmation of one specific success, not a general
+   * health field. A scan failure here is reported as `false`, never turned
+   * into the action itself being reported as failed.
+   */
+  readonly healthConfirmed: boolean | null;
 };
