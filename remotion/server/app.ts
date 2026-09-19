@@ -9,7 +9,11 @@ import {
   handleRevealDelivery,
   handleUpdateDeliverySettings,
 } from "./routes/delivery.ts";
-import { handleGetDestinationHealth } from "./routes/destinationHealth.ts";
+import {
+  handleApplyDestinationFix,
+  handleGetDestinationHealth,
+  handlePlanDestinationFix,
+} from "./routes/destinationHealth.ts";
 import {
   handleGetDeliveryHistory,
   handleReconcileDeliveryHistory,
@@ -182,10 +186,26 @@ const route = async (
     return;
   }
 
-  if (collection === "destination-health" && segments.length === 2) {
-    if (method === "GET") {
-      await handleGetDestinationHealth(request, response);
+  if (collection === "destination-health") {
+    // /api/destination-health
+    if (second === undefined) {
+      if (method === "GET") {
+        await handleGetDestinationHealth(request, response);
+        return;
+      }
+      sendNotFound(response, "Endpoint");
       return;
+    }
+    // /api/destination-health/plan, /api/destination-health/apply-plan
+    if (third === undefined) {
+      if (second === "plan" && method === "POST") {
+        await handlePlanDestinationFix(request, response);
+        return;
+      }
+      if (second === "apply-plan" && method === "POST") {
+        await handleApplyDestinationFix(request, response);
+        return;
+      }
     }
     sendNotFound(response, "Endpoint");
     return;

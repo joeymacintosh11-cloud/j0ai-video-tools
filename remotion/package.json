@@ -49,6 +49,7 @@
     "delivery-history": "node scripts/delivery-history.mts",
     "delivery-history-reconcile": "node scripts/delivery-history.mts --reconcile",
     "destination-health": "node scripts/destination-health.mts",
+    "destination-fix-plan": "node scripts/destination-fix-plan.mts",
     "test": "node --test tests/*.test.mts",
     "render-all-formats": "node scripts/render-track.mts --all-formats"
   }

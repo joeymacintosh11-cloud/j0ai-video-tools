@@ -13,6 +13,10 @@ import type {
   DeliveryHistoryQuery,
   DeliveryHistoryReconcileView,
   DeliveryHistoryView,
+  DestinationFixApplyBody,
+  DestinationFixApplyView,
+  DestinationFixPlanBody,
+  DestinationFixPlanView,
   DestinationHealthView,
   DeliveryRevealBody,
   DeliveryRevealView,
@@ -437,6 +441,38 @@ export const scanDestinationHealth = (
   return request<DestinationHealthView>(
     `/api/destination-health${search ? `?${search}` : ""}`,
   );
+};
+
+/* ------------------------------------------------------------------ *
+ * Destination fix plan
+ * ------------------------------------------------------------------ */
+
+/**
+ * Proposes remediation for current destination drift. Always a dry run —
+ * nothing this calls ever writes or deletes anything; it only returns action
+ * ids a later `applyDestinationFix` call can name.
+ */
+export const planDestinationFix = (
+  tracks: readonly string[] | null,
+): Promise<DestinationFixPlanView> => {
+  const body: DestinationFixPlanBody = tracks === null ? { catalogue: true } : { tracks };
+  return jsonRequest<DestinationFixPlanView>("/api/destination-health/plan", "POST", body);
+};
+
+/**
+ * Runs the named safe action ids, after the server re-derives the plan fresh
+ * and revalidates each one against current state. `tracks` must match the
+ * scope the plan was made with.
+ */
+export const applyDestinationFix = (
+  tracks: readonly string[] | null,
+  actionIds: readonly string[],
+): Promise<DestinationFixApplyView> => {
+  const body: DestinationFixApplyBody = {
+    ...(tracks === null ? { catalogue: true } : { tracks }),
+    actionIds,
+  };
+  return jsonRequest<DestinationFixApplyView>("/api/destination-health/apply-plan", "POST", body);
 };
 
 /** SSE endpoint for a batch's aggregate; consumed with EventSource. */

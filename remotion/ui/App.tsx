@@ -14,6 +14,7 @@ import { ApiRequestError } from "./api/client.ts";
 import { DeliverPanel } from "./components/DeliverPanel.tsx";
 import { DeliveryHistoryPanel } from "./components/DeliveryHistoryPanel.tsx";
 import { DeliverySettingsPanel } from "./components/DeliverySettingsPanel.tsx";
+import { DestinationFixPlanPanel } from "./components/DestinationFixPlanPanel.tsx";
 import { DestinationHealthPanel } from "./components/DestinationHealthPanel.tsx";
 import { ReleaseBundlePanel } from "./components/ReleaseBundlePanel.tsx";
 import { ErrorBanner } from "./components/ErrorBanner.tsx";
@@ -324,6 +325,13 @@ export const App: React.FC = () => {
                       here is ever written or deleted.
                     </p>
                     <DestinationHealthPanel tracks={null} onScanned={setHealth} />
+                    <DestinationFixPlanPanel
+                      tracks={null}
+                      onApplied={() => {
+                        setHealth(null);
+                        refreshAll();
+                      }}
+                    />
                   </section>
                 )}
               </>

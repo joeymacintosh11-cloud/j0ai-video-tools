@@ -19,6 +19,11 @@ import type {
   DestinationHealthCounts,
   DestinationHealthStatus,
 } from "../delivery/destinationHealth.ts";
+import type {
+  RemediationAction,
+  RemediationActionResult,
+  RemediationPlanSummary,
+} from "../delivery/destinationFixPlan.ts";
 import type { ReleaseBundleFreshness } from "../delivery/releaseBundle.ts";
 import type { TrackErrorCode, TrackIssue } from "../tracks/errors.ts";
 import type {
@@ -808,6 +813,62 @@ export type DestinationHealthView = {
   readonly invalid: readonly { readonly slug: string; readonly reason: string }[];
 };
 
+/* ------------------------------------------------------------------ *
+ * Destination fix plan
+ * ------------------------------------------------------------------ */
+
+/**
+ * POST /api/destination-health/plan and /api/destination-health/apply-plan
+ * request body.
+ *
+ * Mirrors delivery and export-missing: name tracks, or ask for the catalogue
+ * outright. `apply-plan` additionally names which proposed action ids to run;
+ * the server re-derives the plan fresh and only ever acts on an id that plan
+ * still produces itself, so nothing here can smuggle in an arbitrary path or
+ * operation.
+ */
+export type DestinationFixPlanBody = {
+  readonly tracks?: readonly string[];
+  readonly catalogue?: boolean;
+};
+
+export type DestinationFixApplyBody = DestinationFixPlanBody & {
+  readonly actionIds: readonly string[];
+};
+
+/**
+ * POST /api/destination-health/plan
+ *
+ * A dry-run remediation plan, built from a fresh destination health scan.
+ * Nothing here writes or deletes anything — it only proposes, grouped into
+ * `safe` (executable, reusing an existing non-destructive operation) and
+ * `manual` (never run automatically; most often because it would mean
+ * deleting or replacing a file this app did not itself deliver).
+ */
+export type DestinationFixPlanView = {
+  readonly status: DestinationHealthStatus;
+  readonly catalogue: boolean;
+  readonly root: string | null;
+  readonly rootProblem: string | null;
+  readonly scannedAt: string;
+  readonly findings: readonly DestinationFinding[];
+  readonly actions: readonly RemediationAction[];
+  readonly summary: RemediationPlanSummary;
+  readonly invalid: readonly { readonly slug: string; readonly reason: string }[];
+};
+
+/**
+ * POST /api/destination-health/apply-plan
+ *
+ * Runs the named safe actions, each revalidated against current state right
+ * before it runs. `plan` is the fresh plan this call re-derived to validate
+ * against — not the stale one the caller may have been looking at.
+ */
+export type DestinationFixApplyView = {
+  readonly plan: DestinationFixPlanView;
+  readonly results: readonly RemediationActionResult[];
+};
+
 /** GET /api/renders/:jobId/logs */
 export type RenderLogsView = {
   readonly id: string;
@@ -850,3 +911,13 @@ export type {
   DestinationHealthCounts,
   DestinationHealthStatus,
 } from "../delivery/destinationHealth.ts";
+
+/** Destination fix plan types, re-exported so clients need one import. */
+export type {
+  RemediationAction,
+  RemediationActionKind,
+  RemediationActionResult,
+  RemediationOutcomeStatus,
+  RemediationPlanSummary,
+  RemediationSafety,
+} from "../delivery/destinationFixPlan.ts";

@@ -1754,3 +1754,49 @@ body {
   color: var(--text-dim);
   margin: 10px 0 2px;
 }
+
+/* ---------------------------------------------------------------- *
+ * Destination fix plan
+ *
+ * Shares the finding list's grid and group heading; an action is a proposed
+ * fact rather than a found one, so it gets a checkbox instead of a bullet.
+ * ---------------------------------------------------------------- */
+
+.fixplan__actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.fixplan__action {
+  display: flex;
+}
+
+.fixplan__actionlabel {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.fixplan__actionlabel input[type="checkbox"] {
+  margin-top: 2px;
+}
+
+.fixplan__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--vintage-gold);
+}
+
+.fixplan__title {
+  font-weight: 600;
+}

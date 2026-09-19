@@ -6,6 +6,7 @@ import { deliveryFolderFor } from "../../src/domain/delivery/deliveryPaths.ts";
 import { revealDelivery } from "../api/client.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
 import { DeliverPanel } from "./DeliverPanel.tsx";
+import { DestinationFixPlanPanel } from "./DestinationFixPlanPanel.tsx";
 import { DestinationHealthPanel } from "./DestinationHealthPanel.tsx";
 import { TrackDeliveryHistory } from "./DeliveryHistoryPanel.tsx";
 import { DeliveryStatus } from "./DeliveryStatus.tsx";
@@ -197,6 +198,7 @@ export const TrackDetail: React.FC<{
             <span className="exports__intentlabel">Destination health</span>
           </p>
           <DestinationHealthPanel label="Check this track" tracks={[track.slug]} />
+          <DestinationFixPlanPanel tracks={[track.slug]} onApplied={onChanged} />
 
           <div className="form__actions">
             <DeliverPanel
