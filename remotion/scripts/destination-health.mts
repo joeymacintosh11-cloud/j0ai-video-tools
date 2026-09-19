@@ -54,6 +54,8 @@ const parseArgs = (argv: string[]) => {
       json = true;
     } else if (arg === "--help") {
       help = true;
+    } else {
+      throw new TrackError(trackIssue("INVALID_REQUEST", `Unknown option: ${arg}`));
     }
   }
 

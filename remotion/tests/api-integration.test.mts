@@ -502,6 +502,27 @@ test("delivery history validates every filter and bounds the response", async (t
   assert.equal(reconciled.status, 200);
 });
 
+test("destination health rejects empty, malformed and oversized track scopes", async (t) => {
+  const { base } = await api(t);
+  for (const query of [
+    "?track=",
+    "?track=%20",
+    "?track=ghetto-geek&track=",
+    "?track=..%2Foutside",
+    `?${Array.from({ length: 101 }, () => "track=ghetto-geek").join("&")}`,
+  ]) {
+    const response = await fetch(`${base}/api/destination-health${query}`);
+    assert.equal(response.status, 400, query);
+    assert.match((await response.json()).error.code, /INVALID_REQUEST|INVALID_SLUG/, query);
+  }
+  const repeated = await fetch(`${base}/api/destination-health?track=ghetto-geek&track=ghetto-geek`);
+  assert.equal(repeated.status, 200);
+  const body = await repeated.json();
+  assert.equal(body.data.catalogue, false);
+  assert.ok(body.data.tracks.length <= 1);
+  assert.equal((await fetch(`${base}/api/destination-health`, { method: "POST" })).status, 404);
+});
+
 test("a render refused for a locked target answers 409, not a queued job", async (t) => {
   const { acquireRenderTargetLock, inspectRenderTargetLock } = await import(
     "../services/render/renderLock.ts"

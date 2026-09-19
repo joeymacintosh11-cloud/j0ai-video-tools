@@ -74,6 +74,13 @@ export const App: React.FC = () => {
 
   const tracks = useAsync(listTracks, []);
   const delivery = useAsync(getDeliverySettings, []);
+  useEffect(() => {
+    // A catalogue badge belongs to the destination that was scanned. Clear it
+    // when the configured destination changes, including edits made elsewhere.
+    if (health !== null && delivery.data !== null && health.root !== delivery.data.root) {
+      setHealth(null);
+    }
+  }, [delivery.data, health]);
   const detail = useAsync(
     useCallback(
       () => (selectedSlug ? getTrack(selectedSlug) : Promise.resolve(null)),
@@ -303,7 +310,10 @@ export const App: React.FC = () => {
               <>
                 <DeliverySettingsPanel
                   settings={delivery.data}
-                  onChanged={refreshAll}
+                  onChanged={() => {
+                    setHealth(null);
+                    refreshAll();
+                  }}
                 />
                 {delivery.data.root === null ? null : (
                   <section className="section">
@@ -334,6 +344,7 @@ export const App: React.FC = () => {
           </div>
         ) : detail.data ? (
           <TrackDetail
+            key={detail.data.slug}
             track={detail.data}
             formats={formats}
             onChanged={refreshAll}

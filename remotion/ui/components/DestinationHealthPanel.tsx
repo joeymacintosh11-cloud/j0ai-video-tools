@@ -137,11 +137,19 @@ export const DestinationHealthPanel: React.FC<{
               : ""}
           </p>
 
-          {result.counts.totalFindings === 0 ? (
-            <p className="exportmissing__done">
-              Everything the destination should hold is there and matches.
+          {result.status === "error" ? (
+            <p className="note note--error">
+              The scan could not complete. Results shown here are partial; scan again after the problem is resolved.
             </p>
-          ) : (
+          ) : null}
+
+          {result.status === "healthy" ? (
+            <p className="exportmissing__done">
+              {result.invalid.length > 0
+                ? "No drift was found in tracks checked; some tracks could not be scanned. File contents were not compared."
+                : "No drift was found at scan time. File contents were not compared."}
+            </p>
+          ) : result.counts.totalFindings > 0 ? (
             <>
               {result.rootFindings.length > 0 ? (
                 <>
@@ -165,7 +173,7 @@ export const DestinationHealthPanel: React.FC<{
                 </div>
               ))}
             </>
-          )}
+          ) : null}
 
           {result.invalid.length > 0 ? (
             <p className="muted">

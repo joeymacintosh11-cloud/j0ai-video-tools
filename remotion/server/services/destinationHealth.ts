@@ -1,5 +1,4 @@
-import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, readdirSync } from "node:fs";
 import path from "node:path";
 import {
   DESTINATION_FINDING_SEVERITY,
@@ -118,6 +117,16 @@ const namedSlugs = (slugs: readonly string[]): readonly string[] => {
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+const readRegularFile = (file: string): string => {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error("Not a regular file.");
+    return readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
+};
+
 const empty = (
   status: DestinationHealthStatus,
   catalogue: boolean,
@@ -168,7 +177,29 @@ export const scanDestinationHealth = async (
   input: ScanDestinationHealthInput,
 ): Promise<DestinationHealthResult> => {
   const catalogue = input.slugs === undefined;
+  const requested = input.slugs === undefined ? undefined : namedSlugs(input.slugs);
   const settings = input.settings ?? (await readDeliverySettings());
+  // Refuse a link before resolveDeliveryRoot follows it to inspect the target.
+  // The configured value is normally canonicalized when settings are written.
+  if (settings.root !== null) {
+    try {
+      if (realpathSync(settings.root) !== settings.root ||
+          !lstatSync(settings.root).isDirectory()) {
+        const finding = destinationFinding(
+          "destination_root_identity_changed",
+          describeRootIdentityChanged(settings.root),
+        );
+        return {
+          status: "error", catalogue, root: settings.root, rootProblem: null,
+          rootFindings: [finding], tracks: [],
+          counts: summarizeDestinationHealth([], [finding]),
+          scannedAt: new Date().toISOString(), invalid: [],
+        };
+      }
+    } catch {
+      // Let resolveDeliveryRoot supply its existing unavailable response.
+    }
+  }
   const { root, problem } = resolveDeliveryRoot(settings);
 
   if (root === null) {
@@ -184,37 +215,67 @@ export const scanDestinationHealth = async (
     );
   }
 
+  const rootFindings: DestinationFinding[] = [];
+  // Individual entry failures become findings. A root identity change makes
+  // the remaining result untrusted, so it stops the scan with `error` status.
+  let scanFailed = false;
+
+  // The configured path must still name the same real directory throughout
+  // this scan. In particular, do not merely report a symlinked replacement and
+  // then continue walking through it. Synchronous destination operations keep
+  // this check and each read in the same event-loop turn.
+  let pinnedRoot: string | null = null;
+  const rootIsSafe = (): boolean => {
+    if (scanFailed) return false;
+    try {
+      const entry = lstatSync(root);
+      if (entry.isDirectory() && settings.root === root && realpathSync(root) === root) {
+        const identity = `${entry.dev}:${entry.ino}`;
+        if (pinnedRoot === null) pinnedRoot = identity;
+        if (pinnedRoot === identity) return true;
+      }
+      rootFindings.push(destinationFinding(
+        "destination_root_identity_changed",
+        describeRootIdentityChanged(settings.root ?? root),
+      ));
+    } catch (error) {
+      rootFindings.push(destinationFinding(
+        "destination_folder_unreadable",
+        describeDestinationFolderUnreadable("The export destination", errorMessage(error)),
+      ));
+    }
+    scanFailed = true;
+    return false;
+  };
+
+  const finish = (tracks: DestinationTrackHealth[], invalid: DestinationHealthResult["invalid"]): DestinationHealthResult => {
+    const counts = summarizeDestinationHealth(tracks, rootFindings);
+    return {
+      status: deriveDestinationHealthStatus({
+        configured: true, rootAvailable: true,
+        scanFailed: scanFailed || (!catalogue && invalid.length > 0),
+        totalFindings: counts.totalFindings,
+      }),
+      catalogue, root, rootProblem: null, rootFindings, tracks, counts,
+      scannedAt: new Date().toISOString(), invalid,
+    };
+  };
+
+  if (!rootIsSafe()) return finish([], []);
+
   const invalid: { readonly slug: string; readonly reason: string }[] = [];
   const inspections: readonly TrackInspection[] = catalogue
     ? await listTracks()
-    : await Promise.all(namedSlugs(input.slugs ?? []).map(inspectTrack));
+    : await Promise.all((requested ?? []).map(inspectTrack));
 
-  const rootFindings: DestinationFinding[] = [];
-  // Every per-item failure below is caught and turned into a finding rather
-  // than aborting the scan — a permissions error on one track's folder must
-  // not stop the rest from being checked. `error` status is reserved for a
-  // scan that could not run at all, which would surface as a thrown exception
-  // from this function rather than as a value it returns; nothing here needs
-  // to set it.
-  const scanFailed = false;
+  if (!rootIsSafe()) return finish([], invalid);
 
   // The configured root's own identity, checked once. `resolveDeliveryRoot`
   // re-resolves the stored path fresh every call, so if that path has quietly
   // started resolving somewhere else — a parent directory swapped, or the leaf
   // itself replaced by a symlink — it would otherwise be followed in silence.
-  try {
-    if (settings.root !== null && realpathSync(settings.root) !== settings.root) {
-      rootFindings.push(
-        destinationFinding(
-          "destination_root_identity_changed",
-          describeRootIdentityChanged(settings.root),
-        ),
-      );
-    }
-  } catch {
-    // Transient — the root resolved fine a moment ago in resolveDeliveryRoot();
-    // not worth failing the whole scan over a single re-check.
-  }
+  // rootIsSafe above checks both canonical path and dev:ino; subsequent reads
+  // repeat it so a replacement during the local track inspection is noticed.
 
   // The root's own listing, used only for orphaned-folder detection, and only
   // for a catalogue-wide scan: judging whether a folder is "orphaned" requires
@@ -223,7 +284,7 @@ export const scanDestinationHealth = async (
   let rootEntries: readonly import("node:fs").Dirent[] | null = null;
   if (catalogue) {
     try {
-      rootEntries = await readdir(root, { withFileTypes: true });
+      rootEntries = readdirSync(root, { withFileTypes: true });
     } catch (error) {
       rootFindings.push(
         destinationFinding(
@@ -240,6 +301,7 @@ export const scanDestinationHealth = async (
   const tracks: DestinationTrackHealth[] = [];
 
   for (const inspection of inspections) {
+    if (!rootIsSafe()) break;
     const slug = inspection.slug;
 
     if (!inspection.facts.trackDirExists) {
@@ -264,13 +326,33 @@ export const scanDestinationHealth = async (
     // format is still intended today, and a format dropped from intent does
     // not un-deliver a file that is genuinely still sitting there.
     for (const presetId of RENDER_PRESET_IDS) {
+      if (!rootIsSafe()) break;
       const facts = coverage.find((entry) => entry.presetId === presetId);
       if (facts === undefined) continue;
 
+      const deliveredPath = path.join(root, folder, `${slug}-${presetId}.mp4`);
+      // A link is already a changed delivered entry; never inspect its target,
+      // even when it has matching size and mtime.
+      const receipt = readDeliveryReceipt(slug, presetId);
+      if (receipt !== null && receipt.destinationRoot === root &&
+          receipt.destinationRelativePath === `${folder}/${slug}-${presetId}.mp4`) {
+        try {
+          if (lstatSync(deliveredPath).isSymbolicLink()) {
+            coveredBasenames.add(path.basename(deliveredPath));
+            findings.push(destinationFinding(
+              "delivered_file_changed",
+              describeDeliveredFileChanged(`${folder}/${path.basename(deliveredPath)}`, "symlinked"),
+              { slug, presetId, relativePath: `${folder}/${path.basename(deliveredPath)}` },
+            ));
+            continue;
+          }
+        } catch { /* The shared state helper classifies the missing entry. */ }
+      }
+
       const state = deliveryStateForTarget(slug, presetId, facts, root, folder);
 
-      const receipt = readDeliveryReceipt(slug, presetId);
-      if (receipt !== null && receipt.destinationRoot === root) {
+      if (receipt !== null && receipt.destinationRoot === root &&
+          receipt.destinationRelativePath === `${folder}/${slug}-${presetId}.mp4`) {
         coveredBasenames.add(path.basename(receipt.destinationRelativePath));
       }
 
@@ -281,7 +363,7 @@ export const scanDestinationHealth = async (
       if (state.reason === "destination_missing") {
         // "destination_missing" collapses several causes: a plain ENOENT, but
         // also a path `assertDeliveryDestination` refused (its parent became a
-        // symlink) or a broken symlink `statSync` could not follow. `lstat`
+        // symlink) or an inaccessible entry. `lstat`
         // distinguishes "genuinely nothing there" from "something is there but
         // could not be read as expected" — a materially different, more
         // actionable fact — without altering what `deliveryStateFor` itself
@@ -326,7 +408,9 @@ export const scanDestinationHealth = async (
     let folderExists = false;
     let folderUnreadable: string | null = null;
     try {
-      folderExists = lstatSync(folderPath).isDirectory();
+      const entry = lstatSync(folderPath);
+      folderExists = entry.isDirectory();
+      if (!folderExists) folderUnreadable = "the entry is not a real directory";
     } catch (error) {
       // ENOENT means genuinely missing; anything else (EACCES, most commonly)
       // means it could not be seen — a materially different fact. Reporting a
@@ -354,9 +438,13 @@ export const scanDestinationHealth = async (
           { slug, relativePath: folder },
         ),
       );
-    } else if (folderExists) {
+    } else if (folderExists && rootIsSafe()) {
       try {
-        const entries = await readdir(folderPath, { withFileTypes: true });
+        const current = lstatSync(folderPath);
+        if (!current.isDirectory() || realpathSync(folderPath) !== folderPath) {
+          throw new Error("The delivery folder was replaced before it could be listed.");
+        }
+        const entries = readdirSync(folderPath, { withFileTypes: true });
 
         for (const entry of entries) {
           if (!entry.isFile() && !entry.isSymbolicLink()) continue;
@@ -368,7 +456,7 @@ export const scanDestinationHealth = async (
 
           let bytes: number | null = null;
           try {
-            bytes = statSync(path.join(folderPath, name)).size;
+            if (entry.isFile()) bytes = lstatSync(path.join(folderPath, name)).size;
           } catch {
             bytes = null;
           }
@@ -399,9 +487,40 @@ export const scanDestinationHealth = async (
     // distinguishes "these files disagree with each other" from "this bundle
     // is simply behind current state" — a genuinely different, more actionable
     // fact — without re-implementing any part of the freshness algorithm.
+    if (!rootIsSafe()) break;
+    if (folderUnreadable !== null) {
+      tracks.push({ slug, folder, findings });
+      continue;
+    }
+    // Bundle freshness reads both published files. Refuse link leaves before
+    // delegating so that readPublished cannot follow them outside the root.
+    let linkedBundlePath: string | null = null;
+    try {
+      const paths = releaseBundlePaths(root, folder);
+      for (const file of [paths.json, paths.markdown]) {
+        try {
+          const entry = lstatSync(file);
+          if (!entry.isFile()) linkedBundlePath = file;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") linkedBundlePath = file;
+        }
+      }
+    } catch {
+      // The delegated state handles an unavailable folder.
+    }
+    if (linkedBundlePath !== null) {
+      const relativePath = path.relative(root, linkedBundlePath);
+      findings.push(destinationFinding(
+        "destination_file_unreadable",
+        describeDestinationFileUnreadable(relativePath, "not a regular file"),
+        { slug, relativePath },
+      ));
+      tracks.push({ slug, folder, findings });
+      continue;
+    }
     const bundleState = releaseBundleStateFor(inspection, root, coverage);
     if (bundleState.freshness === "missing") {
-      if (coveredBasenames.size > 0) {
+      if (coveredBasenames.size > 0 && bundleState.problem === null) {
         findings.push(
           destinationFinding("release_bundle_missing", describeReleaseBundleMissing(), {
             slug,
@@ -414,9 +533,9 @@ export const scanDestinationHealth = async (
       try {
         const paths = releaseBundlePaths(root, bundleState.folder);
         const jsonId = (
-          JSON.parse(readFileSync(paths.json, "utf8")) as { bundleId?: unknown }
+          JSON.parse(readRegularFile(paths.json)) as { bundleId?: unknown }
         ).bundleId;
-        const markdownId = readMarkdownBundleId(readFileSync(paths.markdown, "utf8"));
+        const markdownId = readMarkdownBundleId(readRegularFile(paths.markdown));
         if (
           typeof jsonId === "string" &&
           markdownId !== null &&
@@ -457,14 +576,19 @@ export const scanDestinationHealth = async (
     );
 
     for (const entry of rootEntries) {
+      if (!rootIsSafe()) break;
       if (!entry.isDirectory()) continue;
       const name = entry.name;
       if (isIgnorableFilename(name) || activeFolders.has(name)) continue;
 
       let innerNames: readonly string[];
       try {
+        const folderPath = path.join(root, name);
+        if (!lstatSync(folderPath).isDirectory() || realpathSync(folderPath) !== folderPath) {
+          continue;
+        }
         innerNames = (
-          await readdir(path.join(root, name), { withFileTypes: true })
+          readdirSync(folderPath, { withFileTypes: true })
         )
           .filter((inner) => inner.isFile())
           .map((inner) => inner.name);
@@ -482,24 +606,7 @@ export const scanDestinationHealth = async (
     }
   }
 
-  const counts = summarizeDestinationHealth(tracks, rootFindings);
-
-  return {
-    status: deriveDestinationHealthStatus({
-      configured: true,
-      rootAvailable: true,
-      scanFailed,
-      totalFindings: counts.totalFindings,
-    }),
-    catalogue,
-    root,
-    rootProblem: null,
-    rootFindings,
-    tracks,
-    counts,
-    scannedAt: new Date().toISOString(),
-    invalid,
-  };
+  return finish(tracks, invalid);
 };
 
 // Re-exported so a caller can report a finding's severity without importing

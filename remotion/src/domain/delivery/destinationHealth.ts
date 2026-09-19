@@ -254,13 +254,13 @@ export const describeDestinationFolderUnreadable = (
 ): string => `${where} could not be listed: ${reason}.`;
 
 export const describeRootIdentityChanged = (root: string): string =>
-  `${root} no longer resolves to itself — it, or a folder above it, has become a link to somewhere else since it was configured.`;
+  `${root} no longer names the same real directory at its configured path. It may have been replaced or redirected through a link.`;
 
 export const describeReleaseBundleMissing = (): string =>
-  "Something has been delivered here, but no release bundle has been written yet.";
+  "A delivery is recorded here, but no readable release bundle is available.";
 
 export const describeReleaseBundleOutdated = (): string =>
-  "The release bundle no longer matches current delivery state.";
+  "The release bundle no longer matches current track and delivery state.";
 
 export const describeReleaseBundlePairMismatch = (): string =>
   "release.json and release.md disagree with each other, not only with current state.";

@@ -90,8 +90,8 @@ export const TrackList: React.FC<{
                     status={found.findings.length > 0 ? "drift" : "healthy"}
                     title={
                       found.findings.length > 0
-                        ? `${found.findings.length} finding${found.findings.length === 1 ? "" : "s"} as of the last scan`
-                        : "No drift as of the last scan"
+                        ? `${found.findings.length} finding${found.findings.length === 1 ? "" : "s"} at ${health?.scannedAt}`
+                        : `No drift found at ${health?.scannedAt}`
                     }
                   />
                 );

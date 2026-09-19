@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
   DELIVERY_RECEIPT_VERSION,
@@ -21,8 +21,9 @@ import { trackOutputLocation } from "../tracks/trackLocations.ts";
  *
  * The receipt exists so freshness never requires hashing a delivered video.
  * Comparing the recorded export fingerprint against the manifest's says whether
- * the copy is of the current export, and the recorded size and modification
- * time say whether the copy is still the one we made — both from a stat.
+ * the source export is current. The delivered copy's size and modification
+ * time are inexpensive drift signals; matching them does not prove that its
+ * bytes are identical to the original delivery.
  */
 
 export type DeliveryReceipt = {
@@ -35,7 +36,7 @@ export type DeliveryReceipt = {
   readonly destinationRoot: string;
   readonly destinationRelativePath: string;
   readonly deliveredAt: string;
-  /** Identity of the delivered copy, so a replacement is detectable by stat. */
+  /** Size and mtime of the delivered copy; a copied-metadata replacement can evade them. */
   readonly bytes: number;
   readonly mtimeMs: number;
 };
@@ -148,8 +149,8 @@ export const deliveryStateFor = (
 
   try {
     assertDeliveryDestination(root, relativePath);
-    const stats = statSync(destinationPath);
-    if (stats.size !== receipt.bytes || stats.mtimeMs !== receipt.mtimeMs) {
+    const stats = lstatSync(destinationPath);
+    if (!stats.isFile() || stats.size !== receipt.bytes || stats.mtimeMs !== receipt.mtimeMs) {
       return outdated("destination_modified");
     }
   } catch {

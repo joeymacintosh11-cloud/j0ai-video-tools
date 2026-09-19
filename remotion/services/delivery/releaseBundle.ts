@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -285,8 +285,19 @@ const readPublished = (
   paths: Gathered["paths"],
   slug: string,
 ): { readonly bundle: ReleaseBundle; readonly markdownId: string | null } | null => {
+  // O_NOFOLLOW closes the leaf-symlink race between a path check and a read.
+  // These files are small text records; there is no reason to read a link.
+  const readRegular = (file: string): string => {
+    const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      if (!fstatSync(fd).isFile()) throw new Error("Bundle entry is not a regular file.");
+      return readFileSync(fd, "utf8");
+    } finally {
+      closeSync(fd);
+    }
+  };
   try {
-    const bundle = JSON.parse(readFileSync(paths.json, "utf8")) as ReleaseBundle;
+    const bundle = JSON.parse(readRegular(paths.json)) as ReleaseBundle;
 
     const valid =
       bundle?.schemaVersion === RELEASE_BUNDLE_SCHEMA_VERSION &&
@@ -299,7 +310,7 @@ const readPublished = (
 
     let markdownId: string | null = null;
     try {
-      markdownId = readMarkdownBundleId(readFileSync(paths.markdown, "utf8"));
+      markdownId = readMarkdownBundleId(readRegular(paths.markdown));
     } catch {
       markdownId = null;
     }

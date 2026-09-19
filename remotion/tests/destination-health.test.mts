@@ -15,6 +15,7 @@ import {
   managedExportFilename,
 } from "../src/domain/delivery/destinationHealth.ts";
 import { deliverExport } from "../services/delivery/deliverExport.ts";
+import { deliveryReceiptPath } from "../services/delivery/deliveryReceipt.ts";
 import type { DeliverySettings } from "../services/delivery/deliverySettings.ts";
 import { generateReleaseBundle } from "../services/delivery/releaseBundle.ts";
 import { publishExport } from "../services/render/publishExport.ts";
@@ -142,6 +143,13 @@ test("with no destination configured, the scan reports not_configured rather tha
   assert.equal(result.counts.totalFindings, 0);
 });
 
+test("named track inputs are validated even without a configured destination", async () => {
+  await assert.rejects(
+    scanDestinationHealth({ slugs: ["../outside"], settings: settingsFor(null) }),
+    { code: "INVALID_SLUG" },
+  );
+});
+
 /* ------------------------------------------------------------------ *
  * 3-4: root health
  * ------------------------------------------------------------------ */
@@ -225,6 +233,40 @@ test("a destination root replaced by a symlink is detected", async (t) => {
     ),
     JSON.stringify(result.rootFindings),
   );
+  assert.equal(result.status, "error");
+  assert.deepEqual(result.tracks, []);
+});
+
+test("a root directory replaced during the scan stops before track reads", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t);
+  await f.publish();
+  await f.deliver(root);
+  const moved = `${root}-moved`;
+  const originalReaddirSync = fs.readdirSync;
+  let swapped = false;
+  t.mock.method(fs, "readdirSync", (...args: Parameters<typeof fs.readdirSync>) => {
+    const entries = originalReaddirSync(...args);
+    if (args[0] === root && !swapped) {
+      swapped = true;
+      fs.renameSync(root, moved);
+      fs.mkdirSync(root);
+    }
+    return entries;
+  });
+  syncBuiltinESMExports();
+  let result: Awaited<ReturnType<typeof scanDestinationHealth>>;
+  try {
+    result = await scanDestinationHealth({ settings: settingsFor(root) });
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    await rm(moved, { recursive: true, force: true });
+  }
+  assert.equal(swapped, true);
+  assert.equal(result.status, "error");
+  assert.ok(findingCodes(result).includes("destination_root_identity_changed"));
+  assert.deepEqual(result.tracks, []);
 });
 
 /* ------------------------------------------------------------------ *
@@ -320,6 +362,108 @@ test("a delivered file replaced by a symlink is reported changed, and named as a
   assert.match(finding.message, /link/);
 });
 
+test("a delivered symlink is rejected even when its target copies size and mtime", async (t) => {
+  const root = await destination(t);
+  const outside = await destination(t);
+  const f = await setup(t);
+  await f.publish();
+  const outcome = await f.deliver(root);
+  const target = path.join(root, outcome.destinationRelativePath!);
+  const original = await stat(target);
+  const outsideFile = path.join(outside, "same.mp4");
+  await writeFile(outsideFile, await readFile(target));
+  const fixed = new Date(1_700_000_000_000);
+  utimesSync(target, fixed, fixed);
+  utimesSync(outsideFile, fixed, fixed);
+  const receiptPath = deliveryReceiptPath(f.slug, "youtube-16x9");
+  const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+  receipt.mtimeMs = (await stat(target)).mtimeMs;
+  await writeFile(receiptPath, JSON.stringify(receipt));
+  assert.equal((await stat(outsideFile)).size, original.size);
+  assert.equal((await stat(outsideFile)).mtimeMs, receipt.mtimeMs);
+  await rm(target);
+  await symlink(outsideFile, target);
+
+  const result = await scanDestinationHealth({ settings: settingsFor(root) });
+  const changed = result.tracks.find((entry) => entry.slug === f.slug)!.findings
+    .find((entry) => entry.code === "delivered_file_changed");
+  assert.match(changed?.message ?? "", /link/);
+});
+
+test("a regular replacement with copied size and mtime shows the stat-only detection limit", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t);
+  await f.publish();
+  const outcome = await f.deliver(root);
+  const target = path.join(root, outcome.destinationRelativePath!);
+  const previous = await stat(target);
+  const receiptPath = deliveryReceiptPath(f.slug, "youtube-16x9");
+  const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+  const replacement = `${target}.replacement`;
+  await writeFile(replacement, Buffer.alloc(previous.size, 65));
+  utimesSync(replacement, new Date(1_700_000_000_000), new Date(1_700_000_000_000));
+  receipt.mtimeMs = (await stat(replacement)).mtimeMs;
+  await writeFile(receiptPath, JSON.stringify(receipt));
+  await rm(target);
+  fs.renameSync(replacement, target);
+  assert.notEqual((await stat(target)).ino, previous.ino);
+
+  const result = await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
+  assert.equal(findingCodes(result, f.slug).includes("delivered_file_changed"), false);
+});
+
+test("unexpected export links are named without statting their targets", async (t) => {
+  const root = await destination(t);
+  const outside = await destination(t);
+  const f = await setup(t);
+  await f.publish();
+  await f.deliver(root);
+  const outsideFile = path.join(outside, "private.mp4");
+  await writeFile(outsideFile, "outside contents");
+  await symlink(outsideFile, path.join(root, f.slug, `${f.slug}-retired.mp4`));
+  const result = await scanDestinationHealth({ settings: settingsFor(root) });
+  const finding = result.tracks.find((entry) => entry.slug === f.slug)!.findings
+    .find((entry) => entry.code === "unexpected_export_file");
+  assert.ok(finding);
+  assert.doesNotMatch(finding.message, /bytes|MB|KB/);
+});
+
+test("a receipt for an old delivery folder cannot hide an export in the new folder", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t, { deliveryFolder: "Old Folder" });
+  await f.publish();
+  const delivered = await f.deliver(root);
+  const metadata = JSON.parse(await readFile(f.metadataPath, "utf8")) as Record<string, unknown>;
+  metadata.deliveryFolder = "New Folder";
+  await writeFile(f.metadataPath, JSON.stringify(metadata));
+  await mkdir(path.join(root, "New Folder"));
+  await writeFile(
+    path.join(root, "New Folder", `${f.slug}-youtube-16x9.mp4`),
+    await readFile(path.join(root, delivered.destinationRelativePath!)),
+  );
+
+  const result = await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
+  assert.ok(findingCodes(result, f.slug).includes("unexpected_export_file"));
+});
+
+test("a bundle file replaced by a link is reported without reading its target", async (t) => {
+  const root = await destination(t);
+  const outside = await destination(t);
+  const f = await setup(t);
+  await f.publish();
+  await f.deliver(root);
+  await generateReleaseBundle({ slug: f.slug, settings: settingsFor(root) });
+  const bundle = path.join(root, f.slug, "release.json");
+  const outsideFile = path.join(outside, "release.json");
+  await writeFile(outsideFile, await readFile(bundle));
+  await rm(bundle);
+  await symlink(outsideFile, bundle);
+
+  const result = await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
+  assert.ok(findingCodes(result, f.slug).includes("destination_file_unreadable"));
+  assert.equal(result.tracks[0].findings.some((entry) => entry.message.includes(outside)), false);
+});
+
 /* ------------------------------------------------------------------ *
  * 10-12: unexpected files and folders
  * ------------------------------------------------------------------ */
@@ -346,6 +490,27 @@ test("a file matching this app's naming convention with no receipt is unexpected
     findings.find((finding) => finding.code === "unexpected_export_file")!.relativePath,
     `Probe Beat/${f.slug}-imax-70mm.mp4`,
   );
+});
+
+test("a malformed receipt cannot claim the file it once described", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t);
+  await f.publish();
+  await f.deliver(root);
+  await writeFile(deliveryReceiptPath(f.slug, "youtube-16x9"), "{broken");
+  const result = await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
+  assert.ok(findingCodes(result, f.slug).includes("unexpected_export_file"));
+});
+
+test("corrupt delivery history does not affect current destination health", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t);
+  await f.publish();
+  await f.deliver(root);
+  await generateReleaseBundle({ slug: f.slug, settings: settingsFor(root) });
+  await writeFile(path.join(root, "delivery-log.jsonl"), "{broken\n");
+  const result = await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
+  assert.deepEqual(findingCodes(result, f.slug), []);
 });
 
 test("a file outside this app's naming convention is never treated as drift", async (t) => {
@@ -549,14 +714,14 @@ test("a file removed between listing and inspection produces a coherent finding,
   const strayPath = path.join(root, "Probe Beat", managedExportFilename(f.slug, "vertical-9x16"));
   await writeFile(strayPath, "about to vanish");
 
-  const originalStatSync = fs.statSync;
-  t.mock.method(fs, "statSync", (...args: Parameters<typeof fs.statSync>) => {
+  const originalLstatSync = fs.lstatSync;
+  t.mock.method(fs, "lstatSync", (...args: Parameters<typeof fs.lstatSync>) => {
     if (typeof args[0] === "string" && args[0] === strayPath) {
       const error = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
       error.code = "ENOENT";
       throw error;
     }
-    return originalStatSync(...args);
+    return originalLstatSync(...args);
   });
   syncBuiltinESMExports();
 
@@ -631,9 +796,9 @@ test("a track folder replaced by a symlink is never followed", async (t) => {
   const result = await scanDestinationHealth({ settings: settingsFor(root) });
   const findings = result.tracks.find((entry) => entry.slug === f.slug)!.findings;
 
-  // Treated as gone — never as a directory to list through. Nothing about
+  // Treated as an unreadable entry — never as a directory to list through. Nothing about
   // "secret.txt" appears anywhere in the result.
-  assert.ok(findings.some((finding) => finding.code === "track_folder_missing"));
+  assert.ok(findings.some((finding) => finding.code === "destination_folder_unreadable"));
   assert.equal(JSON.stringify(result).includes("secret"), false);
 });
 
@@ -723,6 +888,7 @@ test("a catalogue scan covers every track and reports what cannot be scanned", a
   });
   assert.equal(named.tracks.length, 0);
   assert.equal(named.invalid.length, 1);
+  assert.equal(named.status, "error");
   assert.match(named.invalid[0].reason, /not found/);
 });
 
@@ -769,4 +935,14 @@ test("the CLI documents itself and never writes without a destination", async ()
   // Whatever this machine's own delivery.local.json says, the command must
   // never throw an unhandled exception — only ever a clean, reported result.
   assert.equal(typeof (noDestination as { stdout?: string }).stdout, "string");
+});
+
+test("the CLI refuses unknown options and invalid track slugs", async () => {
+  for (const args of [["--unexpected"], ["--track", "../outside"], ["--track"]]) {
+    await assert.rejects(
+      run(process.execPath, ["scripts/destination-health.mts", ...args]),
+      (error: { code?: number; stderr?: string }) =>
+        error.code !== 0 && /unknown|not a valid|needs a value/i.test(error.stderr ?? ""),
+    );
+  }
 });
