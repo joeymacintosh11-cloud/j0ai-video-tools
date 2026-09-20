@@ -7,6 +7,7 @@ import { once } from "node:events";
 import { syncBuiltinESMExports } from "node:module";
 import test, { type TestContext } from "node:test";
 import { handleRequest } from "../server/app.ts";
+import { CONTENT_METADATA_SETTINGS_FILE } from "../services/content/metadataTemplateSettings.ts";
 import { fixture, tempFiles } from "./fixtures.mts";
 
 const api = async (t: TestContext) => {
@@ -63,6 +64,52 @@ test("metadata API accepts current revisions and legacy PATCH, rejects stale rev
   assert.deepEqual(await fs.readFile(f.metadata), before);
   assert.equal((await patch(140)).status, 200);
   assert.deepEqual(await tempFiles(f.trackDir), []);
+});
+
+test("PATCH metadata persists contentMetadataOverrides through the HTTP route, not just the service layer", async (t) => {
+  const f = await fixture(t);
+  const { base } = await api(t);
+  const url = `${base}/api/tracks/${f.slug}`;
+
+  const patchWith = (body: unknown, revision?: string) =>
+    fetch(`${url}/metadata`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        ...(revision ? { "if-match": `"${revision}"` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+  const initial = await (await fetch(url)).json();
+  const saved = await patchWith(
+    { contentMetadataOverrides: { youtube: { titleTemplate: "{title} [Exclusive]" } } },
+    initial.data.metadataRevision,
+  );
+  assert.equal(saved.status, 200);
+  const savedBody = await saved.json();
+  assert.deepEqual(savedBody.data.metadata.contentMetadataOverrides, {
+    youtube: { titleTemplate: "{title} [Exclusive]" },
+  });
+
+  // On disk, not just in the response — the route must actually have read
+  // the field out of the request body before handing it to the service.
+  const onDisk = JSON.parse(await fs.readFile(f.metadata, "utf8"));
+  assert.deepEqual(onDisk.contentMetadataOverrides, { youtube: { titleTemplate: "{title} [Exclusive]" } });
+
+  // null clears every override.
+  const cleared = await patchWith({ contentMetadataOverrides: null }, savedBody.data.metadataRevision);
+  assert.equal(cleared.status, 200);
+  assert.equal((await cleared.json()).data.metadata.contentMetadataOverrides, undefined);
+
+  // An unknown placeholder is refused with the same TEMPLATE_INVALID the
+  // service layer and the global settings endpoint both use.
+  const invalid = await patchWith(
+    { contentMetadataOverrides: { youtube: { titleTemplate: "{mood}" } } },
+    (await (await fetch(url)).json()).data.metadataRevision,
+  );
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json()).error.code, "TEMPLATE_INVALID");
 });
 
 test("upload disk errors return structured JSON and leave the API healthy", async (t) => {
@@ -657,4 +704,86 @@ test("GET /api/content-package rejects an unknown platform and a missing track",
   );
   assert.equal(missingTrack.status, 404);
   assert.equal((await missingTrack.json()).error.code, "TRACK_NOT_FOUND");
+});
+
+/* -------------------------------------------------------------------- *
+ * Content metadata templates
+ * -------------------------------------------------------------------- */
+
+test("GET /api/content-metadata-settings reads real settings without ever writing", async (t) => {
+  const { base } = await api(t);
+
+  const response = await fetch(`${base}/api/content-metadata-settings`);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(typeof body.data.settingsPath, "string");
+  assert.match(body.data.settingsPath, /content-metadata\.local\.json$/);
+  // Whatever this machine's real file holds (most commonly nothing at all),
+  // reading it is never itself a write.
+  assert.equal(typeof body.data.templates, "object");
+});
+
+test("PATCH /api/content-metadata-settings rejects an unknown placeholder and writes nothing", async (t) => {
+  const { base } = await api(t);
+
+  const before = await (await fetch(`${base}/api/content-metadata-settings`)).json();
+
+  const response = await fetch(`${base}/api/content-metadata-settings`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ youtube: { titleTemplate: "{mood}" } }),
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.error.code, "TEMPLATE_INVALID");
+  assert.match(body.error.message, /mood/);
+
+  const after = await (await fetch(`${base}/api/content-metadata-settings`)).json();
+  assert.deepEqual(after.data, before.data, "a refused change writes nothing");
+});
+
+test("PATCH /api/content-metadata-settings rejects an unknown platform and field, structurally", async (t) => {
+  const { base } = await api(t);
+
+  for (const body of [{ tiktok: { captionTemplate: "{title}" } }, { youtube: { thumbnailTemplate: "{title}" } }]) {
+    const response = await fetch(`${base}/api/content-metadata-settings`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal((await response.json()).error.code, "TEMPLATE_INVALID");
+  }
+});
+
+test("GET /api/content-package reflects a configured global template, via the real settings-read path", async (t) => {
+  const f = await fixture(t, { exportPresets: ["youtube-16x9"] });
+  await fs.writeFile(f.cover, "cover");
+  await fs.writeFile(f.beat, "audio");
+
+  const realReadFile = fs.readFile.bind(fs);
+  t.mock.method(fs, "readFile", (async (...args: Parameters<typeof fs.readFile>) => {
+    if (String(args[0]) === CONTENT_METADATA_SETTINGS_FILE) {
+      return JSON.stringify({
+        schemaVersion: 1,
+        templates: { youtube: { titleTemplate: "{title} — configured globally" } },
+      });
+    }
+    return realReadFile(...args);
+  }) as typeof fs.readFile);
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+
+  const { base } = await api(t);
+  const response = await fetch(`${base}/api/content-package?track=${f.slug}`);
+  const body = await response.json();
+
+  const youtube = body.data.platforms.find((p: { platformId: string }) => p.platformId === "youtube");
+  assert.equal(youtube.title, "Fixture — configured globally");
+  assert.equal(body.data.templatesProblem, null);
 });

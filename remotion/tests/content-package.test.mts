@@ -6,6 +6,8 @@ import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { inspectTrack } from "../services/tracks/inspectTrack.ts";
 import { publishExport } from "../services/render/publishExport.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
+import { metadataRevision } from "../services/tracks/metadataRevision.ts";
+import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
 import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
 import { toTrackDetailView } from "../server/views/trackView.ts";
 import {
@@ -14,6 +16,7 @@ import {
 import {
   deriveContentPackage,
   type ContentPackageInput,
+  type ContentPackageOptions,
   type PackageExportEntry,
 } from "../src/domain/content/contentPackage.ts";
 import {
@@ -413,7 +416,12 @@ const setup = async (t: TestContext, extra: Record<string, unknown> = {}) => {
     publishExport(f.slug, presetId, fingerprintInputs(props, presetId), async (file) => {
       await writeFile(file, "successful video");
     });
-  const packageView = async (options: { mode?: "intent" | "full" } = {}) => {
+  const packageView = async (
+    options: {
+      mode?: "intent" | "full";
+      globalTemplates?: ContentPackageOptions["globalTemplates"];
+    } = {},
+  ) => {
     const inspection = await inspectTrack(f.slug);
     const detail = toTrackDetailView(inspection, new Map(), null);
     return deriveContentPackage(
@@ -422,6 +430,7 @@ const setup = async (t: TestContext, extra: Record<string, unknown> = {}) => {
         title: detail.title,
         validationOk: detail.validation.ok,
         metadata: detail.metadata,
+        contentMetadataOverrides: detail.metadata?.contentMetadataOverrides,
         exports: detail.exports,
       },
       options,
@@ -479,4 +488,146 @@ test("a re-render that changes inputs makes a previously ready platform stale, n
   assert.equal(pkg.packageStatus, "stale");
   const youtube = pkg.platforms.find((p) => p.platformId === "youtube")!;
   assert.deepEqual(youtube.staleReasons, ["audio_changed"]);
+});
+
+/* ------------------------------------------------------------------ *
+ * Editable metadata templates, end to end through a real track: the
+ * precedence chain, render-freshness separation, and on-disk validation.
+ * ------------------------------------------------------------------ */
+
+test("a track's own contentMetadataOverrides wins over a global template, end to end", async (t) => {
+  const f = await setup(t, {
+    exportPresets: ["youtube-16x9"],
+    contentMetadataOverrides: { youtube: { titleTemplate: "{title} [Exclusive]" } },
+  });
+  const pkg = await f.packageView({
+    globalTemplates: { youtube: { titleTemplate: "{title} - {artist}" } },
+  });
+  const youtube = pkg.platforms.find((p) => p.platformId === "youtube")!;
+  assert.equal(youtube.title, "Fixture [Exclusive]");
+});
+
+test("a partial per-track override leaves every other field on the global/built-in chain", async (t) => {
+  const f = await setup(t, {
+    exportPresets: ["youtube-16x9", "vertical-9x16"],
+    contentMetadataOverrides: { youtube: { titleTemplate: "{title} [Exclusive]" } },
+  });
+  const pkg = await f.packageView({
+    globalTemplates: { youtube: { descriptionTemplate: "GLOBAL DESC" }, reels: { captionTemplate: "GLOBAL CAPTION" } },
+  });
+  const youtube = pkg.platforms.find((p) => p.platformId === "youtube")!;
+  const reels = pkg.platforms.find((p) => p.platformId === "reels")!;
+  assert.equal(youtube.title, "Fixture [Exclusive]"); // track override
+  assert.equal(youtube.description, "GLOBAL DESC"); // falls to global, untouched by the title-only override
+  assert.equal(reels.caption, "GLOBAL CAPTION"); // an entirely different platform, unaffected
+});
+
+test("clearing a track's contentMetadataOverrides (metadata PATCH null) restores inherited copy", async (t) => {
+  const f = await setup(t, {
+    exportPresets: ["youtube-16x9"],
+    contentMetadataOverrides: { youtube: { titleTemplate: "{title} [Exclusive]" } },
+  });
+  const before = await f.packageView({ globalTemplates: { youtube: { titleTemplate: "GLOBAL" } } });
+  assert.equal(before.platforms.find((p) => p.platformId === "youtube")!.title, "Fixture [Exclusive]");
+
+  await updateTrackMetadata(f.slug, { contentMetadataOverrides: null });
+  const after = await f.packageView({ globalTemplates: { youtube: { titleTemplate: "GLOBAL" } } });
+  assert.equal(after.platforms.find((p) => p.platformId === "youtube")!.title, "GLOBAL");
+});
+
+test("an existing metadata.json with no contentMetadataOverrides field is still fully valid", async (t) => {
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const inspection = await inspectTrack(f.slug);
+  assert.equal(inspection.validation.ok, true);
+  assert.equal(inspection.metadata?.contentMetadataOverrides, undefined);
+});
+
+test("a track that declares an unknown placeholder in its overrides is reported invalid, and the file is not written", async (t) => {
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  await assert.rejects(
+    () => updateTrackMetadata(f.slug, { contentMetadataOverrides: { youtube: { titleTemplate: "{mood}" } } }),
+    (error: unknown) => {
+      assert.ok(error instanceof TrackError);
+      assert.equal(error.code, "TEMPLATE_INVALID");
+      return true;
+    },
+  );
+  const onDisk = JSON.parse(await readFile(f.metadata, "utf8"));
+  assert.equal(onDisk.contentMetadataOverrides, undefined);
+});
+
+test("saving contentMetadataOverrides through the metadata PATCH round-trips through the same optimistic-concurrency path", async (t) => {
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const first = await updateTrackMetadata(f.slug, {
+    contentMetadataOverrides: { youtube: { titleTemplate: "{title} v1" } },
+  });
+  const revision = metadataRevision(await readFile(f.metadata, "utf8"));
+
+  // A stale revision is refused, exactly like every other metadata field.
+  await assert.rejects(
+    () =>
+      updateTrackMetadata(
+        f.slug,
+        { contentMetadataOverrides: { youtube: { titleTemplate: "{title} v2" } } },
+        "stale-revision",
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof TrackError);
+      assert.equal(error.code, "METADATA_CONFLICT");
+      return true;
+    },
+  );
+
+  const second = await updateTrackMetadata(
+    f.slug,
+    { contentMetadataOverrides: { youtube: { titleTemplate: "{title} v2" } } },
+    revision,
+  );
+  assert.deepEqual(first.metadata.contentMetadataOverrides, { youtube: { titleTemplate: "{title} v1" } });
+  assert.deepEqual(second.metadata.contentMetadataOverrides, { youtube: { titleTemplate: "{title} v2" } });
+});
+
+test("editing contentMetadataOverrides never changes the render fingerprint — text templates cannot make a video stale", async (t) => {
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  await f.publish("youtube-16x9");
+  assert.equal((await f.packageView()).packageStatus, "complete");
+
+  await updateTrackMetadata(f.slug, {
+    contentMetadataOverrides: { youtube: { descriptionTemplate: "Totally different description {title}" } },
+  });
+
+  const pkg = await f.packageView();
+  assert.equal(pkg.packageStatus, "complete", "a metadata-template-only change must not trigger a re-render");
+  const youtube = pkg.platforms.find((p) => p.platformId === "youtube")!;
+  assert.equal(youtube.readiness, "ready");
+  assert.deepEqual(youtube.staleReasons, []);
+});
+
+test("editing a field that is actually rendered into the video (title) still makes it stale, exactly as before", async (t) => {
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  await f.publish("youtube-16x9");
+  assert.equal((await f.packageView()).packageStatus, "complete");
+
+  await updateTrackMetadata(f.slug, { title: "A brand new title" });
+
+  const pkg = await f.packageView();
+  assert.equal(pkg.packageStatus, "stale");
+  const youtube = pkg.platforms.find((p) => p.platformId === "youtube")!;
+  assert.deepEqual(youtube.staleReasons, ["metadata_changed"]);
+});
+
+test("package readiness and the catalogue-style status are unaffected by copy-only global templates", async (t) => {
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  await f.publish("youtube-16x9");
+  const before = await f.packageView();
+  const after = await f.packageView({ globalTemplates: { youtube: { titleTemplate: "{title} completely different" } } });
+  assert.equal(before.packageStatus, after.packageStatus);
+  assert.deepEqual(
+    before.platforms.map((p) => p.readiness),
+    after.platforms.map((p) => p.readiness),
+  );
+  assert.notEqual(
+    before.platforms.find((p) => p.platformId === "youtube")!.title,
+    after.platforms.find((p) => p.platformId === "youtube")!.title,
+  );
 });
