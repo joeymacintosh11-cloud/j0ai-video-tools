@@ -956,13 +956,34 @@ test("POST /api/content-package/batch/apply queues missing targets through the e
 
   const a = await batchFixture(t, { exportPresets: ["youtube-16x9"] });
   const { base } = await api(t);
-  const response = await postBatch(base, "apply", { tracks: [a.slug], platforms: ["youtube"] });
+  const response = await postBatch(base, "apply", {
+    tracks: [a.slug], platforms: ["youtube"], wait: true, timeoutMs: 0,
+  });
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.ok(body.data.batchId);
   assert.equal(body.data.queued.length, 1);
   assert.equal(body.data.queued[0].slug, a.slug);
   assert.equal(body.data.nothingToDo, false);
+  assert.equal(body.data.timedOut, true);
+  assert.deepEqual(body.data.jobReferences, [{
+    actionId: `${a.slug}::youtube::youtube-16x9`,
+    slug: a.slug,
+    platformId: "youtube",
+    presetId: "youtube-16x9",
+    jobId: body.data.renderBatch.jobs[0].id,
+    outcome: "queued",
+  }]);
+
+  const adopted = await (await postBatch(base, "apply", {
+    tracks: [a.slug], platforms: ["youtube"], wait: true, timeoutMs: 0,
+  })).json();
+  assert.equal(adopted.data.batchId, null);
+  assert.equal(adopted.data.adopted.length, 1);
+  assert.equal(adopted.data.jobReferences[0].jobId, body.data.jobReferences[0].jobId);
+  assert.equal(adopted.data.jobReferences[0].outcome, "adopted");
+  assert.equal(renderManager.getJob(body.data.jobReferences[0].jobId).status !== "failed", true);
+
 
   const view = (await (await fetch(`${base}/api/tracks/${a.slug}`)).json()).data.exports[0];
   assert.equal(view.status, "rendering");
