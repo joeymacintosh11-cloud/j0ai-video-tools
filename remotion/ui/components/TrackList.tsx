@@ -1,12 +1,34 @@
+import { useMemo } from "react";
 import type {
   DestinationHealthView,
   TrackSummaryView,
 } from "../../src/domain/api/views.ts";
+import { deriveContentPackage } from "../../src/domain/content/contentPackage.ts";
+import { PackageStatusBadge } from "./ContentPackagePanel.tsx";
 import { DeliverySummary } from "./DeliveryStatus.tsx";
 import { DestinationHealthBadge } from "./DestinationHealthPanel.tsx";
 import { ReleaseBundleBadge } from "./ReleaseBundlePanel.tsx";
 import { ExportStatus } from "./ExportStatus.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
+
+/**
+ * Package readiness for a catalogue row.
+ *
+ * Derived from the same `exports` the row's other marks already read — no
+ * extra fetch per row, and no full metadata subject (TrackSummaryView does
+ * not carry one), which the readiness computation does not need anyway.
+ */
+const packageStatusFor = (track: TrackSummaryView) =>
+  deriveContentPackage(
+    {
+      slug: track.slug,
+      title: track.title,
+      validationOk: track.metadataValid,
+      metadata: null,
+      exports: track.exports,
+    },
+    { mode: "intent" },
+  ).packageStatus;
 
 /**
  * The track browser.
@@ -28,7 +50,14 @@ export const TrackList: React.FC<{
    * last click found.
    */
   readonly health?: DestinationHealthView | null;
-}> = ({ tracks, selectedSlug, onSelect, checked, onToggleChecked, health = null }) => (
+}> = ({ tracks, selectedSlug, onSelect, checked, onToggleChecked, health = null }) => {
+  const packageStatuses = useMemo(() => {
+    const byslug = new Map<string, ReturnType<typeof packageStatusFor>>();
+    for (const track of tracks) byslug.set(track.slug, packageStatusFor(track));
+    return byslug;
+  }, [tracks]);
+
+  return (
   <nav className="tracklist" aria-label="Tracks">
     <div className="tracklist__head">
       <span>Tracks</span>
@@ -74,6 +103,11 @@ export const TrackList: React.FC<{
               <StatusBadge status={track.status} />
               <ExportStatus exports={track.exports} compact />
               <DeliverySummary exports={track.exports} />
+              {/* Not shown for "not_configured" — a track with nothing
+                  selected has no package to speak of yet. */}
+              {packageStatuses.get(track.slug) === "not_configured" ? null : (
+                <PackageStatusBadge status={packageStatuses.get(track.slug) ?? "not_configured"} />
+              )}
               {/* Only once a destination exists; before that a bundle has
                   nowhere to live and the badge would be noise. */}
               {track.releaseBundle.freshness === "not_configured" ? null : (
@@ -102,4 +136,5 @@ export const TrackList: React.FC<{
       ))
     )}
   </nav>
-);
+  );
+};

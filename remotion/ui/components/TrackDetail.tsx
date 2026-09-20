@@ -5,6 +5,7 @@ import { publicAssetUrl } from "../api/assetUrl.ts";
 import { deliveryFolderFor } from "../../src/domain/delivery/deliveryPaths.ts";
 import { revealDelivery } from "../api/client.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
+import { ContentPackagePanel } from "./ContentPackagePanel.tsx";
 import { DeliverPanel } from "./DeliverPanel.tsx";
 import { DestinationFixPlanPanel } from "./DestinationFixPlanPanel.tsx";
 import { DestinationHealthPanel } from "./DestinationHealthPanel.tsx";
@@ -155,6 +156,15 @@ export const TrackDetail: React.FC<{
           disabled={!track.validation.ok}
           onQueued={onBatchStarted}
           onChanged={onChanged}
+        />
+      </section>
+
+      <section className="section">
+        <h3 className="section__title">Content package</h3>
+        <ContentPackagePanel
+          track={track}
+          onChanged={onChanged}
+          onBatchStarted={onBatchStarted}
         />
       </section>
 

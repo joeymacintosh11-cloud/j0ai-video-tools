@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { DeliverView } from "../../src/domain/api/views.ts";
+import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 import { ApiRequestError, deliverExports } from "../api/client.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 
@@ -23,17 +24,29 @@ type DeliverPanelProps = {
   readonly label: string;
   /** Tracks to cover; null means every track. */
   readonly tracks: readonly string[] | null;
+  /** Formats to cover; null/omitted uses each track's declared intent. */
+  readonly presets?: readonly RenderPresetId[] | null;
   readonly disabled?: boolean;
   readonly onChanged: () => void;
 };
 
-// A plan belongs to exactly one scope. Changing tracks discards both the plan
-// and any pending response before a confirmation can target a different track.
+// A plan belongs to exactly one scope. Changing tracks or presets discards
+// both the plan and any pending response before a confirmation can target a
+// different scope.
 export const DeliverPanel: React.FC<DeliverPanelProps> = (props) => (
-  <ScopedDeliverPanel key={JSON.stringify(props.tracks)} {...props} />
+  <ScopedDeliverPanel
+    key={JSON.stringify([props.tracks, props.presets ?? null])}
+    {...props}
+  />
 );
 
-const ScopedDeliverPanel: React.FC<DeliverPanelProps> = ({ label, tracks, disabled = false, onChanged }) => {
+const ScopedDeliverPanel: React.FC<DeliverPanelProps> = ({
+  label,
+  tracks,
+  presets = null,
+  disabled = false,
+  onChanged,
+}) => {
   const [plan, setPlan] = useState<DeliverView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiRequestError | null>(null);
@@ -49,7 +62,7 @@ const ScopedDeliverPanel: React.FC<DeliverPanelProps> = ({ label, tracks, disabl
     setError(null);
 
     try {
-      const result = await deliverExports(tracks, null, dryRun);
+      const result = await deliverExports(tracks, presets, dryRun);
 
       if (!mounted.current) return;
       setPlan(result);

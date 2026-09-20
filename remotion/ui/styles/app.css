@@ -1582,6 +1582,166 @@ body {
 }
 
 /* ---------------------------------------------------------------- *
+ * Content package
+ *
+ * A view over the same facts the Exports and Delivery sections already
+ * show, laid out per platform instead of per format. Shares the badge and
+ * export-mark vocabulary rather than inventing a third visual language.
+ * ---------------------------------------------------------------- */
+
+.contentpackage {
+  display: grid;
+  gap: 12px;
+}
+
+.contentpackage__summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.contentpackage__modes {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.button--active {
+  border-color: var(--vintage-gold);
+  color: var(--vintage-gold);
+  background: var(--gold-wash);
+}
+
+.contentpackage__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.contentpackage__row {
+  padding: 8px 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.contentpackage__row--unselected {
+  opacity: 0.55;
+}
+
+.contentpackage__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.contentpackage__mark {
+  font-family: var(--font-mono);
+  width: 12px;
+  text-align: center;
+}
+
+.contentpackage__row--ready .contentpackage__mark {
+  color: var(--status-ready);
+}
+.contentpackage__row--stale .contentpackage__mark,
+.contentpackage__row--blocked .contentpackage__mark {
+  color: var(--vintage-gold);
+}
+.contentpackage__row--rendering .contentpackage__mark {
+  color: var(--status-draft);
+}
+.contentpackage__row--missing .contentpackage__mark,
+.contentpackage__row--not_selected .contentpackage__mark {
+  color: var(--text-faint);
+}
+
+.contentpackage__label {
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.contentpackage__note {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.contentpackage__toggle {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.contentpackage__filename {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+.contentpackage__blocker {
+  margin: 6px 0 0;
+}
+
+.contentpackage__metadata {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.contentpackage__metadata p {
+  margin: 2px 0 0;
+  color: var(--text-dim);
+}
+
+.contentpackage__description {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.pkgbadge {
+  font-family: var(--font-label);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.pkgbadge--complete {
+  color: var(--status-ready);
+  background: var(--ready-wash);
+}
+.pkgbadge--incomplete {
+  color: var(--status-draft);
+  background: var(--surface-3);
+}
+.pkgbadge--stale {
+  color: var(--vintage-gold);
+  background: var(--gold-wash);
+}
+.pkgbadge--blocked {
+  color: var(--status-invalid);
+  background: color-mix(in srgb, var(--status-invalid) 14%, transparent);
+}
+.pkgbadge--not_configured {
+  color: var(--text-faint);
+  opacity: 0.6;
+}
+
+/* ---------------------------------------------------------------- *
  * Delivery history
  *
  * Reuses the export list's grid and the existing status colours. History is

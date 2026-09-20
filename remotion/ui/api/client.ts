@@ -1,8 +1,11 @@
 import type { ExportMode } from "../../src/domain/video/exportFreshness.ts";
+import type { ContentPackageMode } from "../../src/domain/content/contentPackage.ts";
+import type { PlatformId } from "../../src/domain/content/platformProfiles.ts";
 import type {
   ApiError,
   ApiErrorCode,
   ApiResponse,
+  ContentPackageView,
   CreateRenderBatchBody,
   CreateRenderBatchView,
   ExportMissingBody,
@@ -352,6 +355,29 @@ export const revealDelivery = (
   };
 
   return jsonRequest<DeliveryRevealView>("/api/delivery/reveal", "POST", body);
+};
+
+/* ------------------------------------------------------------------ *
+ * Content packages
+ * ------------------------------------------------------------------ */
+
+/**
+ * A platform-facing view over one track's export/delivery state — see
+ * src/domain/content/contentPackage.ts. Read-only: this never queues a render
+ * or a delivery by itself. `mode` "intent" (default) selects each platform
+ * whose underlying preset the track's own exportPresets already intends;
+ * "full" selects every platform regardless of intent.
+ */
+export const getContentPackage = (
+  slug: string,
+  mode: Exclude<ContentPackageMode, "custom"> = "intent",
+  platforms?: readonly PlatformId[],
+): Promise<ContentPackageView> => {
+  const params = new URLSearchParams({ track: slug });
+  if (mode === "full") params.set("mode", "full");
+  for (const platform of platforms ?? []) params.append("platform", platform);
+
+  return request<ContentPackageView>(`/api/content-package?${params.toString()}`);
 };
 
 /* ------------------------------------------------------------------ *
