@@ -524,6 +524,47 @@ state, not a timestamp, so touching the file cannot make it look current.
 a successful delivery. Off unless you turn it on, and a bundle that fails to
 write never affects the files that were delivered.
 
+### Content packages
+
+"For this beat, what do I need for YouTube, Reels/TikTok and Instagram, what
+is ready, what is missing or stale, and what caption/description goes with
+it?" A content package answers that per track by mapping each platform onto
+one of the existing render presets — no second rendering format:
+
+| platform | preset |
+|---|---|
+| YouTube | `youtube-16x9` |
+| Reels / TikTok | `vertical-9x16` |
+| Instagram Square | `square-1x1` |
+
+It is **derived, not stored** — there is no new manifest file, and nothing
+here is a second source of truth. A package is computed fresh, on every read,
+from the same export coverage, queue state and delivery state the rest of the
+app already tracks. The Track Detail panel's **Content package** section
+shows a readiness mark per platform (ready / missing / stale / rendering /
+blocked), a generated title/description (YouTube) or caption (Reels/TikTok,
+Instagram) built deterministically from the track's own title/artist/key/BPM/
+subtitle — no external AI calls — and a status badge on each catalogue row.
+
+By default a package uses the track's own declared `exportPresets` (§ Export
+formats), so nothing is silently added to a track that only ships one format.
+"Full package" asks for all three platforms regardless of what is declared,
+without changing the track's saved intent.
+
+**Build package** and **Deliver package** are not a new render or delivery
+path — they are the existing "export missing" and "deliver" actions, scoped to
+the package's platforms:
+
+```console
+npm run content-package -- ghetto-geek
+npm run content-package -- ghetto-geek --mode full --json
+npm run content-package -- ghetto-geek --apply
+```
+
+Default behavior is inspection only; `--apply` renders the package's own
+missing/stale outputs, reusing the same planner and render call as
+`npm run render-missing`.
+
 ### Delivery history
 
 A release bundle says what a track ships *now*. It cannot say what went out last

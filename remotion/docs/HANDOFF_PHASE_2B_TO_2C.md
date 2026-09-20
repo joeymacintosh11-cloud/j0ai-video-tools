@@ -18,14 +18,16 @@ in §23a rather than silently corrected.
 
 ## 0. Read this first
 
-**Sections 1–34 describe the project as it stood at the end of Phase 2B.**
-**§38 (stale exports / re-export detection) is the newest state.**
-§35–37 cover formats, batching, export-missing and per-track intent.
-Phases 2C-A, 2C-B, a stability hardening pass and a multi-format/batch feature
-set have all landed since. Where an older section disagrees with the code, the
-code wins — and **§35 onwards is the current state**. Read §35 before acting on
-anything in §23 (limitations), §26–30 (Phase 2C plans, now delivered) or §34
-(git, now resolved).
+**§49 (the Toshi Content Package workflow) is the newest state.** Sections
+1–34 describe the project as it stood at the end of Phase 2B. §35–48 cover
+formats, batching, export-missing, per-track intent, stale/re-export
+detection, cross-process render locks, local delivery, release bundles,
+delivery history, destination health and drift, the destination-wide fix
+plan, and confirmed delivery after a queued render — all landed, all
+verified, all still true. §49 builds on top of every one of them without
+changing any of their behavior: it is a read-only, derived view plus a thin
+platform-mapping layer, not a second rendering or delivery system. Where an
+older section disagrees with the code, the code wins.
 
 Specifically, these earlier statements are **no longer true**:
 
@@ -5211,6 +5213,373 @@ quantitative memory claim is made.
 3. (this commit) — this audit record.
 
 No push was made.
+
+---
+
+## 49. Current State — The Toshi Content Package Workflow (2026-09-20)
+
+The newest layer. Read this after §48; where the two disagree, this wins. No
+composition, layout, presets, brand sources, render pipeline, render queue,
+locking, delivery, release-bundle or destination-health behavior changed —
+this milestone is additive only. No new dependencies, no cloud services, no
+databases, no watchers, no publishing APIs, and nothing here uploads to
+YouTube, Instagram or TikTok.
+
+### 49.1 The question this answers
+
+"For this beat, what content do I need for YouTube, Reels/TikTok and
+Instagram, what is ready, what is stale or missing, what metadata accompanies
+it, and how do I generate the complete package?"
+
+A **content package** is a track's platform-facing outputs, described
+together. It is **derived, not persisted** — there is no "package complete"
+flag written anywhere, and no new manifest file competes with the release
+bundle (§41). A package is recomputed on every read from exactly the state
+the app already tracks: export coverage/freshness (§36–38), queue state
+(§18), and delivery state (§39). Nothing here scans a directory, hashes a
+video, or calls `ffprobe` a second time.
+
+### 49.2 Platform profiles
+
+`src/domain/content/platformProfiles.ts` is pure and browser-safe, exactly
+like `renderPresets.ts`. Three platforms, each naming one existing preset —
+no new rendering format was invented:
+
+| platform id | label | preset | filename alias suffix |
+|---|---|---|---|
+| `youtube` | YouTube | `youtube-16x9` | `youtube` |
+| `reels` | Reels / TikTok | `vertical-9x16` | `reels` |
+| `instagram-square` | Instagram Square | `square-1x1` | `square` |
+
+The mapping is the single source of truth: the server, the CLI and the UI all
+import it, and there is no second list of platform-to-format strings anywhere.
+A `filenameSuffix` builds a **descriptive filename alias** —
+`ghetto-geek-youtube.mp4` — used only in generated text and the package view.
+It is never written to disk by anything in this module and can never collide
+with the canonical `out/<slug>/<preset-id>.mp4` or a delivery's
+`<slug>-<preset-id>.mp4` (§39.9): both keep their existing names untouched.
+
+### 49.3 Readiness — the one new concept
+
+`src/domain/content/contentPackage.ts`, `deriveContentPackage(input, options)`.
+
+Per platform:
+
+| readiness | derived from |
+|---|---|
+| `ready` | the underlying export's coverage freshness is `current` |
+| `missing` | no file, nothing in flight |
+| `stale` | freshness is `stale` (with the same `staleReasons` coverage already reports) |
+| `rendering` | a job for that track/preset is queued or active (§18) |
+| `blocked` | the track is not currently valid, or freshness is `invalid` |
+| `not_selected` | this platform is not part of the current package |
+
+Per package, in this precedence (deliberately not a bigger state machine):
+
+```
+no platform selected        → not_configured
+track invalid, or any
+  selected platform blocked → blocked
+any selected platform
+  missing or rendering      → incomplete
+any selected platform stale → stale
+otherwise                   → complete
+```
+
+A **partial package is a first-class, valid result** — two ready and one
+missing is `incomplete`, never treated as failed, and each platform's own
+readiness stays independently visible. A package is `complete` when every
+*selected* platform has a **current canonical export**; delivery is a
+separate, later question (§49.9) and is never required for `complete`.
+
+### 49.4 Selection — export intent, not a new flag
+
+Three modes, the smallest model that fits:
+
+- **`intent`** (default) — a platform is selected exactly when its underlying
+  preset is in the track's resolved `exportPresets` (§37.1). An undeclared
+  track still resolves to every format, so an existing track's package is
+  never silently narrowed or widened by this feature.
+- **`full`** — every platform is selected, regardless of declared intent.
+  Explicit and visible (a UI toggle, `--mode full`, `mode=full`), never
+  silent.
+- **`custom`** — an exact platform set is given (`platforms: [...]`), which
+  overrides `mode` entirely. This is how "only Reels" is expressed.
+
+Nothing here writes to `exportPresets`. Choosing "Full package" in the UI
+does not save a new intent to `metadata.json` — it only changes what this
+one read asks for. Declaring intent remains what it always was: an explicit
+metadata save (§37.2).
+
+### 49.5 Platform metadata — deterministic, never cached
+
+`src/domain/content/platformMetadata.ts`, `buildPlatformMetadata(slug,
+platformId, subject)`. No external AI calls. A pure function of the same
+`title`/`artist`/`key`/`bpm`/`subtitle` fields the visualizer itself renders,
+so a package's text metadata can never drift out of sync with the track and
+**needs no freshness tracking of its own** — it is simply recomputed on every
+read, exactly like the rest of the package. This also resolves §26 of the
+original brief directly: nothing generated here is ever burned into a video,
+so a metadata-only change (say, editing the subtitle) never implies a
+re-render, and a render-affecting change (cover, audio, preset — anything
+`exportFreshness.ts` already tracks) is answered by the existing `stale`
+machinery, not by this module.
+
+| platform | fields | example |
+|---|---|---|
+| YouTube | title, description, keywords | `Ghetto Geek \| Boom bap soul, trap bounce and latin heat. \| Toshi` |
+| Reels/TikTok, Instagram Square | caption only | `Ghetto Geek — Toshi (F Minor, 100 BPM) — Boom bap soul, trap bounce and latin heat.` |
+
+A track with no subtitle falls back to a `"<key> · <bpm> BPM"` tagline rather
+than an empty one. Keywords are deterministic and deduplicated (artist, BPM,
+key, `"type-beat"`, `"toshi"`), lowercase and hyphenated. Templates are
+centralized in one module rather than scattered across the UI and the CLI, so
+customizing the wording later is a one-file change.
+
+### 49.6 Relationship to the release bundle — composition, not duplication
+
+Audited directly against §41 before writing anything: `release.json`/
+`release.md` already answer "what shipped, in which formats, when" for a
+track's **delivered** state. A content package answers a different, broader
+question — render readiness across three named platforms, plus generated
+platform text that a release bundle has no field for (captions, YouTube
+descriptions, keywords) — and does not duplicate the bundle's schema, its
+fingerprint, or its two-file publication. **No second persistent manifest was
+introduced.** A content package is presentation/composition over: export
+coverage, queue state, delivery state and these new platform profiles/text
+templates. If a package-shaped file on disk is ever wanted, it should extend
+`release.json` with a `platforms` block rather than write a parallel
+`content-package.json` — deferred, not started, because nothing today asked
+for a file, only a view (§49.15).
+
+### 49.7 API
+
+```
+GET /api/content-package?track=<slug>&mode=intent|full&platform=<id>...
+```
+
+One read-only endpoint. `mode` defaults to `intent`; repeatable `platform`
+query params override it with an exact custom set (`mode` becomes `custom`
+in the response). Costs exactly one `inspectTrack` + the same view assembly
+`GET /api/tracks/:slug` already does (§ trackView.ts) — no new filesystem
+sweep, no new stat calls beyond what that endpoint already pays for. 404s
+with `TRACK_NOT_FOUND` for an unknown track, 400s with the new
+`INVALID_PLATFORM` code for an unknown platform id, exactly mirroring how
+`INVALID_PRESET` already behaves.
+
+**Deliberately no `POST /api/content-package/plan|apply|build`.** The
+original brief allowed for one "only if it can cleanly reuse existing
+render-plan execution" — and the cleanest reuse turned out to be the
+*existing* endpoints themselves: `POST /api/export-missing` (§36–38) already
+accepts `{tracks, presets, mode, dryRun}`, and `POST /api/delivery/deliver`
+(§39.12) already accepts `{tracks, presets, dryRun}`. A package's selected
+platforms resolve to a preset list via the same shared, pure domain module
+the GET endpoint uses, and that list is handed straight to those two
+existing endpoints — no parallel queueing path, no second place that decides
+what "build" or "deliver" means. This also means there is no
+`ContentPackageBuildView`/`ContentPackageApplyView` type sitting unused
+anywhere the way an unreachable `RemediationAction` kind was explicitly
+avoided in §46.1 — every type added here (§ src/domain/api/views.ts) is
+exercised by the UI, the CLI, or both.
+
+### 49.8 CLI
+
+```console
+npm run content-package -- <slug> [--mode intent|full] [--platform <id>]... [--json] [--apply]
+```
+
+Default behavior is **inspection only** — it prints the package (or, with
+`--json`, the exact `ContentPackageView` the API returns) and renders
+nothing. `--apply` builds the package's own missing/stale outputs: it calls
+`planMissingExports` with the package's resolved preset list and
+`mode: "missing-and-stale"` (the same planner the API and
+`render-missing.mts` use), then renders each selected target with
+`renderTrackVideo`, **the same call site `render-missing.mts` already
+uses** — this is not a second rendering system, only a platform-scoped
+preset selection on top of the existing one. The CLI never calls the local
+HTTP API, matching every other script in `scripts/`.
+
+### 49.9 Delivery integration — reused, not intertwined
+
+**Deliver package** is `DeliverPanel` (§39.14's existing component), scoped
+to a package's selected preset ids via a new, backward-compatible `presets`
+prop (`null` default preserves every existing call site's behavior
+unchanged). Build and deliver are two separate, explicit actions — building
+does not imply delivering, and delivering is only offered once a
+destination is configured, exactly as the existing Delivery section already
+gates it. Render readiness (`packageStatus`) and delivery readiness
+(`deliveryStatus` per platform, taken straight from `RenderOutputView.delivery`)
+stay two separate fields throughout, never conflated.
+
+### 49.10 UI
+
+**Track Detail** gained a "Content package" section (`ContentPackagePanel`,
+`ui/components/ContentPackagePanel.tsx`), between Exports and Delivery. It
+takes the already-fetched `TrackDetailView` as a prop and calls
+`deriveContentPackage` **client-side, with `useMemo`** — no extra fetch, and
+it can never disagree with the Exports/Delivery sections above it, because it
+reads the exact same `exports` array they do. It shows:
+
+- a package status badge and a `N/M ready` summary, plus an Intended
+  formats/Full package (3) toggle;
+- one row per platform: a readiness mark, the stale reason(s) when relevant,
+  the descriptive filename, and a "Preview metadata" toggle revealing the
+  generated title/description/keywords or caption;
+- **"Build package"** — literally `ExportMissingPanel`, scoped to
+  `tracks: [slug]` and the package's resolved preset ids. The existing
+  two-step dry-run/confirm flow, SSE batch progress and queue drawer are
+  reused entirely unchanged;
+- **"Deliver package"** — `DeliverPanel`, scoped the same way, shown only
+  once a destination is configured.
+
+**Catalogue rows** (`TrackList.tsx`) gained one badge (`PackageStatusBadge`),
+computed the same way — client-side, from `TrackSummaryView.exports`, which
+a catalogue listing already has. No per-row fetch, so a large catalogue's
+listing cost is unchanged (§49.13). Hidden entirely when `not_configured`
+(nothing selected), matching how the release-bundle badge is hidden when
+delivery is off.
+
+### 49.11 Backward compatibility
+
+- Existing render, export-missing, stale re-export, delivery, release-bundle,
+  destination-health and remediation workflows are untouched — verified by
+  the full existing suite (386 pre-existing tests) still passing unmodified.
+- `DeliverPanel`'s new `presets` prop defaults to `null`, so every existing
+  caller (the Delivery section, the catalogue-wide action) behaves exactly as
+  before.
+- No metadata is rewritten by this feature. Choosing "Full package" in the UI
+  or `--mode full` on the CLI never saves `exportPresets` — intent is still
+  only ever changed by an explicit metadata save (§37.2).
+- A new `INVALID_PLATFORM` error code was added alongside the existing
+  `INVALID_PRESET`, `INVALID_SLUG`, etc. — additive to the shared
+  `TrackErrorCode` union, mapped to 400 exactly like the others.
+
+### 49.12 Ghetto Geek, honestly reported
+
+Ghetto Geek's three existing exports predate manifests (§38.4), so — exactly
+as coverage already reports everywhere else in the app — its content package
+reads as `stale` (`manifest_missing`) rather than `complete`, with all three
+platforms showing "Earlier export — no manifest". This is correct, not a
+bug: the package view adds no new judgment about these files, it only
+relabels the same freshness fact per platform. Verified live against the
+real track (§49.14); Ghetto Geek was never re-rendered by this work.
+
+### 49.13 Performance
+
+- The GET endpoint costs exactly what `GET /api/tracks/:slug` already costs —
+  one `inspectTrack` call, no new stat/hash/ffprobe work.
+- The UI's Track Detail panel and catalogue badges compute the package
+  **client-side** from data already fetched for other sections, so this
+  feature adds **zero additional network requests** to normal browsing.
+- `deriveContentPackage` itself is a handful of array operations over at most
+  three platforms — no loop over the catalogue, no directory scan.
+- Building and delivering a package add no new execution cost: they resolve
+  a preset list and hand off entirely to the existing planner, queue and
+  delivery pipeline, whose costs are already measured in §35–39.
+
+### 49.14 Verification performed
+
+- `npx tsc --noEmit` and `npx eslint src scripts services server ui tests`:
+  clean.
+- Full test suite: **419/419 passing** (386 pre-existing + 33 new), rerun
+  three times consecutively, stable.
+- `npx vite build`: passes (the pre-existing >500 kB chunk advisory only,
+  unchanged).
+- `validate-track`/`prepare-track -- ghetto-geek`: exit 0.
+- `npm run content-package -- ghetto-geek` and `--mode full --json`: correct,
+  read-only, reported `stale` for the reason in §49.12, touched nothing on
+  disk (`out/ghetto-geek/*.mp4` mtimes unchanged; `git status` clean apart
+  from this feature's own new/changed files).
+- The live API was hit directly: `GET /api/content-package?track=ghetto-geek`
+  returns the expected derived view, including generated YouTube/caption
+  text.
+- **The UI was driven in a real headless Chrome instance** (system Chrome,
+  `--headless=new`, driven over raw CDP — the same approach §46.13 used):
+  loaded the app, confirmed the new "Content package" section and its
+  catalogue badge render correctly against real Ghetto Geek data, toggled
+  "Preview metadata" and confirmed the generated YouTube title/description/
+  keywords render, switched Intended formats → Full package (3) and
+  confirmed the summary updates, and clicked "Build package" (the dry-run
+  step only) and confirmed it returns a real plan
+  (`1 track · 3 intended exports · 0 current · 3 stale · 0 missing`) via the
+  existing `/api/export-missing` endpoint — without queuing anything.
+  Screenshots were inspected directly. The browser, API server and Vite dev
+  server were all stopped afterward; no leaked Chrome/Chromium, Node render,
+  or lock-file artifacts remained (`out/.locks/` empty of stray fixtures).
+
+### 49.15 Deliberately deferred (per the brief's explicit constraints)
+
+- **No `content-package.json`/`content-package.md` file.** §49.6 covers the
+  reasoning: it would either duplicate the release bundle or need to extend
+  it, and nothing today asked for a persisted file, only a live view.
+- **No social-media publishing APIs, OAuth, or uploads** — never in scope for
+  this milestone, per explicit instruction.
+- **No settings for default-selected platforms, hashtag sets, or naming
+  preference.** The three platforms are fixed and always shown; `mode`/
+  `platforms` are per-request, not persisted, which is the smallest model
+  that satisfies "package based on intent" vs. "explicit full package"
+  (§ brief, part 6) without adding a settings surface nothing asked for yet.
+- **Templates are not user-editable yet.** They are centralized in one
+  module (§49.5) specifically so that becomes a small, contained change
+  later, rather than a rewrite.
+- **No `POST` plan/apply/build endpoint** — §49.7 explains why reusing
+  `/api/export-missing` and `/api/delivery/deliver` directly was judged the
+  cleaner reuse.
+
+### 49.16 Files changed
+
+New:
+
+- `src/domain/content/platformProfiles.ts`
+- `src/domain/content/platformMetadata.ts`
+- `src/domain/content/contentPackage.ts`
+- `server/routes/contentPackage.ts`
+- `scripts/content-package.mts`
+- `ui/components/ContentPackagePanel.tsx`
+- `tests/content-package.test.mts`
+
+Changed (additive only — see §49.11):
+
+- `src/domain/tracks/errors.ts` (`INVALID_PLATFORM`)
+- `src/domain/api/views.ts` (content package view types, re-exports)
+- `server/http/errors.ts` (status mapping for `INVALID_PLATFORM`)
+- `server/routes/tracks.ts` (`deliveryRootForView` exported for reuse)
+- `server/app.ts` (route registration)
+- `ui/api/client.ts` (`getContentPackage`)
+- `ui/components/DeliverPanel.tsx` (`presets` prop, default-`null`)
+- `ui/components/TrackDetail.tsx` (Content package section)
+- `ui/components/TrackList.tsx` (catalogue readiness badge)
+- `ui/styles/app.css` (`.contentpackage*`, `.pkgbadge*`, `.button--active`)
+- `package.json` (`content-package` script)
+- `docs/HANDOFF_PHASE_2B_TO_2C.md` (this section)
+
+### 49.17 Commits
+
+1. Domain: platform profiles, platform metadata templates, the content
+   package model and its derivation.
+2. Server: the read-only API route, error-code plumbing.
+3. CLI: `content-package.mts`, package script.
+4. UI: `ContentPackagePanel`, `DeliverPanel`'s `presets` prop, Track Detail
+   and catalogue wiring, styles.
+5. Tests.
+6. Documentation (this section).
+
+No push was made.
+
+### 49.18 Recommended next feature (not started)
+
+**Editable platform metadata templates**, stored per track or globally
+(e.g. a small `contentTemplates.json` alongside `delivery.local.json`) so a
+user can override the YouTube description shape or add a fixed hashtag set
+without editing source. §49.5 centralized the templates specifically to make
+this a contained change: swap `buildPlatformMetadata`'s fixed logic for a
+lookup against stored overrides, falling back to today's deterministic
+defaults when none exist. Should stay text-only and local, consistent with
+every constraint this milestone was built under.
+
+Not started, per instruction.
+
+---
 
 *End of handoff. If anything in this document conflicts with the live
 repository, the repository is correct — verify with §31 before proceeding.*
