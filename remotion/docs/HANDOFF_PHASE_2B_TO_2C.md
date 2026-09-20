@@ -18,7 +18,7 @@ in §23a rather than silently corrected.
 
 ## 0. Read this first
 
-**§50 (editable metadata templates & overrides) is the newest state.**
+**§51 (editable metadata templates audit and hardening) is the newest state.**
 Sections 1–34 describe the project as it stood at the end of Phase 2B.
 §35–48 cover formats, batching, export-missing, per-track intent,
 stale/re-export detection, cross-process render locks, local delivery,
@@ -5985,14 +5985,9 @@ this milestone throughout — never touched.
   hard-fail or over-build against volatile platform limits; the renderer
   and validator have no opinion on rendered-text length, only on the
   template's own structural length (§50.5).
-- **`{{literal}}` escaping is a simple two-pass string replace**, not a
-  full parser — well-defined for the documented case, but a pathological
-  input with adjacent/nested brace runs (e.g. `"{{{title}}}"`) may not
-  parse the way every reader would guess. Documented rather than special-
-  cased further, per the brief's "do not introduce ambiguous parsing"
-  instruction — the chosen rule is simple and fixed, not ambiguous, even
-  where an edge case is inherently underspecified in any brace-doubling
-  scheme.
+- **Historical:** literal braces originally used a two-pass sentinel
+  replacement. §51 replaces it with one-pass rendering and rejects malformed
+  adjacent/nested brace runs such as `"{{{title}}}"` before saving.
 - **Global settings malformed-file recovery requires manual intervention**:
   `writeContentMetadataSettingsPatch` refuses to write on top of a file it
   could not parse, by design (§50.6) — the file must be fixed or deleted by
@@ -6081,5 +6076,148 @@ Not started, per instruction.
 
 ---
 
-*End of handoff. If anything in this document conflicts with the live
-repository, the repository is correct — verify with §31 before proceeding.*
+*If anything in this document conflicts with the live repository, the
+repository is correct — verify with §31 before proceeding.*
+
+---
+
+## 51. Editable Metadata Templates & Overrides audit and hardening (2026-09-20)
+
+This section supersedes §50 wherever behavior changed. The audit started from
+clean commit `3f00638` and baseline 479/479 passing tests. It is a hardening
+pass, not a new copywriting, publishing, rendering, or length-guidance feature.
+
+### 51.1 Confirmed high-risk findings and fixes
+
+1. A syntactically valid settings file containing `null`, an array, a missing
+   `templates` object, a wrong schema version, or an extra top-level key was
+   not consistently classified as corruption. In particular, `null` could
+   throw before the settings API returned its documented `problem`. The reader
+   now checks the whole file shape and schema before parsing templates, returns
+   explicit corruption text, and refuses to write over an unreadable file.
+2. Two settings editors could save from the same old view; the second could
+   overwrite the first field without knowing it. GET now includes a revision
+   of the exact file bytes (or `missing`), the UI sends it in `If-Match`, and
+   PATCH returns HTTP 412 `TEMPLATE_CONFLICT` for a stale revision. A
+   process-local mutation queue serializes simultaneous settings writes;
+   immediately before rename, the writer re-reads the old file and rejects
+   intervening external changes. The response describes the bytes this write
+   actually published, not a later re-read that could race another save.
+3. Brace forms such as `{ title }`, `{title.foo}`, `{{{title}}}`, and unmatched
+   braces passed structural validation but remained in final copy. The
+   validator now rejects malformed single-brace syntax. A single-pass renderer
+   handles valid placeholders and doubled literal braces without sentinel
+   substitution, so a user's value containing the former sentinel text cannot
+   be rewritten. Existing built-in copy remains string-identical in tests.
+4. `content-metadata --show` printed a corruption warning but exited zero;
+   unknown CLI flags also exited zero. Both now exit nonzero. A successful
+   `--set` message no longer falsely says unoverridden track copy is
+   unaffected.
+5. Metadata PATCH silently ignored an unknown field when another valid field
+   was present. It now rejects unknown top-level fields. A malformed existing
+   per-track override could also be lost when an unrelated metadata PATCH
+   coerced the old file to an editable draft. The write path now refuses that
+   patch and preserves the original file.
+6. The Content Package UI could render built-in copy without showing the
+   global settings corruption reported by the API. It now carries and shows
+   `templatesProblem`; an outright settings GET failure also gets an app-level
+   error banner. The settings editor preserves an unsaved draft on a revision
+   change and ignores its own stale parent snapshot while a successful save
+   refresh is in flight.
+
+No critical defect requiring redesign was found. All changes above are in
+local commit `e528683` (`Harden metadata template validation and settings
+writes`).
+
+### 51.2 Verified semantics
+
+| Area | Result |
+|---|---|
+| Precedence | Every field resolves track override → global override → built-in. Partial platform objects do not hide sibling fields or other platforms. |
+| Empty values | A saved `""` is an intentional empty template at either layer. A whitespace-only template is stored but renders to empty after outer trim. Clearing a track override uses `null` for the whole object or the UI's field clear; resetting a global field uses `null` for that leaf. Neither action clears the other layer. |
+| Placeholders and braces | Only the named whitelist is substituted. Unknown `{word}` tokens and malformed single braces are rejected before saving. `{{title}}` renders the literal `{title}`; JSON-like literal braces must also be doubled, for example `{{"name": 1}}`. Quotes around a valid token do not escape it. Nested or unmatched braces are rejected. |
+| Missing values | An absent subtitle substitutes `""`; `{tagline}` and `{subtitleSuffix}` preserve the previous built-in fallback and caption behavior. Required artist, key, and BPM are unavailable only in draft/invalid tracks, whose Content Package copy is blocked. Rendering trims the outer text and caps runs of three or more `\n` characters at two. |
+| Compatibility | Representative built-in YouTube, Reels, and Instagram copy, including the no-subtitle fallback, remains string-identical to the pre-template implementation. Unicode and long titles flow through without truncation. |
+| Config | An absent file means empty overrides and revision `missing`. A valid partial file is accepted. Wrong types, unknown keys, wrong schema, malformed/truncated/empty JSON, and non-ENOENT read failures surface an explicit problem. Unknown config keys are rejected, not ignored. Recovery requires fixing or removing the file by hand. |
+| Writes | Settings and metadata are staged in the destination directory and renamed atomically. Failed rename preserves the old file and removes the temp file; a failure is reported, never returned as a successful save. Settings writes compare the old revision again before rename. |
+| Per-track concurrency | The UI sends the revision of the metadata bytes it edited. Concurrent title/override and clear/save operations with a stale revision receive HTTP 412; a track switch does not apply the old save response to the new track. Legacy callers that omit `If-Match` retain the established unconditional PATCH behavior. |
+| Freshness | `buildTrackProps` explicitly maps rendered fields; `fingerprintInputs` hashes title, artist, key, BPM, and subtitle, with no template or override field. Copy-only edits leave a published export current; title edits, including title plus override in one patch, stale it for `metadata_changed`. Template edits do not queue a render or write render/delivery artifacts. |
+| Consistency | The Content Package API, CLI, UI panel, and both editors call the shared `resolveMetadataTemplates`/`buildPlatformMetadata` path. Package fields are resolved live on every read, ready for future character counting without another renderer. |
+| Security | Templates are plain text with whitelist lookup only. There is no eval, Function constructor, property traversal, environment/shell expansion, or template-derived filesystem path. Script-shaped text is inert in the renderer and React previews use text nodes. |
+| API/CLI/UI truthfulness | Invalid PATCH shapes and unknown fields fail; request bodies retain the 256 KB cap. UI shows server failures and conflicts as unsaved, while successful settings PATCH returns the published revision. CLI set/reset/show paths and malformed-file exit codes were exercised. |
+
+### 51.3 End-to-end and failure probes
+
+A synthetic `metadata-audit-probe` track was driven through real headless
+Chrome, the running Vite UI, and the running API. The sequence confirmed
+built-in copy → global YouTube title → per-track title → persistence after
+reload → clear track override → global copy → reset global → built-in copy.
+The global preview recomputed when switching to Ghetto Geek and back; viewing
+Ghetto Geek did not edit it. A malformed global file produced a visible UI
+warning and `templatesProblem` in the API, and removing the file recovered
+built-ins. A deliberately stale settings editor received HTTP 412, retained
+its unsaved draft, and did not display “Saved”; the external value remained
+on disk. CLI `--show`, `--set`, `--reset`, `--reset-all`, invalid field,
+invalid placeholder, unknown flag, and malformed-file exits were checked.
+
+The synthetic track had no render output or manifest. The sequence did not
+spawn a render worker, queue a render, perform delivery, or mutate a release
+bundle; API/package readiness stayed independent of copy edits. Service tests
+also published synthetic exports without rendering and proved both the
+copy-only freshness invariant and rendered-title staleness. The probe track,
+analysis file, local settings file, Chrome profile, API and Vite servers, and
+Chrome process were removed or stopped afterward. Ghetto Geek's assets were
+not modified.
+
+Failure injection covered unreadable settings, malformed JSON, a rename
+failure that left the last valid file intact with no temp file, stale revisions,
+and an invalid override that left metadata bytes untouched. Twenty concurrent
+in-process set/reset operations left one valid settings file and no temp
+files. Two concurrent conditional settings saves from the same revision gave
+one success and one conflict; independent unconditional fields merged within
+the process-local queue. Concurrent per-track edits with the same revision
+were similarly refused after the first real change. No reduced test
+concurrency was used.
+
+Verification: TypeScript and ESLint clean; Vite build passed (the existing
+large-chunk advisory remains); `validate-track` and `prepare-track` passed on
+the synthetic probe; `git diff --check` clean; final full suite **490/490**
+passed at normal concurrency, and the template-specific suites were rerun.
+The first full-suite attempt inside the restricted sandbox hit `listen EPERM`
+for loopback API tests; the same unchanged suite passed with loopback
+permission. The API test file also passed alone in the sandbox, identifying
+the failure as an environment restriction rather than a product regression.
+
+### 51.4 Remaining medium/low risks
+
+- A narrow cross-process race remains between the settings writer's final
+  re-read and rename. The process-local queue and UI revisions handle normal
+  single-server and stale-editor use, but two separate CLI/server processes
+  are not protected by a shared filesystem lock. The per-track metadata write
+  path has the same existing cross-process compare/rename window. There is no
+  multi-process database or lease here.
+- Atomic rename prevents partial file visibility but the shared helper does
+  not `fsync` the staged file or parent directory. A sudden power loss can
+  therefore lose the most recent acknowledged write. Replacing a read-only
+  file can succeed when its parent directory is writable, and the replacement
+  takes the temp file's permissions. Permission-denied paths return errors;
+  root-user permission behavior was not simulated.
+- The renderer's established `.trim()` and blank-line cap can remove
+  intentional leading/trailing whitespace or runs of more than one authored
+  blank line. CRLF line runs do not collapse the same way as LF runs, and
+  whitespace-only templates render empty. These are documented semantics,
+  with no broader normalization redesign in this pass. Missing placeholders
+  embedded in a sentence can leave punctuation (for example `Subtitle: []`),
+  so template authors must choose copy that reads well when optional values
+  are absent.
+- Revision hashes reflect exact bytes; a no-op write can retain the same
+  revision. JSON duplicate keys follow `JSON.parse`'s last-value behavior.
+  Future schema keys are rejected and require an explicit migration. Platform
+  length guidance remains unimplemented by instruction.
+
+### 51.5 Files and commits
+
+The hardening commit changes `metadataTemplates.ts`, global settings storage
+and route, metadata PATCH parsing/service, shared error/view types, the API
+client, settings/Content Package UI, CLI, and four test files. This section is
+the documentation follow-up commit. No push was made.
