@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type {
+  ContentMetadataSettingsView,
+  PartialMetadataTemplates,
   TrackDetailView,
   TrackMetadataPatch,
 } from "../../src/domain/api/views.ts";
@@ -9,9 +11,11 @@ import {
 } from "../../src/domain/video/renderPresets.ts";
 import { ApiRequestError, updateTrackMetadata } from "../api/client.ts";
 import { useStillCurrent } from "../hooks/useStillCurrent.ts";
+import { ContentMetadataOverridesEditor } from "./ContentMetadataOverridesEditor.tsx";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 import { FormatPicker } from "./FormatPicker.tsx";
 import { decideSeed } from "./metadataSeed.ts";
+import { templatesDiffer } from "./templateFields.ts";
 
 type Fields = {
   readonly title: string;
@@ -23,6 +27,8 @@ type Fields = {
   readonly exportPresets: readonly RenderPresetId[];
   /** Empty means "use the slug", which is what the placeholder shows. */
   readonly deliveryFolder: string;
+  /** Empty object means "inherit everything". */
+  readonly contentMetadataOverrides: PartialMetadataTemplates;
 };
 
 /**
@@ -42,6 +48,7 @@ const toFields = (track: TrackDetailView): Fields => {
     // the boxes say is what "export missing" will actually do.
     exportPresets: resolveExportPresets(track.exportPresets),
     deliveryFolder: track.deliveryFolder ?? "",
+    contentMetadataOverrides: draft?.contentMetadataOverrides ?? {},
   };
 };
 
@@ -53,6 +60,13 @@ const toPatch = (fields: Fields): TrackMetadataPatch => ({
   subtitle: fields.subtitle.trim(),
   exportPresets: fields.exportPresets,
   deliveryFolder: fields.deliveryFolder.trim(),
+  // The form is always the whole desired set: an empty object clears every
+  // override (inherit everything), matching updateTrackMetadata's "replace
+  // the whole object, never deep-merge" convention.
+  contentMetadataOverrides:
+    Object.keys(fields.contentMetadataOverrides).length > 0
+      ? fields.contentMetadataOverrides
+      : null,
 });
 
 const sameFields = (a: Fields, b: Fields): boolean =>
@@ -63,7 +77,8 @@ const sameFields = (a: Fields, b: Fields): boolean =>
   a.subtitle === b.subtitle &&
   a.deliveryFolder === b.deliveryFolder &&
   a.exportPresets.length === b.exportPresets.length &&
-  a.exportPresets.every((id, index) => id === b.exportPresets[index]);
+  a.exportPresets.every((id, index) => id === b.exportPresets[index]) &&
+  !templatesDiffer(a.contentMetadataOverrides, b.contentMetadataOverrides);
 
 const Field: React.FC<{
   readonly label: string;
@@ -98,8 +113,10 @@ const Field: React.FC<{
  */
 export const MetadataForm: React.FC<{
   readonly track: TrackDetailView;
+  /** The global content-metadata templates; null while still loading. */
+  readonly contentMetadataSettings: ContentMetadataSettingsView | null;
   readonly onSaved: () => void;
-}> = ({ track, onSaved }) => {
+}> = ({ track, contentMetadataSettings, onSaved }) => {
   const [initial, setInitial] = useState<Fields>(() => toFields(track));
   const [fields, setFields] = useState<Fields>(initial);
   const [saving, setSaving] = useState(false);
@@ -301,6 +318,24 @@ export const MetadataForm: React.FC<{
             : "Export missing queues only these formats for this track."}
         </span>
       </div>
+
+      <ContentMetadataOverridesEditor
+        value={fields.contentMetadataOverrides}
+        onChange={(next) => {
+          setFields((previous) => ({ ...previous, contentMetadataOverrides: next }));
+          setSavedAt(null);
+        }}
+        contentMetadataSettings={contentMetadataSettings}
+        subject={{
+          title: fields.title.trim() || track.slug,
+          artist: fields.artist.trim() || "Toshi",
+          key: fields.key.trim() || "—",
+          bpm: fields.bpm.trim() === "" ? 0 : Number(fields.bpm),
+          subtitle: fields.subtitle.trim() || undefined,
+        }}
+        slug={track.slug}
+        disabled={saving}
+      />
 
       <div className="form__actions">
         <button className="button" type="submit" disabled={saving || !dirty}>

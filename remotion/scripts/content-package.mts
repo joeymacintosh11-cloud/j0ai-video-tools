@@ -14,6 +14,7 @@ import {
   readDeliverySettings,
   resolveDeliveryRoot,
 } from "../services/delivery/deliverySettings.ts";
+import { readContentMetadataSettings } from "../services/content/metadataTemplateSettings.ts";
 import { deliveryStateForTarget } from "../services/delivery/deliverExport.ts";
 import { trackExportCoverage } from "../services/tracks/exportCoverage.ts";
 import { inspectTrack } from "../services/tracks/inspectTrack.ts";
@@ -119,6 +120,7 @@ const buildPackage = async (
     title: inspection.metadata?.title ?? inspection.metadataDraft?.title ?? null,
     validationOk: inspection.validation.ok,
     metadata: inspection.metadata,
+    contentMetadataOverrides: inspection.metadata?.contentMetadataOverrides,
     exports: coverage.map((facts) => ({
       presetId: facts.presetId,
       status: facts.freshness,
@@ -134,7 +136,15 @@ const buildPackage = async (
     })),
   };
 
-  return deriveContentPackage(input, { mode, platforms });
+  const { settings: templateSettings, problem: templatesProblem } =
+    await readContentMetadataSettings();
+
+  return deriveContentPackage(input, {
+    mode,
+    platforms,
+    globalTemplates: templateSettings.templates,
+    templatesProblem,
+  });
 };
 
 const describe = (pkg: ContentPackageView): void => {
@@ -143,11 +153,15 @@ const describe = (pkg: ContentPackageView): void => {
     `${pkg.counts.ready}/${pkg.counts.selected} ready · ${pkg.counts.missing} missing · ` +
       `${pkg.counts.stale} stale · ${pkg.counts.rendering} rendering · ${pkg.counts.blocked} blocked`,
   );
+  if (pkg.templatesProblem) {
+    console.log(`! ${pkg.templatesProblem}`);
+  }
   for (const platform of pkg.platforms) {
     const marker = platform.selected ? " " : "◦";
     console.log(`  ${marker} ${platform.label.padEnd(16)} ${platform.readiness.padEnd(12)} ${platform.outputFilename}`);
-    if (platform.title) console.log(`      title:   ${platform.title}`);
-    if (platform.caption) console.log(`      caption: ${platform.caption}`);
+    if (platform.title) console.log(`      title:    ${platform.title}`);
+    if (platform.caption) console.log(`      caption:  ${platform.caption}`);
+    if (platform.hashtags?.length) console.log(`      hashtags: ${platform.hashtags.join(" ")}`);
   }
 };
 

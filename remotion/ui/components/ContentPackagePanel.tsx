@@ -6,7 +6,10 @@ import {
 } from "../../src/domain/content/contentPackage.ts";
 import { STALE_REASON_LABELS } from "../../src/domain/video/exportFreshness.ts";
 import { canonicalPresetOrder } from "../../src/domain/video/renderPresets.ts";
-import type { TrackDetailView } from "../../src/domain/api/views.ts";
+import type {
+  PartialMetadataTemplates,
+  TrackDetailView,
+} from "../../src/domain/api/views.ts";
 import { DeliverPanel } from "./DeliverPanel.tsx";
 import { ExportMissingPanel } from "./ExportMissingPanel.tsx";
 
@@ -57,7 +60,10 @@ const PlatformRow: React.FC<{ readonly platform: ContentPackagePlatformEntry }> 
   const [expanded, setExpanded] = useState(false);
   const mark = READINESS_MARK[platform.readiness];
   const hasMetadata =
-    platform.title !== null || platform.description !== null || platform.caption !== null;
+    platform.title !== null ||
+    platform.description !== null ||
+    platform.caption !== null ||
+    (platform.hashtags?.length ?? 0) > 0;
 
   return (
     <li
@@ -122,6 +128,12 @@ const PlatformRow: React.FC<{ readonly platform: ContentPackagePlatformEntry }> 
               <p>{platform.caption}</p>
             </div>
           ) : null}
+          {platform.hashtags !== null && platform.hashtags.length > 0 ? (
+            <div>
+              <span className="exports__intentlabel">Hashtags</span>
+              <p>{platform.hashtags.join(" ")}</p>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </li>
@@ -130,9 +142,11 @@ const PlatformRow: React.FC<{ readonly platform: ContentPackagePlatformEntry }> 
 
 export const ContentPackagePanel: React.FC<{
   readonly track: TrackDetailView;
+  /** The global content-metadata templates; null while still loading or unconfigured. */
+  readonly globalTemplates: PartialMetadataTemplates | null;
   readonly onChanged: () => void;
   readonly onBatchStarted: (batchId: string) => void;
-}> = ({ track, onChanged, onBatchStarted }) => {
+}> = ({ track, globalTemplates, onChanged, onBatchStarted }) => {
   const [mode, setMode] = useState<"intent" | "full">("intent");
 
   const pkg = useMemo(
@@ -143,11 +157,12 @@ export const ContentPackagePanel: React.FC<{
           title: track.title,
           validationOk: track.validation.ok,
           metadata: track.metadata,
+          contentMetadataOverrides: track.metadata?.contentMetadataOverrides,
           exports: track.exports,
         },
-        { mode },
+        { mode, globalTemplates },
       ),
-    [track, mode],
+    [track, mode, globalTemplates],
   );
 
   const selectedPresetIds = useMemo(

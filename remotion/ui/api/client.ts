@@ -5,6 +5,8 @@ import type {
   ApiError,
   ApiErrorCode,
   ApiResponse,
+  ContentMetadataSettingsPatch,
+  ContentMetadataSettingsView,
   ContentPackageView,
   CreateRenderBatchBody,
   CreateRenderBatchView,
@@ -379,6 +381,28 @@ export const getContentPackage = (
 
   return request<ContentPackageView>(`/api/content-package?${params.toString()}`);
 };
+
+/**
+ * The global content-metadata template overrides — the layer between a
+ * track's own overrides and the built-in defaults (BUILT_IN_DEFAULT_TEMPLATES,
+ * imported directly from src/domain/content/metadataTemplates.ts, which is
+ * not sent over the wire since the UI already has it).
+ */
+export const getContentMetadataSettings = (): Promise<ContentMetadataSettingsView> =>
+  request<ContentMetadataSettingsView>("/api/content-metadata-settings");
+
+/**
+ * Each leaf is a validated template string (set it), `null` (reset that
+ * field to its built-in default) or omitted (leave it alone).
+ */
+export const updateContentMetadataSettings = (
+  patch: ContentMetadataSettingsPatch,
+): Promise<ContentMetadataSettingsView> =>
+  jsonRequest<ContentMetadataSettingsView>(
+    "/api/content-metadata-settings",
+    "PATCH",
+    patch,
+  );
 
 /* ------------------------------------------------------------------ *
  * Release bundles

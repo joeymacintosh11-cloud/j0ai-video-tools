@@ -6,11 +6,13 @@ import {
 import type { DestinationHealthView } from "../src/domain/api/views.ts";
 import {
   createRenderBatch,
+  getContentMetadataSettings,
   getDeliverySettings,
   getTrack,
   listTracks,
 } from "./api/client.ts";
 import { ApiRequestError } from "./api/client.ts";
+import { ContentMetadataSettingsPanel } from "./components/ContentMetadataSettingsPanel.tsx";
 import { DeliverPanel } from "./components/DeliverPanel.tsx";
 import { DeliveryHistoryPanel } from "./components/DeliveryHistoryPanel.tsx";
 import { DeliverySettingsPanel } from "./components/DeliverySettingsPanel.tsx";
@@ -75,6 +77,7 @@ export const App: React.FC = () => {
 
   const tracks = useAsync(listTracks, []);
   const delivery = useAsync(getDeliverySettings, []);
+  const contentMetadataSettings = useAsync(getContentMetadataSettings, []);
   useEffect(() => {
     // A catalogue badge belongs to the destination that was scanned. Clear it
     // when the configured destination changes, including edits made elsewhere.
@@ -104,12 +107,14 @@ export const App: React.FC = () => {
   const { reload: reloadDetail } = detail;
 
   const { reload: reloadDelivery } = delivery;
+  const { reload: reloadContentMetadataSettings } = contentMetadataSettings;
 
   const refreshAll = useCallback(() => {
     reloadTracks();
     reloadDetail();
     reloadDelivery();
-  }, [reloadTracks, reloadDetail, reloadDelivery]);
+    reloadContentMetadataSettings();
+  }, [reloadTracks, reloadDetail, reloadDelivery, reloadContentMetadataSettings]);
 
   useWindowFocus(refreshAll);
 
@@ -338,6 +343,23 @@ export const App: React.FC = () => {
             ) : (
               <div className="placeholder">Loading…</div>
             )}
+            {contentMetadataSettings.data ? (
+              <ContentMetadataSettingsPanel
+                settings={contentMetadataSettings.data}
+                previewSubject={
+                  detail.data?.metadata
+                    ? {
+                        title: detail.data.metadata.title,
+                        artist: detail.data.metadata.artist,
+                        key: detail.data.metadata.key,
+                        bpm: detail.data.metadata.bpm,
+                        subtitle: detail.data.metadata.subtitle,
+                      }
+                    : null
+                }
+                onChanged={refreshAll}
+              />
+            ) : null}
           </div>
         ) : creating ? (
           <div className="detail">
@@ -355,6 +377,7 @@ export const App: React.FC = () => {
             key={detail.data.slug}
             track={detail.data}
             formats={formats}
+            contentMetadataSettings={contentMetadataSettings.data}
             onChanged={refreshAll}
             onBatchStarted={setBatchId}
           />

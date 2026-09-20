@@ -6,6 +6,7 @@ import {
 import { assertPlatformId, type PlatformId } from "../../src/domain/content/platformProfiles.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+import { readContentMetadataSettings } from "../../services/content/metadataTemplateSettings.ts";
 import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
 import { sendOk } from "../http/json.ts";
 import { renderManager } from "../services/renderManager.ts";
@@ -76,11 +77,17 @@ export const handleGetContentPackage = async (
     validationOk: detail.validation.ok,
     metadata: detail.metadata,
     exports: detail.exports,
+    contentMetadataOverrides: detail.metadata?.contentMetadataOverrides,
   };
+
+  const { settings: templateSettings, problem: templatesProblem } =
+    await readContentMetadataSettings();
 
   const view = deriveContentPackage(input, {
     mode: modeParam === "full" ? "full" : "intent",
     platforms,
+    globalTemplates: templateSettings.templates,
+    templatesProblem,
   });
 
   sendOk(response, view);

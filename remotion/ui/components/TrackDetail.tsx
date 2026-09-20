@@ -1,5 +1,8 @@
 import { useState } from "react";
-import type { TrackDetailView } from "../../src/domain/api/views.ts";
+import type {
+  ContentMetadataSettingsView,
+  TrackDetailView,
+} from "../../src/domain/api/views.ts";
 import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
 import { publicAssetUrl } from "../api/assetUrl.ts";
 import { deliveryFolderFor } from "../../src/domain/delivery/deliveryPaths.ts";
@@ -41,9 +44,11 @@ export const TrackDetail: React.FC<{
   readonly track: TrackDetailView;
   /** Formats chosen in the toolbar; drives both preview and rendering. */
   readonly formats: readonly RenderPresetId[];
+  /** The global content-metadata templates; null while still loading. */
+  readonly contentMetadataSettings: ContentMetadataSettingsView | null;
   readonly onChanged: () => void;
   readonly onBatchStarted: (batchId: string) => void;
-}> = ({ track, formats, onChanged, onBatchStarted }) => {
+}> = ({ track, formats, contentMetadataSettings, onChanged, onBatchStarted }) => {
   const { metadata } = track;
 
   // Bumped only when an upload succeeds, so the cover's URL changes exactly
@@ -100,7 +105,11 @@ export const TrackDetail: React.FC<{
 
       <section className="section">
         <h3 className="section__title">Track info</h3>
-        <MetadataForm track={track} onSaved={onChanged} />
+        <MetadataForm
+          track={track}
+          contentMetadataSettings={contentMetadataSettings}
+          onSaved={onChanged}
+        />
       </section>
 
       <section className="section">
@@ -163,6 +172,7 @@ export const TrackDetail: React.FC<{
         <h3 className="section__title">Content package</h3>
         <ContentPackagePanel
           track={track}
+          globalTemplates={contentMetadataSettings?.templates ?? null}
           onChanged={onChanged}
           onBatchStarted={onBatchStarted}
         />
