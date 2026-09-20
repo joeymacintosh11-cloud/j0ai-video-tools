@@ -609,6 +609,36 @@ make a current export go stale: only the fields actually burned into the
 composition (title, key, BPM, subtitle, cover, audio) do that, exactly as
 before this feature existed.
 
+### Batch content packages
+
+Select several tracks (tick their checkboxes in the catalogue — "Select
+all"/"Select none" ticks or clears exactly the tracks currently listed, never
+a hidden superset) and inspect, plan and build their content packages
+together, instead of opening each one individually.
+
+**Inspect content packages** opens a panel over the selection: totals across
+every ticked track (platform targets ready/missing/stale/rendering) and a
+one-line summary per track. **Create plan** shows exactly what applying would
+queue — one action per missing/stale platform, de-duplicated by track and
+format — without queueing anything. **Apply N actions** re-checks current
+state immediately before queueing (a target that became ready or started
+rendering elsewhere in the meantime is never re-queued) and hands the result
+to the same render queue and progress drawer every other render already uses.
+**Deliver ready packages** is the existing delivery action, scoped to the
+same selection — not a new copy path.
+
+```console
+npm run content-package-batch -- --track beat-a --track beat-b
+npm run content-package-batch -- --tracks beat-a,beat-b --mode full --plan
+npm run content-package-batch -- --catalogue --apply
+```
+
+Default behavior is inspection only, `--plan` also shows what would be
+queued, and `--apply` builds it — reusing the exact same per-track resolver
+and render call as the single-track `content-package` command, just across
+several tracks at once. A batch covers at most 100 tracks per request, named
+explicitly; there is no implicit "operate on the whole catalogue" behavior.
+
 ### Delivery history
 
 A release bundle says what a track ships *now*. It cannot say what went out last

@@ -18,7 +18,7 @@ in §23a rather than silently corrected.
 
 ## 0. Read this first
 
-**§51 (editable metadata templates audit and hardening) is the newest state.**
+**§52 (Batch Content Package Generation) is the newest state.**
 Sections 1–34 describe the project as it stood at the end of Phase 2B.
 §35–48 cover formats, batching, export-missing, per-track intent,
 stale/re-export detection, cross-process render locks, local delivery,
@@ -28,8 +28,13 @@ destination-wide fix plan, and confirmed delivery after a queued render.
 makes that view's generated copy editable — global templates, per-track
 overrides, a whitelisted placeholder renderer — **without changing what §49
 derives readiness from**: render freshness, delivery state and package
-status are exactly as §49 left them. All of §35–49 landed, all verified, all
-still true. Where an older section disagrees with the code, the code wins.
+status are exactly as §49 left them. §51 is a hardening pass over §50, with
+no behavior change to §49. §52 adds orchestration across several tracks at
+once — inspect, plan and apply several Content Packages together — entirely
+on top of §49's single-track resolver and the existing render queue (§37);
+it defines no new readiness rule and no second queue. All of §35–49 landed,
+all verified, all still true. Where an older section disagrees with the
+code, the code wins.
 
 Specifically, these earlier statements are **no longer true**:
 
@@ -6221,3 +6226,440 @@ The hardening commit changes `metadataTemplates.ts`, global settings storage
 and route, metadata PATCH parsing/service, shared error/view types, the API
 client, settings/Content Package UI, CLI, and four test files. This section is
 the documentation follow-up commit. No push was made.
+
+## 52. Batch Content Package Generation (2026-09-20)
+
+Lets the user select several tracks and inspect, plan and build their
+Content Packages together, without inventing a second readiness rule or a
+second render queue.
+
+### 52.1 The question this answers
+
+§49's Content Package view answers "what does this one track need for
+YouTube/Reels/Instagram, and what's ready?" one track at a time. Selecting
+ten tracks to build meant opening ten detail panels. §52 answers the same
+question for a selection: which of these tracks are complete, which are
+missing formats, which are stale, what would building all of them queue, and
+what happened once it ran — while keeping every per-track, per-platform
+answer traceable back to the exact same resolver §49 already uses.
+
+### 52.2 The batch model
+
+`src/domain/content/contentPackageBatch.ts` is pure and browser-safe, exactly
+like `contentPackage.ts`. It never computes readiness itself — it only
+aggregates `ContentPackageView`s that `deriveContentPackage` (§49) already
+produced, so a batch can never disagree with the single-track view of the
+same track.
+
+```ts
+BatchTrackEntry {
+  slug, title, packageStatus, platforms,
+  readyCount, missingCount, staleCount, renderingCount, blockedCount,
+  selected, availableActions,   // distinct PlatformAction union across platforms
+}
+BatchContentPackageTotals {
+  tracks, complete, incomplete, stale, blocked,   // track-status counts
+  rendering, totalPlatformTargets,
+  readyTargets, missingTargets, staleTargets,      // platform-target sums
+}
+BatchContentPackageView { inspectedAt, mode, tracks, invalid, duplicates, totals }
+```
+
+`complete`/`incomplete`/`stale`/`blocked` are track-level counts (each track
+has exactly one `packageStatus`). `rendering` and the three `*Targets` fields
+are target-level sums across every selected platform on every track — the
+brief's own worked example (Track A 3/3, Track B 2 ready/1 missing, Track C 1
+stale/2 ready → batch 7 ready/1 missing/1 stale) is a direct test
+(`content-package-batch.test.mts`). A requested track that could not be
+inspected (not found) is reported in `invalid`, never counted in `totals`.
+
+### 52.3 Selection semantics
+
+No new selection state: the catalogue's existing checkbox multi-select
+(`checked` in `ui/App.tsx`, wired through `TrackList.tsx` since the earlier
+Toshi Content Package Workflow milestone) is reused as-is. A batch is always
+the explicit set of ticked slugs — there is no catalogue-wide Content
+Package batch mode, so a request that forgot to tick anything is a usage
+error (`INVALID_REQUEST`, "Name at least one track"), never a silent
+whole-catalogue run. "Select all"/"Select none" was added to
+`TrackList.tsx`'s header, scoped to exactly the tracks currently rendered in
+that list — there is no filter to hide a wider catalogue behind, so the
+scope is never ambiguous (§23 of the brief). The CLI's `--catalogue` flag
+(§52.13) resolves to an explicit slug list via `listTracks()` *before*
+calling in, rather than teaching the shared planner a second "whole
+catalogue" code path.
+
+### 52.4 Package mode semantics
+
+Batch mode is the request's `mode: "intent" | "full"` (or an explicit
+`platforms` list), passed straight through to `deriveContentPackage` per
+track — the exact same values §49's mode already means. A batch never
+invents a different meaning for "full", and never mutates a track's own
+declared export intent; mode is a read of that intent, or an override for
+the request, exactly as it always was for one track.
+
+### 52.5 Readiness aggregation
+
+`server/services/contentPackagePlan.ts`'s `buildContentPackagesForSlugs`
+builds each track's package the same way `GET /api/content-package` already
+does — `inspectTrack` → `toTrackDetailView` → `deriveContentPackage` — the
+only difference is that the three things every track in the batch shares
+(destination root, global metadata templates, the render queue's in-flight
+state) are read once via `loadContentPackageBatchContext()` and passed to
+every track, instead of once per track. Aggregation
+(`deriveBatchContentPackage`) only runs after every individual package is
+resolved — there is no code path that computes a batch total without first
+computing each track's own answer.
+
+### 52.6 The planner
+
+Also pure (`contentPackageBatch.ts`), and also a re-labelling, not a new
+decision: `planContentPackageBatch` maps each selected platform's
+`PlatformReadiness` (already computed by §49) onto one of five action kinds:
+
+| readiness | action kind |
+|---|---|
+| `missing` | `render_missing` |
+| `stale` | `rerender_stale` |
+| `rendering` | `adopt_existing_render` |
+| `ready` | `already_ready` |
+| `blocked` | `blocked` (with the platform's own blocker reason) |
+| `not_selected` | *(no action)* |
+
+`renderable` (the `render_missing`/`rerender_stale` actions) is
+de-duplicated by `slug::presetId` — proven with a synthetic test where two
+platform entries are made to share one preset, since no two shipped
+platforms do today (`platformProfiles.ts`). `toRenderTargetsFromPlan` maps
+`renderable` straight into `RenderTarget[]`, the exact shape
+`renderManager.startBatch` already takes.
+
+### 52.7 Revalidation
+
+Apply never accepts a plan payload back from the client — there is no
+plan id, no durable plan object, nothing to go stale in the first place.
+`handleApplyContentPackageBatch` re-reads current track/queue state and
+calls `planContentPackageBatch` fresh, immediately before queueing
+anything, every time. A target that became ready since the caller last
+looked (§52 test: "apply revalidates immediately before queueing") is read
+as `already_ready` and left out of what gets queued; a target another
+caller queued in the meantime is read as `adopt_existing_render`. The
+export-missing route (§37) already re-checks in-flight state once between
+planning and enqueueing for the same reason; apply does the whole plan over
+again, not just that one check, because a batch's readiness can change on
+more axes (delivery, metadata, another process's render) than a flat preset
+list can.
+
+### 52.8 Deduplication and existing-render adoption
+
+Two layers, matching the brief's own instruction not to let the planner's
+early dedup replace the render manager's authority: the planner dedupes
+`renderable` by track+preset (§52.6) before anything is queued, and
+`renderManager.startBatch` (§37, untouched) is still the final authority —
+it independently skips anything already active and reports what it locked
+elsewhere. A platform already `rendering` never reaches `renderable` at all;
+it is reported as `adopted` in the plan/apply response instead, so the UI
+can say "already queued" rather than silently dropping it or double-queueing
+it.
+
+### 52.9 Progress
+
+No second progress transport. `handleApplyContentPackageBatch` queues
+through `renderManager.startBatch` exactly like `/api/export-missing`
+already does, and returns the same `batchId`. The UI hands that id straight
+to the existing `QueueDrawer`/`useRenderBatch` (SSE `GET
+/api/render-batches/:id/events`) — the same drawer every other queueing
+action in the app already uses, showing per-job status/progress/elapsed
+time and a batch-level aggregate. `BatchContentPackagePanel` itself shows
+batch-level and track-level counts (ready/missing/stale/rendering/blocked,
+per track and summed); it does not re-fetch on its own while a queued
+render runs — like the rest of this app's "explicit refresh" design, seeing
+the *new* readiness after a render finishes means reopening the panel or
+switching its mode, which re-reads current state. This is a real, deliberate
+limitation, not an oversight — see §52.16.
+
+### 52.10 Timeout / wait behavior
+
+`POST .../batch/apply` takes optional `wait` and `timeoutMs` (default
+30000ms, capped at 600000ms). With `wait: true`, the route subscribes to the
+just-created render batch and holds the HTTP response open until it settles
+or the timeout elapses, then returns the batch's state at that moment plus
+`timedOut`. A timeout only means the *response* stopped waiting — nothing is
+cancelled, and `batchId` is still valid to follow via SSE or poll
+afterwards, exactly like confirmed delivery's own "queue now, follow
+separately" behavior (§48). The CLI does not offer `--wait`/`--timeout`: its
+`--apply` already renders synchronously, in-process, one target after
+another (§52.13), so there is nothing asynchronous to wait for.
+
+### 52.11 Partial failure behavior
+
+One track failing does not stop the others: each platform target is an
+independent job in the underlying render batch (§37, unchanged), and a
+job's failure only marks that job `failed` — sibling jobs, whatever track
+they belong to, run to completion normally. Within one track, platforms are
+independent render targets from the start (`PLATFORM_LIST`, one preset
+each), so "YouTube succeeded, Reels failed, Instagram was already ready" is
+just three independent `renderStatus`/`readiness` answers on the same
+package — nothing here collapses them into one pass/fail flag. An invalid
+track (not found, or metadata that fails validation) is reported in
+`invalid`/`blocked` and simply contributes no renderable action; it never
+throws for the rest of the batch.
+
+### 52.12 API
+
+Three endpoints, mirroring `/api/export-missing`'s own request/response
+conventions (`dryRun`-style separation, `nothingToDo`, `batchId: string |
+null`):
+
+```
+POST /api/content-package/batch/inspect  { tracks, mode?, platforms? }
+  -> BatchContentPackageView   (read-only)
+POST /api/content-package/batch/plan     { tracks, mode?, platforms? }
+  -> ContentPackageBatchPlanView   (read-only; renderable/adopted/ready/blocked)
+POST /api/content-package/batch/apply    { tracks, mode?, platforms?, wait?, timeoutMs? }
+  -> ContentPackageBatchApplyView   (re-plans fresh, queues through renderManager)
+```
+
+`tracks` is always required and explicit (§52.3); server-issued track slugs
+and platform ids only — no client-supplied render command, shell string or
+file path anywhere in these bodies. Batch size is bounded
+(`MAX_BATCH_TRACKS = 100`, `server/services/contentPackagePlan.ts`); an
+empty list, a batch over the limit, an unknown platform id, or a malformed
+slug are all rejected with `INVALID_REQUEST`/`INVALID_PLATFORM`/`INVALID_SLUG`
+before any track is inspected. Duplicate slugs are de-duplicated (first
+occurrence kept) and reported in `duplicates`, never rejected outright and
+never double-counted. There is no batch delivery endpoint: "Deliver ready
+packages" reuses the existing `DeliverPanel`/`POST /api/delivery/deliver`
+unchanged, scoped to the same selected tracks (§52.14) — content packages
+never grew their own copy logic.
+
+### 52.13 CLI
+
+`scripts/content-package-batch.mts`, `npm run content-package-batch`:
+
+```
+npm run content-package-batch -- --track beat-a --track beat-b
+npm run content-package-batch -- --tracks beat-a,beat-b --mode full --plan
+npm run content-package-batch -- --catalogue --apply
+```
+
+Default (no `--plan`/`--apply`) is inspection only, matching
+`content-package.mts`'s own default-safe convention (`--apply` opts into
+rendering, the opposite polarity from `render-missing.mts`'s
+`--dry-run`-opts-out). `--catalogue` resolves via `listTracks()` to an
+explicit slug list *before* the shared planner ever sees it — never an
+implicit "no tracks named" catalogue run. `--apply` renders sequentially,
+in-process, via `renderTrackVideo`, memoizing one `prepareTrack` per track
+and reusing it across that track's own selected formats — the identical
+pattern `render-missing.mts` and `content-package.mts` already use; this CLI
+is not a second render engine, and work it starts is invisible to a running
+server's queue and vice versa (documented, not new — §37/§43 already say
+this about every other CLI here). `--json` prints the exact same
+`BatchContentPackageView`/plan objects the API returns.
+
+### 52.14 UI
+
+- `TrackList.tsx`: "Select all"/"Select none" in the list header, scoped to
+  the listed tracks (§52.3). The per-row checkbox column itself already
+  existed.
+- `App.tsx`: a new "Inspect content packages" toggle in the selection
+  toolbar (next to the pre-existing "Add to render queue" and "Export
+  missing for selected"), shown once at least one track is ticked.
+- `BatchContentPackagePanel.tsx` (new): mode toggle, an aggregated
+  ready/missing/stale/rendering summary plus a per-track status list
+  (concise — badge, ready/total counts, never full captions/descriptions
+  inline, per §19/§42 of the brief), a "Create plan" button showing
+  renderable/adopted/ready/blocked with per-action detail, an "Apply N
+  actions" button that hands the resulting `batchId` to the app's existing
+  `QueueDrawer`, and — only once a destination is configured — the existing
+  `DeliverPanel` scoped to the same selection for "Deliver ready packages".
+  Metadata previews stay in the single-track `ContentPackagePanel`
+  (unchanged); the batch panel never dumps captions/descriptions into the
+  table.
+
+### 52.15 Performance
+
+One `inspectTrack` per selected track is unavoidable — that is what "current
+state" means — but everything each track's derivation shares (`GET
+/api/content-package`'s own delivery-root read, the global template
+settings read, the render queue's in-flight map) is read exactly once per
+batch call via `loadContentPackageBatchContext()`, not once per track. No
+catalogue-wide scan happens unless the caller explicitly asked for
+`--catalogue`/ticked the whole list — there is no implicit full-catalogue
+read anywhere in the batch code path. No video hashing, `ffprobe`, recursive
+filesystem scan or new watcher was added; freshness still comes entirely
+from the existing manifest/fingerprint machinery (§36). Measured at 2, and
+separately at 100 (the batch-size cap itself, via a domain-level test with
+synthetic tracks), aggregation and planning are sub-millisecond — the cost
+is exactly N `inspectTrack` calls, run in parallel via `Promise.all`,
+exactly like `planMissingExports` (§37) already does for the catalogue case.
+
+### 52.16 Large-batch UX and restart behavior
+
+At 50+ tracks the panel stays usable because each row is one compact line
+(badge + counts), and per-platform metadata previews are never expanded by
+default anywhere in the batch view (only the single-track panel offers a
+"Preview metadata" toggle, unchanged). Nothing about batch orchestration
+survives a process restart: there is no persisted plan, no persisted batch
+object, and no durable batch-history subsystem (§37 explicitly forbids one)
+— `batchId` is the render manager's own transient job-batch id, already
+in-memory-only and already forgotten across a restart exactly as it was
+before this milestone (§37/§38). After a restart, a fresh inspect/plan read
+is the only truth; delivery history, delivery receipts and render job
+records remain the durable systems of record, unchanged.
+
+### 52.17 Tests (41 added, 531 total)
+
+- `tests/content-package-batch.test.mts` (new, 30 tests) — pure aggregation
+  math (the brief's own worked example, blocked/invalid/duplicate handling,
+  target-level vs track-level totals), pure planning (every readiness ->
+  action-kind mapping, blocked reasons, not-selected produces no action,
+  cross-platform preset dedup, purity/idempotency), service-level slug
+  bounds/dedup/validation, and real-fixture end-to-end tests via
+  `buildContentPackagesForSlugs` proving agreement with the single-track
+  resolver, a not-found track reported without failing the batch, an
+  invalid `metadata.json` blocking only that track, apply-time
+  revalidation (a target becoming ready or in-flight between reads), a
+  copy-only template edit never changing what would render, and a rendered
+  title edit staling exactly that track.
+- `tests/api-integration.test.mts` (+11) — inspect (aggregation, empty
+  batch rejected, over-limit rejected, duplicate dedup, not-found track,
+  unknown platform), plan (renderable/ready/blocked classification, proven
+  not to queue anything), apply (no-op when everything is already ready,
+  real queueing through the render manager with a mocked worker — same
+  `managerHarness`/`childProcess.fork` mock pattern the existing "stale
+  execution" test uses, apply-time revalidation across a real HTTP round
+  trip, malformed body rejected before anything is touched).
+- All existing single-track Content Package/metadata-template tests (§49–51)
+  pass unchanged — nothing in this milestone touched `deriveContentPackage`,
+  `buildPlatformMetadata`, or the metadata-template resolver.
+
+### 52.18 End-to-end and browser results
+
+A synthetic, real (never mocked) probe built three tracks —
+`batch-probe-a/b/c` — with short (3s) ffmpeg-generated audio and a small
+cover, so real `renderTrackVideo` calls (real bundling, real Chromium
+render, real manifest) stayed fast. Coverage was built to the brief's exact
+worked example: A all three ready; B YouTube+Square ready, Reels missing; C
+YouTube+Reels ready, Square deliberately drifted stale (its output file's
+bytes changed after publication, an `output_changed` reason — changing
+metadata instead would have staled all three of a track's platforms at
+once, since fingerprint inputs are shared across a track's presets, not
+per-platform). Inspect reported exactly **7 ready / 1 missing / 1 stale**;
+plan reported exactly **2 renderable actions** (`batch-probe-b`/Reels
+`render_missing`, `batch-probe-c`/Instagram Square `rerender_stale`);
+applying them for real (actual `renderTrackVideo` calls, not mocked) brought
+the batch to **9/9 ready, 3/3 complete**. A subsequent global-template-only
+edit left readiness at 9/9; a subsequent title edit (a rendered field) on
+Track B staled exactly Track B's three platforms, leaving A and C
+untouched. All assertions passed; all three synthetic tracks and their
+`out/` directories were removed afterward. Ghetto Geek was never read or
+modified by this probe.
+
+A second, separate real-headless-Chrome pass (`--headless=new` Google
+Chrome, raw CDP over WebSocket, no puppeteer — same technique as §50's own
+probe) drove the actual running API (`server/index.mts`) and Vite dev
+server against two further synthetic tracks (`browser-probe-x/y`, one fully
+ready, one with two platforms genuinely missing). Through the real UI it:
+ticked exactly those two tracks (never Ghetto Geek, left unticked and
+visibly unchanged in the same screenshot); opened
+`BatchContentPackagePanel` and confirmed "6 platform targets · 4 ready · 2
+missing · 0 stale"; clicked "Create plan" and confirmed "2 safe actions · 0
+already in flight · 4 already ready · 0 blocked"; clicked "Apply 2 actions"
+and confirmed the existing `QueueDrawer` appeared showing "2 total · 1
+rendering · 1 queued" with real per-job progress rows; polled until both
+jobs showed `badge--job-completed`; re-opened the batch panel (a mode
+toggle, forcing a fresh inspect read) and confirmed "6 platform targets · 6
+ready · 0 missing · 0 stale"; then clicked "Clear" and confirmed both
+checkboxes cleared and the batch panel closed. Both synthetic tracks, their
+`out/` directories, the temporary setup/probe scripts, the Chrome profile
+and both background server processes were removed/stopped afterward; a
+process scan afterward found zero leaked Chrome/server/Vite processes and
+an empty `out/.locks/`.
+
+### 52.19 Verification performed
+
+TypeScript and ESLint clean (whole project, both before and after every
+new/changed file). `npx vite build` passed (only the pre-existing
+large-chunk advisory). Full suite **531/531** passed at normal concurrency,
+run four times in a row for stability — two transient failures were seen on
+one run, both in test files this milestone never touched
+(`export-freshness.test.mts`'s own catalogue-wide scan racing another test
+file's fixture directory, and a similar cross-file interaction), and both
+were gone on every other run, consistent with this repo's known
+shared-fixture-directory flakiness under full concurrency (documented in
+earlier sections) rather than a regression here. `validate-track`/
+`prepare-track` passed on `ghetto-geek`. `git diff --check` clean. No
+config fixture (`delivery.local.json`, `content-metadata.local.json`) was
+left behind; no render lock was left in `out/.locks/`; no track other than
+`ghetto-geek` remained under `public/tracks/` afterward.
+
+### 52.20 Remaining limitations
+
+- The batch panel does not live-poll after a queued render finishes; seeing
+  updated readiness means reopening the panel or switching its mode (§52.9).
+  This matches the rest of the app's explicit-refresh design rather than
+  adding a new poll loop, but it is a real UX gap worth revisiting if batch
+  use becomes frequent.
+- There is no batch-level cancel — only per-job cancel and the existing
+  render batch's own "Cancel all" (both already in `QueueDrawer`, unchanged,
+  and both work against a Content Package batch's jobs exactly as they do
+  any other render batch, since it is the same underlying render-batches
+  object). A dedicated "cancel this Content Package batch" affordance was
+  explicitly deferred, per the brief's own permission to do so (§36).
+- No catalogue-wide mode at the API/service layer — only the UI's full
+  ticked selection and the CLI's `--catalogue` (resolved client-side to an
+  explicit list). Deferred rather than built, since nothing in the brief
+  required it and every existing catalogue-wide action in this app
+  (`export-missing`, `deliver`) already has its own established pattern this
+  milestone did not need to duplicate.
+- No batch-level delivery endpoint; "Deliver ready packages" is the
+  existing single delivery action scoped to the batch's tracks (§52.12).
+- Platform-length guidance in previews remains unimplemented, per §50.21 —
+  unrelated to and unaffected by this milestone.
+
+### 52.21 Files changed
+
+New:
+- `src/domain/content/contentPackageBatch.ts` — aggregation + planning model.
+- `server/services/contentPackagePlan.ts` — I/O: shared context, per-track
+  package building, slug validation/bounds/dedup, request-body shape checks.
+- `server/routes/contentPackageBatch.ts` — inspect/plan/apply handlers.
+- `scripts/content-package-batch.mts` — CLI.
+- `ui/components/BatchContentPackagePanel.tsx` — batch panel.
+- `tests/content-package-batch.test.mts` — domain/service tests.
+
+Changed:
+- `src/domain/api/views.ts` — batch request/response view types, re-exports.
+- `server/app.ts` — routes `/api/content-package/batch/{inspect,plan,apply}`.
+- `ui/api/client.ts` — `inspectContentPackageBatch`/`planContentPackageBatch`/
+  `applyContentPackageBatch`.
+- `ui/App.tsx` — batch toggle, select-all/clear wiring.
+- `ui/components/TrackList.tsx` — select-all/select-none.
+- `ui/styles/app.css` — `.batchpackage*`, `.tracklist__headactions`.
+- `tests/api-integration.test.mts` — 11 new HTTP-level tests.
+- `package.json` — `content-package-batch` script.
+
+Nothing in `src/domain/content/contentPackage.ts`,
+`src/domain/content/platformMetadata.ts`, `src/domain/content/
+metadataTemplates.ts`, `server/services/renderManager.ts`, `services/render/
+renderLock.ts`, `services/render/renderTrackVideo.ts`, or any delivery
+service changed.
+
+### 52.22 Commits
+
+1. Add the batch Content Package model and aggregation (domain layer).
+2. Add the batch planner, shared context, and I/O (server service).
+3. Add the batch API and CLI.
+4. Add catalogue multi-select affordances and the batch UI panel.
+5. Test batch aggregation, planning, revalidation and the API.
+6. Document Batch Content Package Generation.
+
+No push was made.
+
+### 52.23 Recommended next feature
+
+Live progress inside `BatchContentPackagePanel` itself (subscribing to the
+returned `batchId`'s SSE stream directly, the way `QueueDrawer` already
+does, so the panel's own ready/missing/stale counts update as jobs finish
+without the user needing to reopen it or switch modes) — see §52.20's first
+limitation. Not started, per instruction.
