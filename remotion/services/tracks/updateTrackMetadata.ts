@@ -122,6 +122,15 @@ export const updateTrackMetadata = async (
             : patch.deliveryFolder.trim() === ""
               ? undefined
               : patch.deliveryFolder.trim(),
+        // The whole object is replaced, never deep-merged with what is
+        // already on disk: `null` clears every override (inherit
+        // everything), an object is the complete desired set, and omitting
+        // the field entirely leaves it alone — exactly the exportPresets
+        // convention.
+        contentMetadataOverrides:
+          patch.contentMetadataOverrides === undefined
+            ? current.contentMetadataOverrides
+            : (patch.contentMetadataOverrides ?? undefined),
       };
       const { issues, metadata } = validateTrackMetadata(merged, source);
       if (metadata === null) {

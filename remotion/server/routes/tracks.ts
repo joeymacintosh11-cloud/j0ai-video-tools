@@ -186,11 +186,26 @@ const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch =>
     patch.exportPresets = exportPresets;
   }
 
+  // null clears every override (inherit everything); an object is the whole
+  // desired set, validated downstream by updateTrackMetadata — never deep-
+  // merged with what a stray shape here might guess at.
+  if (body.contentMetadataOverrides !== undefined) {
+    if (body.contentMetadataOverrides !== null && typeof body.contentMetadataOverrides !== "object") {
+      throw new TrackError(
+        trackIssue(
+          "INVALID_REQUEST",
+          'Field "contentMetadataOverrides" must be an object, or null to clear every override.',
+        ),
+      );
+    }
+    patch.contentMetadataOverrides = body.contentMetadataOverrides;
+  }
+
   if (Object.keys(patch).length === 0) {
     throw new TrackError(
       trackIssue(
         "INVALID_REQUEST",
-        "Provide at least one of: title, artist, key, bpm, subtitle, exportPresets, deliveryFolder.",
+        "Provide at least one of: title, artist, key, bpm, subtitle, exportPresets, deliveryFolder, contentMetadataOverrides.",
       ),
     );
   }
