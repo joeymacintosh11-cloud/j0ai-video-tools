@@ -49,7 +49,7 @@ import { toTrackDetailView, toTrackSummaryView } from "../views/trackView.ts";
  * most once, and with no destination configured it does no filesystem work at
  * all.
  */
-const deliveryRootForView = async (): Promise<string | null> =>
+export const deliveryRootForView = async (): Promise<string | null> =>
   resolveDeliveryRoot(await readDeliverySettings()).root;
 
 export const handleListTracks = async (
