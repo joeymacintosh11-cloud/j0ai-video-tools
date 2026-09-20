@@ -580,3 +580,81 @@ test("a render refused for a locked target answers 409, not a queued job", async
     "free",
   );
 });
+
+/* -------------------------------------------------------------------- *
+ * Content package
+ * -------------------------------------------------------------------- */
+
+test("GET /api/content-package returns a derived, platform-facing view", async (t) => {
+  const f = await fixture(t, { exportPresets: ["youtube-16x9"] });
+  await fs.writeFile(f.cover, "cover");
+  await fs.writeFile(f.beat, "audio");
+  const { base } = await api(t);
+
+  const response = await fetch(`${base}/api/content-package?track=${f.slug}`);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.slug, f.slug);
+  assert.equal(body.data.mode, "intent");
+  // Only the declared platform is selected in intent mode.
+  assert.equal(body.data.counts.selected, 1);
+  const youtube = body.data.platforms.find(
+    (p: { platformId: string }) => p.platformId === "youtube",
+  );
+  assert.equal(youtube.readiness, "missing");
+  assert.equal(youtube.outputFilename, `${f.slug}-youtube.mp4`);
+});
+
+test("GET /api/content-package with mode=full ignores declared intent", async (t) => {
+  const f = await fixture(t, { exportPresets: ["youtube-16x9"] });
+  await fs.writeFile(f.cover, "cover");
+  await fs.writeFile(f.beat, "audio");
+  const { base } = await api(t);
+
+  const response = await fetch(
+    `${base}/api/content-package?track=${f.slug}&mode=full`,
+  );
+  const body = await response.json();
+
+  assert.equal(body.data.mode, "full");
+  assert.equal(body.data.counts.selected, 3);
+});
+
+test("GET /api/content-package with a platform override selects exactly that set", async (t) => {
+  const f = await fixture(t, { exportPresets: ["youtube-16x9"] });
+  await fs.writeFile(f.cover, "cover");
+  await fs.writeFile(f.beat, "audio");
+  const { base } = await api(t);
+
+  const response = await fetch(
+    `${base}/api/content-package?track=${f.slug}&platform=reels&platform=instagram-square`,
+  );
+  const body = await response.json();
+
+  assert.equal(body.data.mode, "custom");
+  const selected = body.data.platforms
+    .filter((p: { selected: boolean }) => p.selected)
+    .map((p: { platformId: string }) => p.platformId)
+    .sort();
+  assert.deepEqual(selected, ["instagram-square", "reels"]);
+});
+
+test("GET /api/content-package rejects an unknown platform and a missing track", async (t) => {
+  const { base } = await api(t);
+
+  const badPlatform = await fetch(
+    `${base}/api/content-package?track=ghetto-geek&platform=snapchat`,
+  );
+  assert.equal(badPlatform.status, 400);
+  assert.equal((await badPlatform.json()).error.code, "INVALID_PLATFORM");
+
+  const noTrackParam = await fetch(`${base}/api/content-package`);
+  assert.equal(noTrackParam.status, 400);
+
+  const missingTrack = await fetch(
+    `${base}/api/content-package?track=does-not-exist-${Date.now()}`,
+  );
+  assert.equal(missingTrack.status, 404);
+  assert.equal((await missingTrack.json()).error.code, "TRACK_NOT_FOUND");
+});
