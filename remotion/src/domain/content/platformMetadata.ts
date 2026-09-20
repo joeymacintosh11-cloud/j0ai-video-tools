@@ -1,14 +1,20 @@
+import {
+  BUILT_IN_DEFAULT_TEMPLATES,
+  renderTemplate,
+  type MetadataTemplates,
+  type PlaceholderValues,
+} from "./metadataTemplates.ts";
 import { PLATFORM_PROFILES, platformFilename, type PlatformId } from "./platformProfiles.ts";
 
 /**
- * Deterministic platform-facing text, generated from a track's own metadata.
+ * Platform-facing text, built by rendering the resolved templates
+ * (track override -> global template -> built-in default, already merged by
+ * the caller via resolveMetadataTemplates()) against one track's fields.
  *
- * No external AI calls, nothing cached or persisted: every field here is a
- * pure function of the same title/artist/key/bpm/subtitle fields the
- * visualizer itself renders, so the text can never drift from the track and
- * never needs its own freshness tracking — it is simply recomputed on every
- * read. Titles/keys/BPM are the values that are actually burned into the
- * video; this module only ever *reads* them, never decides what to render.
+ * No external AI calls. A pure function of the same title/artist/key/bpm/
+ * subtitle fields the visualizer itself renders, so this text can never drift
+ * out of sync with the track and needs no freshness tracking of its own — it
+ * is simply recomputed on every read, exactly like the rest of the package.
  */
 
 export type PlatformMetadataSubject = {
@@ -31,101 +37,90 @@ export type PlatformMetadata = {
   readonly keywords: readonly string[] | null;
   /** Reels/TikTok and Instagram only. */
   readonly caption: string | null;
+  /** Reels/TikTok and Instagram only. */
+  readonly hashtags: readonly string[] | null;
 };
 
-/** "F Minor · 100 BPM" — the fallback tagline when a track has no subtitle. */
-const keyBpmTagline = (subject: PlatformMetadataSubject): string =>
-  `${subject.key} · ${subject.bpm} BPM`;
+const placeholderValuesFor = (
+  slug: string,
+  platformId: PlatformId,
+  filename: string,
+  subject: PlatformMetadataSubject,
+): PlaceholderValues => {
+  const subtitle = subject.subtitle?.trim() ?? "";
 
-const tagline = (subject: PlatformMetadataSubject): string =>
-  subject.subtitle?.trim() || keyBpmTagline(subject);
-
-const youtubeTitle = (subject: PlatformMetadataSubject): string =>
-  `${subject.title} | ${tagline(subject)} | ${subject.artist}`;
-
-const youtubeDescription = (subject: PlatformMetadataSubject): string => {
-  const lines = [
-    `${subject.title} by ${subject.artist}.`,
-    "",
-    `Key: ${subject.key}`,
-    `BPM: ${subject.bpm}`,
-  ];
-
-  if (subject.subtitle?.trim()) {
-    lines.push("", subject.subtitle.trim());
-  }
-
-  lines.push("", `Produced by ${subject.artist}.`);
-
-  return lines.join("\n");
+  return {
+    title: subject.title,
+    artist: subject.artist,
+    key: subject.key,
+    bpm: String(subject.bpm),
+    subtitle,
+    slug,
+    platform: PLATFORM_PROFILES[platformId].label,
+    filename,
+    tagline: subtitle || `${subject.key} · ${subject.bpm} BPM`,
+    subtitleSuffix: subtitle ? ` — ${subtitle}` : "",
+  };
 };
 
 /** Lowercase, hyphenated, safe as a single keyword/tag token. */
-const tagify = (value: string): string =>
-  value
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/gu, "-");
+const tagify = (value: string): string => value.toLowerCase().trim().replace(/\s+/gu, "-");
 
-const youtubeKeywords = (subject: PlatformMetadataSubject): readonly string[] => {
-  const candidates = [
-    tagify(subject.artist),
-    `${subject.bpm}bpm`,
-    tagify(subject.key),
-    "type-beat",
-    "toshi",
-  ];
-
-  // Dedup while keeping the first occurrence's order — an artist named "Toshi"
-  // should not produce the tag twice.
+/** Comma-separated template output -> a deduplicated, tagified keyword list. */
+const splitKeywords = (rendered: string): readonly string[] => {
   const seen = new Set<string>();
   const keywords: string[] = [];
-  for (const candidate of candidates) {
-    if (candidate.length === 0 || seen.has(candidate)) continue;
-    seen.add(candidate);
-    keywords.push(candidate);
+  for (const raw of rendered.split(",")) {
+    const token = tagify(raw);
+    if (token.length === 0 || seen.has(token)) continue;
+    seen.add(token);
+    keywords.push(token);
   }
   return keywords;
 };
 
-/** Reels/TikTok and Instagram share the same short caption shape. */
-const shortCaption = (subject: PlatformMetadataSubject): string => {
-  const head = `${subject.title} — ${subject.artist} (${subject.key}, ${subject.bpm} BPM)`;
-  return subject.subtitle?.trim() ? `${head} — ${subject.subtitle.trim()}` : head;
-};
+/** Whitespace-separated template output -> a hashtag list, presented as typed. */
+const splitHashtags = (rendered: string): readonly string[] =>
+  rendered.split(/\s+/u).filter((token) => token.length > 0);
 
 /**
  * Builds one platform's metadata for a track.
  *
- * Pure: the same slug/platform/subject always produces the same text, so a
- * package view never needs to store or cache this — it is generated fresh on
- * every read, exactly like the rest of the package.
+ * `templates` defaults to the built-in set so an existing caller that has not
+ * been updated to resolve global/track templates still gets exactly the
+ * product's current default copy.
  */
 export const buildPlatformMetadata = (
   slug: string,
   platformId: PlatformId,
   subject: PlatformMetadataSubject,
+  templates: MetadataTemplates = BUILT_IN_DEFAULT_TEMPLATES,
 ): PlatformMetadata => {
   const profile = PLATFORM_PROFILES[platformId];
   const filename = platformFilename(slug, platformId);
+  const values = placeholderValuesFor(slug, platformId, filename, subject);
 
   if (profile.supportsDescription) {
+    const t = templates.youtube;
     return {
       platformId,
       filename,
-      title: youtubeTitle(subject),
-      description: youtubeDescription(subject),
-      keywords: youtubeKeywords(subject),
+      title: renderTemplate(t.titleTemplate, values).text,
+      description: renderTemplate(t.descriptionTemplate, values).text,
+      keywords: splitKeywords(renderTemplate(t.keywordsTemplate, values).text),
       caption: null,
+      hashtags: null,
     };
   }
 
+  const t = platformId === "reels" ? templates.reels : templates["instagram-square"];
   return {
     platformId,
     filename,
     title: null,
     description: null,
     keywords: null,
-    caption: shortCaption(subject),
+    caption: renderTemplate(t.captionTemplate, values).text,
+    hashtags: splitHashtags(renderTemplate(t.hashtagsTemplate, values).text),
   };
 };

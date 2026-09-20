@@ -1,5 +1,6 @@
 import type { TrackIssue } from "./errors.ts";
 import type { TrackAssetPaths } from "./paths.ts";
+import type { PartialMetadataTemplates } from "../content/metadataTemplates.ts";
 import type { RenderPresetId } from "../video/renderPresets.ts";
 
 /** A track whose metadata is complete and renderable. */
@@ -23,6 +24,15 @@ export type TrackMetadata = {
    * never a machine path — absolute destinations are local configuration.
    */
   readonly deliveryFolder?: string;
+  /**
+   * Per-track overrides for content package metadata templates (YouTube
+   * title/description/keywords, Reels/Instagram caption/hashtags). Absent
+   * means every field inherits the global template, or the built-in default
+   * when no global template is set either — see resolveMetadataTemplates().
+   * Never affects rendered video: only fields actually passed to the
+   * composition (title/artist/key/bpm/subtitle) do that.
+   */
+  readonly contentMetadataOverrides?: PartialMetadataTemplates;
 };
 
 /**
@@ -50,6 +60,8 @@ export type TrackMetadataDraft = {
    * never a machine path — absolute destinations are local configuration.
    */
   readonly deliveryFolder?: string;
+  /** See TrackMetadata.contentMetadataOverrides. */
+  readonly contentMetadataOverrides?: PartialMetadataTemplates;
 };
 
 /**

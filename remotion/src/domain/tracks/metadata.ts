@@ -1,4 +1,8 @@
 import { assertDeliveryFolder } from "../delivery/deliveryPaths.ts";
+import {
+  coerceMetadataTemplates,
+  parseMetadataTemplates,
+} from "../content/metadataTemplates.ts";
 import { TrackError, trackIssue, type TrackIssue } from "./errors.ts";
 import {
   coerceExportPresetList,
@@ -70,6 +74,7 @@ export const coerceMetadataDraft = (
       typeof raw.deliveryFolder === "string" && raw.deliveryFolder.trim() !== ""
         ? raw.deliveryFolder.trim()
         : undefined,
+    contentMetadataOverrides: coerceMetadataTemplates(raw.contentMetadataOverrides),
   };
 };
 
@@ -87,6 +92,7 @@ export const serializeTrackMetadata = (
     // file with no exportPresets key rather than gaining an empty one.
     exportPresets: metadata.exportPresets,
     deliveryFolder: metadata.deliveryFolder,
+    contentMetadataOverrides: metadata.contentMetadataOverrides,
   };
 
   return `${JSON.stringify(ordered, null, 2)}\n`;
@@ -189,6 +195,16 @@ export const validateTrackMetadata = (
     }
   }
 
+  // Undeclared is valid and means "inherit everything"; declared fields are
+  // validated against the same whitelist-only renderer the API and UI use, so
+  // an unknown placeholder is a hard error rather than something silently
+  // left in generated copy.
+  const { templates: contentMetadataOverrides, problems: templateProblems } =
+    parseMetadataTemplates(raw.contentMetadataOverrides);
+  for (const problem of templateProblems) {
+    issues.push(trackIssue("TEMPLATE_INVALID", `${source} ${problem}`, source));
+  }
+
   if (title === null || artist === null || key === null || bpm === null) {
     return { issues, metadata: null };
   }
@@ -207,6 +223,7 @@ export const validateTrackMetadata = (
       subtitle: typeof rawSubtitle === "string" ? rawSubtitle : undefined,
       exportPresets,
       deliveryFolder,
+      contentMetadataOverrides: contentMetadataOverrides ?? undefined,
     },
   };
 };

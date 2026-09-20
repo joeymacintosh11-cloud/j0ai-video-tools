@@ -6,6 +6,10 @@ import {
   type PlatformMetadataSubject,
 } from "./platformMetadata.ts";
 import {
+  resolveMetadataTemplates,
+  type PartialMetadataTemplates,
+} from "./metadataTemplates.ts";
+import {
   canonicalPlatformOrder,
   PLATFORM_LIST,
   platformFilename,
@@ -103,6 +107,8 @@ export type ContentPackagePlatformEntry = {
   readonly keywords: readonly string[] | null;
   /** Reels/TikTok and Instagram only. */
   readonly caption: string | null;
+  /** Reels/TikTok and Instagram only. */
+  readonly hashtags: readonly string[] | null;
   readonly blockers: readonly string[];
   readonly actions: readonly PlatformAction[];
 };
@@ -124,6 +130,15 @@ export type ContentPackageView = {
   readonly platforms: readonly ContentPackagePlatformEntry[];
   readonly counts: ContentPackageCounts;
   readonly generatedAt: string;
+  /**
+   * Set when the global metadata-templates settings file could not be read
+   * (missing is not a problem; malformed is). Carried through rather than
+   * computed here, since reading that file is a caller/server concern — this
+   * module stays pure. Built-in defaults are still used when this is set, so
+   * generation never breaks; the point is that the drift is visible rather
+   * than silently hidden (§ handoff, "Invalid template recovery").
+   */
+  readonly templatesProblem: string | null;
 };
 
 export type ContentPackageInput = {
@@ -140,6 +155,12 @@ export type ContentPackageInput = {
   readonly metadata: PlatformMetadataSubject | null;
   /** One entry per render preset, in any order — from trackExportCoverage. */
   readonly exports: readonly PackageExportEntry[];
+  /**
+   * This track's own `contentMetadataOverrides`, or null/undefined when it
+   * declares none. Resolved per field against `options.globalTemplates` and
+   * the built-in defaults — never the sole source for any field.
+   */
+  readonly contentMetadataOverrides?: PartialMetadataTemplates | null;
 };
 
 export type ContentPackageOptions = {
@@ -155,6 +176,14 @@ export type ContentPackageOptions = {
   readonly platforms?: readonly PlatformId[];
   /** Injectable clock, so tests can assert a byte-identical view. */
   readonly now?: () => string;
+  /**
+   * The global metadata-templates settings, or null/undefined when none are
+   * configured. Sits between the track's own overrides and the built-in
+   * defaults in precedence — see resolveMetadataTemplates().
+   */
+  readonly globalTemplates?: PartialMetadataTemplates | null;
+  /** Passed straight through to the returned view; see ContentPackageView.templatesProblem. */
+  readonly templatesProblem?: string | null;
 };
 
 const readinessFor = (
@@ -215,6 +244,11 @@ export const deriveContentPackage = (
       ? new Set(canonicalPlatformOrder(options.platforms))
       : null;
 
+  const templates = resolveMetadataTemplates(
+    options.globalTemplates,
+    input.contentMetadataOverrides,
+  );
+
   const platforms: ContentPackagePlatformEntry[] = PLATFORM_LIST.map(
     (profile) => {
       const exportEntry = exportBySlug.get(profile.presetId);
@@ -234,7 +268,7 @@ export const deriveContentPackage = (
 
       const metadata =
         input.metadata !== null
-          ? buildPlatformMetadata(input.slug, profile.id, input.metadata)
+          ? buildPlatformMetadata(input.slug, profile.id, input.metadata, templates)
           : null;
 
       const blockers: string[] = [];
@@ -258,6 +292,7 @@ export const deriveContentPackage = (
         description: metadata?.description ?? null,
         keywords: metadata?.keywords ?? null,
         caption: metadata?.caption ?? null,
+        hashtags: metadata?.hashtags ?? null,
         blockers,
         actions: actionsFor(readiness, exportEntry?.delivery.status ?? "not_configured"),
       };
@@ -295,5 +330,6 @@ export const deriveContentPackage = (
     platforms,
     counts,
     generatedAt: now(),
+    templatesProblem: options.templatesProblem ?? null,
   };
 };

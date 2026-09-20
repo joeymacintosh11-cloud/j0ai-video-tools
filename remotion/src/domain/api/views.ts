@@ -27,6 +27,10 @@ import type {
 import type { ReleaseBundleFreshness } from "../delivery/releaseBundle.ts";
 import type { ContentPackageMode } from "../content/contentPackage.ts";
 import type { PlatformId } from "../content/platformProfiles.ts";
+import type {
+  MetadataTemplatesResetPatch,
+  PartialMetadataTemplates,
+} from "../content/metadataTemplates.ts";
 import type { TrackErrorCode, TrackIssue } from "../tracks/errors.ts";
 import type {
   TrackMetadata,
@@ -184,6 +188,13 @@ export type TrackMetadataPatch = {
    * string clears it, which falls back to the slug.
    */
   readonly deliveryFolder?: string;
+  /**
+   * Per-track content package metadata template overrides. Omitted leaves
+   * whatever is already declared; `null` clears every override (every field
+   * goes back to inheriting the global template or the built-in default); an
+   * object replaces the whole set — never deep-merged with what is on disk.
+   */
+  readonly contentMetadataOverrides?: PartialMetadataTemplates | null;
 };
 
 /** POST /api/tracks request body. */
@@ -725,6 +736,40 @@ export type ContentPackageQuery = {
   readonly platforms?: readonly PlatformId[];
 };
 
+/**
+ * GET /api/content-metadata-settings, and the response to a PATCH.
+ *
+ * `templates` is only what has actually been overridden globally — a track
+ * that inherits everything is not represented here at all. Built-in defaults
+ * are not sent over the wire: they are a fixed constant
+ * (`BUILT_IN_DEFAULT_TEMPLATES`) the UI already has from the shared domain
+ * module, so there is exactly one copy of them, not two that could drift.
+ */
+export type ContentMetadataSettingsView = {
+  readonly schemaVersion: number;
+  readonly templates: PartialMetadataTemplates;
+  /**
+   * Set when the settings file exists but could not be read (malformed
+   * JSON, wrong shape). Never set just because the file is absent — that
+   * means "nothing configured yet", not corruption. Built-in defaults are
+   * still used either way; this is what makes the difference visible rather
+   * than silently hidden.
+   */
+  readonly problem: string | null;
+  /** Where the machine-local setting is stored, for the UI to name. */
+  readonly settingsPath: string;
+};
+
+/**
+ * PATCH /api/content-metadata-settings request body.
+ *
+ * Each leaf is a validated template string (set it), `null` (reset that one
+ * field to the built-in default), or omitted (leave it alone) — a field-by-
+ * field reset patch, not a whole-object replace, because resetting one
+ * template should not disturb every other one a user already configured.
+ */
+export type ContentMetadataSettingsPatch = MetadataTemplatesResetPatch;
+
 /* ------------------------------------------------------------------ *
  * Delivery history
  * ------------------------------------------------------------------ */
@@ -968,4 +1013,14 @@ export type {
   PlatformId,
   PlatformProfile,
 } from "../content/platformProfiles.ts";
-export type { PlatformMetadataSubject } from "../content/platformMetadata.ts";
+export type { PlatformMetadata, PlatformMetadataSubject } from "../content/platformMetadata.ts";
+
+/** Metadata template types, re-exported so clients need one import. */
+export type {
+  CaptionTemplateFields,
+  MetadataTemplates,
+  MetadataTemplatesResetPatch,
+  PartialMetadataTemplates,
+  PlaceholderKey,
+  YoutubeTemplateFields,
+} from "../content/metadataTemplates.ts";
