@@ -51,6 +51,7 @@
     "destination-health": "node scripts/destination-health.mts",
     "destination-fix-plan": "node scripts/destination-fix-plan.mts",
     "content-package": "node scripts/content-package.mts",
+    "content-package-batch": "node scripts/content-package-batch.mts",
     "content-metadata": "node scripts/content-metadata.mts",
     "test": "node --test tests/*.test.mts",
     "render-all-formats": "node scripts/render-track.mts --all-formats"

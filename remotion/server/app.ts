@@ -21,6 +21,11 @@ import {
 import { handleExportMissing } from "./routes/exportMissing.ts";
 import { handleGetContentPackage } from "./routes/contentPackage.ts";
 import {
+  handleApplyContentPackageBatch,
+  handleInspectContentPackageBatch,
+  handlePlanContentPackageBatch,
+} from "./routes/contentPackageBatch.ts";
+import {
   handleGetContentMetadataSettings,
   handleUpdateContentMetadataSettings,
 } from "./routes/contentMetadataSettings.ts";
@@ -234,11 +239,33 @@ const route = async (
     return;
   }
 
-  if (collection === "content-package" && segments.length === 2) {
-    if (method === "GET") {
-      await handleGetContentPackage(request, response);
+  if (collection === "content-package") {
+    // /api/content-package
+    if (segments.length === 2) {
+      if (method === "GET") {
+        await handleGetContentPackage(request, response);
+        return;
+      }
+      sendNotFound(response, "Endpoint");
       return;
     }
+
+    // /api/content-package/batch/inspect|plan|apply
+    if (second === "batch" && third !== undefined && segments.length === 4) {
+      if (method === "POST" && third === "inspect") {
+        await handleInspectContentPackageBatch(request, response);
+        return;
+      }
+      if (method === "POST" && third === "plan") {
+        await handlePlanContentPackageBatch(request, response);
+        return;
+      }
+      if (method === "POST" && third === "apply") {
+        await handleApplyContentPackageBatch(request, response);
+        return;
+      }
+    }
+
     sendNotFound(response, "Endpoint");
     return;
   }

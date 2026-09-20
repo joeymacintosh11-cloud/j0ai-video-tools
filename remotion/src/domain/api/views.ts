@@ -26,6 +26,10 @@ import type {
 } from "../delivery/destinationFixPlan.ts";
 import type { ReleaseBundleFreshness } from "../delivery/releaseBundle.ts";
 import type { ContentPackageMode } from "../content/contentPackage.ts";
+import type {
+  BatchInvalidTrackEntry,
+  ContentPackageActionKind,
+} from "../content/contentPackageBatch.ts";
 import type { PlatformId } from "../content/platformProfiles.ts";
 import type {
   MetadataTemplatesResetPatch,
@@ -736,6 +740,87 @@ export type ContentPackageQuery = {
   readonly platforms?: readonly PlatformId[];
 };
 
+/* ------------------------------------------------------------------ *
+ * Batch Content Package Generation
+ *
+ * Select several tracks, inspect/plan/apply their content packages
+ * together. Every endpoint reuses `deriveContentPackage` per track (the
+ * exact function GET /api/content-package uses for one) and the existing
+ * render queue (`renderManager`/render-batches) — this is orchestration and
+ * aggregation on top of what already exists, not a second engine. See
+ * src/domain/content/contentPackageBatch.ts for the derivation.
+ * ------------------------------------------------------------------ */
+
+/** Shared by inspect/plan/apply. `tracks` is always explicit — never "the catalogue" by omission. */
+export type ContentPackageBatchBody = {
+  readonly tracks: readonly string[];
+  readonly mode?: Exclude<ContentPackageMode, "custom">;
+  readonly platforms?: readonly PlatformId[];
+};
+
+/** POST /api/content-package/batch/apply request body. */
+export type ContentPackageBatchApplyBody = ContentPackageBatchBody & {
+  /** Wait for the queued render batch to settle before responding, up to `timeoutMs`. */
+  readonly wait?: boolean;
+  /** Bounded; a timeout only means this call stopped waiting, never that anything was cancelled. */
+  readonly timeoutMs?: number;
+};
+
+/** One platform/preset target's planned action, at plan or apply time. */
+export type ContentPackagePlannedActionView = {
+  readonly slug: string;
+  readonly platformId: PlatformId;
+  readonly presetId: RenderPresetId;
+  readonly label: string;
+  readonly kind: ContentPackageActionKind;
+  readonly staleReasons: readonly StaleReason[];
+  /** Set only for `blocked` actions. */
+  readonly reason: string | null;
+};
+
+/** POST /api/content-package/batch/plan. Read-only — nothing is queued. */
+export type ContentPackageBatchPlanView = {
+  readonly mode: ContentPackageMode;
+  readonly tracks: number;
+  /** render_missing/rerender_stale actions, de-duplicated by track+preset. */
+  readonly renderable: readonly ContentPackagePlannedActionView[];
+  /** Already queued/rendering elsewhere — apply will follow, not requeue, these. */
+  readonly adopted: readonly ContentPackagePlannedActionView[];
+  readonly ready: readonly ContentPackagePlannedActionView[];
+  readonly blocked: readonly ContentPackagePlannedActionView[];
+  readonly invalid: readonly BatchInvalidTrackEntry[];
+  readonly duplicates: readonly string[];
+};
+
+/**
+ * POST /api/content-package/batch/apply.
+ *
+ * Re-plans from current state immediately before queueing — never the plan a
+ * caller might already be holding from /plan — so nothing here trusts a
+ * stale client-side plan (§10, "plan revalidation"). `renderBatch` is the
+ * render-batches aggregate at response time; follow `batchId` via
+ * GET /api/render-batches/:id/events for live progress, exactly like
+ * /api/export-missing.
+ */
+export type ContentPackageBatchApplyView = {
+  readonly mode: ContentPackageMode;
+  readonly tracks: number;
+  readonly batchId: string | null;
+  readonly renderBatch: RenderBatchView | null;
+  /** True only when `wait` was requested and the batch had not settled by `timeoutMs`. */
+  readonly timedOut: boolean;
+  readonly queued: readonly ContentPackagePlannedActionView[];
+  readonly adopted: readonly ContentPackagePlannedActionView[];
+  readonly alreadyReady: readonly ContentPackagePlannedActionView[];
+  readonly blocked: readonly ContentPackagePlannedActionView[];
+  /** Targets another process holds a render lock on, left out of the batch. */
+  readonly lockedElsewhere: readonly ContentPackagePlannedActionView[];
+  readonly invalid: readonly BatchInvalidTrackEntry[];
+  readonly duplicates: readonly string[];
+  /** True when every renderable target was already ready, in flight, or blocked. */
+  readonly nothingToDo: boolean;
+};
+
 /**
  * GET /api/content-metadata-settings, and the response to a PATCH.
  *
@@ -1010,6 +1095,14 @@ export type {
   PlatformAction,
   PlatformReadiness,
 } from "../content/contentPackage.ts";
+/** Batch content package types, re-exported so clients need one import. */
+export type {
+  BatchContentPackageTotals,
+  BatchContentPackageView,
+  BatchInvalidTrackEntry,
+  BatchTrackEntry,
+  ContentPackageActionKind,
+} from "../content/contentPackageBatch.ts";
 export type {
   PlatformId,
   PlatformProfile,
