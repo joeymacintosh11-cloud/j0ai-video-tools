@@ -18,16 +18,18 @@ in §23a rather than silently corrected.
 
 ## 0. Read this first
 
-**§49 (the Toshi Content Package workflow) is the newest state.** Sections
-1–34 describe the project as it stood at the end of Phase 2B. §35–48 cover
-formats, batching, export-missing, per-track intent, stale/re-export
-detection, cross-process render locks, local delivery, release bundles,
-delivery history, destination health and drift, the destination-wide fix
-plan, and confirmed delivery after a queued render — all landed, all
-verified, all still true. §49 builds on top of every one of them without
-changing any of their behavior: it is a read-only, derived view plus a thin
-platform-mapping layer, not a second rendering or delivery system. Where an
-older section disagrees with the code, the code wins.
+**§50 (editable metadata templates & overrides) is the newest state.**
+Sections 1–34 describe the project as it stood at the end of Phase 2B.
+§35–48 cover formats, batching, export-missing, per-track intent,
+stale/re-export detection, cross-process render locks, local delivery,
+release bundles, delivery history, destination health and drift, the
+destination-wide fix plan, and confirmed delivery after a queued render.
+§49 built the Content Package workflow as a read-only, derived view. §50
+makes that view's generated copy editable — global templates, per-track
+overrides, a whitelisted placeholder renderer — **without changing what §49
+derives readiness from**: render freshness, delivery state and package
+status are exactly as §49 left them. All of §35–49 landed, all verified, all
+still true. Where an older section disagrees with the code, the code wins.
 
 Specifically, these earlier statements are **no longer true**:
 
@@ -5566,16 +5568,514 @@ Changed (additive only — see §49.11):
 
 No push was made.
 
-### 49.18 Recommended next feature (not started)
+### 49.18 Recommended next feature — delivered
 
-**Editable platform metadata templates**, stored per track or globally
-(e.g. a small `contentTemplates.json` alongside `delivery.local.json`) so a
-user can override the YouTube description shape or add a fixed hashtag set
-without editing source. §49.5 centralized the templates specifically to make
-this a contained change: swap `buildPlatformMetadata`'s fixed logic for a
-lookup against stored overrides, falling back to today's deterministic
-defaults when none exist. Should stay text-only and local, consistent with
-every constraint this milestone was built under.
+**Editable platform metadata templates.** Built — see §50, which delivers
+exactly what this section proposed: global templates, per-track overrides
+and a whitelisted placeholder renderer, built on the same
+`buildPlatformMetadata` this section already centralized for the purpose.
+
+---
+
+## 50. Current State — Editable Metadata Templates & Overrides (2026-09-20)
+
+The newest layer. Read this after §49; where the two disagree, this wins. No
+composition, layout, presets, brand sources, render pipeline, render queue,
+locking, delivery, release-bundle or destination-health behavior changed —
+additive only, exactly like §49. No AI copywriting, no external APIs, no
+publishing/OAuth, no database, no generic template language. Package
+readiness (§49.3) is untouched: a template edit changes only the text a
+package shows, never its `packageStatus` or any platform's `readiness`.
+
+### 50.1 The question this answers
+
+§49 generated platform copy from hard-coded template logic. This makes that
+copy genuinely editable in daily use, with an explicit, tested precedence:
+
+```
+per-track override  ->  global template  ->  built-in default
+```
+
+resolved **per field**, never per whole platform block — a track that only
+overrides its YouTube title still gets the global (or built-in) YouTube
+description, and its Reels/Instagram copy is untouched by that override.
+
+### 50.2 The template model
+
+`src/domain/content/metadataTemplates.ts` — pure, browser-safe, no
+dependency on anything Node-specific, exactly like `renderPresets.ts`:
+
+```ts
+type MetadataTemplates = {
+  youtube: { titleTemplate; descriptionTemplate; keywordsTemplate };
+  reels: { captionTemplate; hashtagsTemplate };
+  "instagram-square": { captionTemplate; hashtagsTemplate };
+};
+```
+
+Keyed by `PlatformId` (`"instagram-square"`, not a second `"instagram"`
+spelling) rather than the brief's suggested key names, specifically to rule
+out a class of typo bug between two names for the same platform — the one
+deliberate deviation from the brief's suggested shape, and a correctness
+call, not a style one. `PartialMetadataTemplates` is the same shape with
+every field optional, used for both global settings and a track's own
+overrides. Not a generic template engine: seven fixed fields, one renderer,
+no loops or conditionals in the template language itself.
+
+### 50.3 Placeholders
+
+`PLACEHOLDER_KEYS` — ten, all fixed lookups, no expressions:
+
+```
+{title} {artist} {key} {bpm} {subtitle} {slug} {platform} {filename} {tagline} {subtitleSuffix}
+```
+
+The first eight are exactly what the brief suggested (six base fields plus
+the two useful derived ones, `{platform}` and `{filename}`). `{tagline}` and
+`{subtitleSuffix}` are two more derived values, added specifically to make
+§50.8 (backward compatibility) achievable without any conditional syntax:
+
+- `{tagline}` = the subtitle if present, else `"{key} · {bpm} BPM"` —
+  exactly the old title-builder's fallback.
+- `{subtitleSuffix}` = `" — {subtitle}"` if present, else `""` — exactly the
+  old caption-builder's optional trailing segment.
+
+Both are fixed, non-conditional lookups computed once per render call — the
+same category as `{bpm}` being a number formatted to a string — never
+something a user's own template text can express. Unknown placeholders
+(anything not in this list) are rejected at validation time (§50.6) and, as
+defense in depth, left literally in place by the renderer rather than
+thrown on or silently dropped, with every unknown name reported.
+
+### 50.4 The renderer
+
+`renderTemplate(template, values) -> { text, unknownPlaceholders }`.
+Plain, deterministic, whitelist-only substitution:
+
+- A single regex (`/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g`) finds `{word}` tokens;
+  a known word is substituted, an unknown one is left as-is and reported.
+- **`{{literal}}` is a well-defined escape**: `{{`/`}}` are swapped for
+  sentinel strings before scanning (so `{{title}}` is never mistaken for the
+  `title` placeholder) and restored after substitution. Only ever applies to
+  the template's own text — a *value* being substituted that happens to
+  contain `{{`/`}}` is copied verbatim, never re-escaped or re-scanned.
+- **No eval, no `Function`, no shell/path interpolation, no HTML
+  execution.** A value is copied as plain text; nothing here ever
+  interprets it. Verified directly: a title containing `$(rm -rf /)`,
+  `<script>alert(1)</script>` and `{{process.exit(1)}}` all render as inert
+  text, byte for byte (§50.14, security tests).
+- **Missing optional values render as an empty string** — the brief's
+  explicit preference for "least surprising" over a validation warning.
+  Combined with one normalization rule applied to every render (not a
+  conditional — the same rule, always): **trim, and cap a run of 3+
+  newlines at one blank line.** This is what stops an absent `{subtitle}`
+  from leaving a stray blank paragraph, and it is also exactly what makes
+  §50.8's byte-identical backward compatibility possible with a pure
+  substitution renderer.
+
+### 50.5 Validation
+
+`validateTemplateString(value, label)`: must be a string, at most
+`MAX_TEMPLATE_LENGTH` (2000) characters, and built only from whitelisted
+placeholders — anything else is a structural `TEMPLATE_INVALID` error naming
+the field and, for an unknown placeholder, the exact token(s). No
+platform-specific length limits are enforced here (the brief's explicit
+instruction: do not hard-fail on volatile platform limits); the UI's live
+preview is where that would show up as non-blocking guidance later if ever
+wanted (not built — nothing asked for it yet).
+
+`parseMetadataTemplates(raw)` (strict, whole-object) and
+`coerceMetadataTemplates(raw)` (best-effort, for prefilling a not-yet-valid
+draft) mirror the existing `exportPresets` pair exactly. A **new**
+`TEMPLATE_INVALID` error code was added alongside `INVALID_PRESET`/
+`INVALID_PLATFORM`, mapped to 400.
+
+### 50.6 Global settings storage
+
+`services/content/metadataTemplateSettings.ts`, `content-metadata.local.json`
+at the project root — audited the existing `delivery.local.json` pattern
+first and reused it exactly: gitignored, atomic writes via the same
+`withFileMutation`/`writeAtomicFile` helpers `deliverySettings.ts` already
+uses, absent-means-nothing-configured. **Only overridden fields are
+stored** — never the built-in defaults, which stay a fixed, code-shipped
+constant (`BUILT_IN_DEFAULT_TEMPLATES`) both the server and the UI import
+directly, so there is exactly one copy of the defaults, not two that could
+drift or need to be sent over the wire.
+
+**Malformed-file handling was deliberately not the same as
+`delivery.local.json`'s** — that file silently falls back to "delivery off"
+on any read failure, which is safe because "off" is indistinguishable from
+never having been configured. A broken *content-metadata* file is different:
+someone's real customization could be sitting behind unreadable JSON, and
+silently falling back to built-in defaults would hide that. So
+`readContentMetadataSettings()` returns `{ settings, problem }` — built-in
+defaults are used either way (the app must not break), but `problem` is
+non-null for anything past "file simply does not exist" (malformed JSON,
+wrong shape, an unreadable placeholder) and is surfaced: in the settings
+panel, in `GET /api/content-package`'s `templatesProblem` field, and in the
+CLI's `--show`/inspection output. `writeContentMetadataSettingsPatch`
+refuses to write on top of a currently-unreadable file (`TEMPLATE_INVALID`,
+naming the problem) rather than silently discarding whatever is actually
+there — fix or remove the file by hand first.
+
+### 50.7 Per-track overrides
+
+`TrackMetadata`/`TrackMetadataDraft` gained an optional
+`contentMetadataOverrides?: PartialMetadataTemplates` field, validated by
+`src/domain/tracks/metadata.ts` through the exact same
+`validateTrackMetadata`/`coerceMetadataDraft`/`serializeTrackMetadata` path
+every other field uses — no second metadata file, no second write path.
+`TrackMetadataPatch.contentMetadataOverrides` follows the existing
+`exportPresets` convention: **the whole desired object is sent and
+replaces what's on disk**, never deep-merged with it; `null` clears every
+override (back to fully inherited) and omitting the field leaves it alone.
+Existing `metadata.json` files with no such field remain fully valid and
+unchanged (verified directly — §50.14).
+
+**A real bug was caught and fixed while building this**: the HTTP PATCH
+route (`server/routes/tracks.ts`, `readMetadataPatch`) only ever read a
+fixed allowlist of body fields into the patch it built, and
+`contentMetadataOverrides` had been added to the domain type and the
+service layer but never to that allowlist. The service-level and pure
+tests all passed, because none of them went through the HTTP layer — a
+save from the real UI would silently succeed while quietly not persisting
+the override, since the route handed `updateTrackMetadata` a patch that
+simply never mentioned the field. Caught during the real-headless-Chrome
+end-to-end pass (§50.15) precisely because that pass drives the actual save
+button rather than calling the service directly; fixed by reading
+`contentMetadataOverrides` in `readMetadataPatch` like every other field;
+covered afterward by a dedicated API-level regression test
+(`tests/api-integration.test.mts`) that was verified to fail against the
+pre-fix code and pass against the fix. The lesson generalizes: a field
+added only at the domain/service layer is not exercised until something
+drives it through the actual HTTP body-parsing code, so a field like this
+now always gets one API-level test asserting on-disk persistence, not only
+a service-level one.
+
+### 50.8 Backward compatibility — byte-identical built-in defaults
+
+`BUILT_IN_DEFAULT_TEMPLATES` reproduces the previous hand-written
+`platformMetadata.ts` functions' output **exactly**, in both the common case
+(a subtitle present) and the edge case (absent) — verified directly against
+the literal strings the old implementation produced, for title, description,
+caption and keywords alike (`tests/metadata-templates.test.mts`). This was
+the deciding factor in choosing `{tagline}`/`{subtitleSuffix}` over a
+simpler design that would have left a small, permanent regression in the
+no-subtitle case: Ghetto Geek — the one real track in this repository — has
+a subtitle, so its generated copy is unaffected either way, but "preserve
+current default copy exactly" (an explicit instruction) was read as
+covering every track this feature will ever see, not only the one that
+happens to exist today.
+
+**Keywords and hashtags are always derived from rendered text, never a
+second stored array.** A `keywordsTemplate` is a single string
+(comma-separated); the renderer splits, tagifies (lowercase, hyphenated) and
+deduplicates each token *after* rendering. A `hashtagsTemplate` (new — there
+was no prior hashtags concept) is space-separated and split the same way.
+Neither form is persisted anywhere except as that one template string —
+exactly the brief's instruction not to store comma-separated and array forms
+as two separate truths.
+
+### 50.9 Render-freshness separation
+
+Audited `services/tracks/exportManifest.ts`'s `fingerprintInputs` directly:
+it hashes `props.title, props.artist, props.musicalKey, props.bpm,
+props.subtitle` — fields read from `BeatVisualizerProps`, which
+`buildTrackProps.ts` maps **explicitly**, field by field, never by
+spreading the whole metadata object. `contentMetadataOverrides` (and every
+template field it can ever contain) is therefore **structurally excluded**
+from the render fingerprint — not by a runtime check anywhere, but because
+nothing in the props-building path can reach it. Verified directly
+(`tests/content-package.test.mts`): editing `contentMetadataOverrides` on a
+track with a current, rendered export leaves it `current`/`ready` with no
+stale reasons; editing `title` (a field that *is* rendered into the video)
+on the same track makes it `stale` with reason `metadata_changed`, exactly
+as before this milestone.
+
+### 50.10 Package-metadata freshness
+
+Deliberately no persisted fingerprint of "is this package's text current."
+Every platform's title/description/caption/keywords/hashtags in
+`ContentPackageView` (§49) is recomputed live, on every read, from whatever
+the resolved templates and the track's current fields say right now —
+consistent with §49's own "the package is a view over current state, never
+persisted" design, extended down into the text itself. There is nothing to
+go stale, so there is nothing to track.
+
+### 50.11 API
+
+```
+GET   /api/content-metadata-settings
+PATCH /api/content-metadata-settings
+```
+
+Mirrors `GET`/`PUT /api/delivery/settings` exactly. `GET` returns
+`{ schemaVersion, templates, problem, settingsPath }` — `templates` is only
+the overridden fields (§50.6), never the built-in defaults, which the UI
+already has from the shared domain module. `PATCH` takes a **field-by-field
+reset patch**: each leaf is a validated template string (set it), `null`
+(reset that one field to its built-in default) or omitted (leave it alone)
+— resetting one field must not disturb every other one someone has already
+configured, and this is genuinely a different operation from a track's
+`contentMetadataOverrides: null` (clear *everything*, §50.7); both are
+supported and kept distinct on purpose (the brief's explicit instruction).
+
+Per-track overrides deliberately did **not** get a new endpoint: they flow
+through the existing `PATCH /api/tracks/:slug/metadata`, the same path
+`exportPresets`/`deliveryFolder` already use, so there is exactly one write
+path for track metadata, not two — the brief's explicit instruction, and
+also what surfaced the bug in §50.7.
+
+`GET /api/content-package` (§49.7) now resolves and threads templates
+through automatically: it reads the global settings, passes
+`globalTemplates` and the track's own `contentMetadataOverrides` into
+`deriveContentPackage`, and carries the settings-read `problem` through as
+`ContentPackageView.templatesProblem` — so a caller sees generated copy
+that already reflects both layers, plus whether the global layer is
+currently degraded, without a second request.
+
+### 50.12 UI
+
+- **Content metadata templates** — a new section in the existing
+  Delivery/settings view (`ContentMetadataSettingsPanel.tsx`; the brief's
+  suggested location). Seven fields, each showing an "override"/"built-in"
+  badge, a live preview computed with **the exact same renderer** Content
+  Package uses (`buildPlatformMetadata`, imported directly — no duplicate
+  preview logic), and its own "Reset to built-in" button. Preview uses the
+  currently open track's fields when one is open, a fixed sample subject
+  otherwise, per the brief.
+- **Content metadata overrides** — a new, collapsed-by-default `<details>`
+  section in the Track Detail metadata editor
+  (`ContentMetadataOverridesEditor.tsx`), reusing the same seven-field list
+  (`ui/components/templateFields.ts`, shared with the settings panel so
+  there is one field list, not two). Each field shows "Inherited" (a
+  read-only preview of what it currently resolves to) or, once overridden,
+  an editable textarea plus "Clear override (inherit)" — the brief's
+  explicit example wording. Saved through `MetadataForm`'s existing single
+  save action, not a second one.
+- **Content Package panel** (§49.10) now resolves templates too: it takes
+  the fetched global settings as a prop and passes them straight into the
+  same client-side `deriveContentPackage()` call it already made, so a
+  template edit is reflected the moment settings/track state changes —
+  still zero extra network requests, still the same derivation function
+  everywhere.
+
+### 50.13 CLI
+
+```console
+npm run content-metadata -- --show
+npm run content-metadata -- --set <platform.field> "<template>"
+npm run content-metadata -- --reset <platform.field>
+npm run content-metadata -- --reset-all
+```
+
+Flag-based, not interactive, matching every other script here. `--show` (the
+default) prints every field's resolved value with an override/built-in
+label; `--set`/`--reset`/`--reset-all` go through the exact same
+`writeContentMetadataSettingsPatch` the API PATCH uses. `npm run
+content-package -- <slug> --json` (§49.8) already reflects current templates
+automatically, with no changes needed — it was always going to call
+`deriveContentPackage` with whatever templates were resolved, and now that
+resolution includes the real global/track layers instead of only built-in
+defaults.
+
+### 50.14 Tests (60 added, 479 total)
+
+- `tests/metadata-templates.test.mts` (39) — the renderer (substitution,
+  repeated/multiple placeholders, unknown-placeholder reporting,
+  `{{literal}}` escaping, empty-value and blank-line-collapse behavior,
+  Unicode/emoji/quotes/accents/multiline/very-long-title), validation
+  (unknown placeholder, wrong type, length limit), precedence (built-in
+  only, global wins over built-in, track wins over global, a **partial**
+  track override falling through per field, clearing/resetting each layer),
+  byte-identical built-in defaults with and without a subtitle, and security
+  (no eval/Function, shell metacharacters and HTML-shaped values copied
+  verbatim as inert text).
+- `tests/content-metadata-settings.test.mts` (7) — the settings file's
+  read/write behavior against a **mocked** `fsPromises.readFile` (the same
+  pattern `destination-fix-plan-render.test.mts` already established for
+  `delivery.local.json`), so nothing here ever touches this project's real
+  `content-metadata.local.json`: missing-file, malformed-JSON,
+  unknown-placeholder, other-read-error and valid-file cases, plus writing
+  refused on top of an unreadable file and an invalid patch rejected before
+  any read.
+- `tests/content-package.test.mts` (+9) — end to end through a real
+  fixture and `publishExport` (no forked render): track override beats
+  global end to end, a partial override leaves every other field on the
+  global/built-in chain, clearing an override restores inheritance, an
+  existing `metadata.json` with no override field is still fully valid, an
+  unknown-placeholder save is rejected and never reaches disk, optimistic
+  concurrency is preserved for this field exactly like every other one, a
+  metadata-template-only edit never makes a current export stale, a
+  render-affecting edit (title) still does, and package readiness is
+  provably unaffected by a copy-only global template change.
+- `tests/api-integration.test.mts` (+5, including the §50.7 regression) —
+  `GET`/`PATCH /api/content-metadata-settings` (read-only-safe reads,
+  unknown-placeholder/unknown-field rejection writing nothing),
+  `GET /api/content-package` reflecting a mocked global template through
+  the real settings-read path, and the `contentMetadataOverrides`
+  HTTP-persistence regression test described in §50.7.
+
+### 50.15 End-to-end results
+
+Ran twice: once purely over HTTP against a locally-started API server
+(`curl`), and once through a **real headless Chrome instance** (system
+Chrome, `--headless=new`, driven over raw CDP — the same approach §46.13
+and §49.14 used) against a synthetic `metadata-probe` track (never Ghetto
+Geek), with the app's own dev server and API server both running for real.
+
+- Built-in defaults confirmed in the Content Package panel.
+- A global YouTube title template set and saved through the real Content
+  Metadata settings panel; confirmed the per-field live preview updated
+  immediately, and confirmed (screenshot) every other field stayed on
+  "built-in" with its own correct preview.
+- A per-track YouTube title override set through the real Track Detail
+  editor — **this is the pass that caught and proved the fix for the
+  §50.7 bug**: the first attempt saved successfully but the override did
+  not persist; after the fix, `GET /api/content-package` and the on-disk
+  `metadata.json` both confirmed `"Metadata Probe [TRACK EXCLUSIVE]"`, and
+  the overrides editor correctly showed an "override" badge with the exact
+  saved value.
+- "Clear override (inherit)" clicked through the real UI; confirmed
+  `contentMetadataOverrides` removed from `metadata.json` on disk and the
+  title reverted to the global value.
+- Confirmed throughout: readiness/status marks in the Content Package panel
+  and the catalogue badge never changed while only copy was being edited.
+
+All probe artifacts (`public/tracks/metadata-probe/`,
+`content-metadata.local.json`) were removed afterward and verified gone;
+the API server, Vite dev server and every headless Chrome process were
+stopped and verified gone. Ghetto Geek's `metadata.json` and its three
+rendered exports were confirmed byte-identical/mtime-identical to before
+this milestone throughout — never touched.
+
+### 50.16 Verification performed
+
+- `npx tsc --noEmit` and `npx eslint src scripts services server ui tests`:
+  clean throughout, including after the §50.7 fix.
+- Full test suite: **479/479 passing** (419 pre-existing + 60 new), rerun
+  three times consecutively, stable.
+- `npx vite build`: passes (the pre-existing >500 kB chunk advisory only,
+  unchanged).
+- `validate-track`/`prepare-track -- ghetto-geek`: exit 0.
+- `git diff --check`: clean.
+- The §50.7 regression test was verified to **fail** against the pre-fix
+  route handler (via `git stash` on just that file) and **pass** against
+  the fix, before being left in the suite permanently.
+- Final state: no `content-metadata.local.json` or probe track left behind,
+  no leaked Chrome/Chromium or Node render processes, no stray lock files,
+  working tree clean apart from this milestone's own files.
+
+### 50.17 Performance
+
+- Template rendering is a handful of regex operations over strings at most
+  a couple thousand characters long — trivial, and deliberately not cached
+  (no evidence it needs to be; the brief's explicit instruction).
+- The GET endpoint's added cost is exactly one more small file read
+  (the settings file) beyond what §49.7 already cost; no new catalogue
+  scan, no new per-track work beyond the one track being inspected.
+- The UI's live previews (settings panel, overrides editor, Content
+  Package panel) all compute client-side from data already fetched —
+  zero additional network requests, exactly continuing §49's own approach.
+
+### 50.18 Remaining limitations
+
+- **No platform-length guidance yet** (e.g. "this YouTube title is over
+  100 characters") — deferred per the brief's own instruction not to
+  hard-fail or over-build against volatile platform limits; the renderer
+  and validator have no opinion on rendered-text length, only on the
+  template's own structural length (§50.5).
+- **`{{literal}}` escaping is a simple two-pass string replace**, not a
+  full parser — well-defined for the documented case, but a pathological
+  input with adjacent/nested brace runs (e.g. `"{{{title}}}"`) may not
+  parse the way every reader would guess. Documented rather than special-
+  cased further, per the brief's "do not introduce ambiguous parsing"
+  instruction — the chosen rule is simple and fixed, not ambiguous, even
+  where an edge case is inherently underspecified in any brace-doubling
+  scheme.
+- **Global settings malformed-file recovery requires manual intervention**:
+  `writeContentMetadataSettingsPatch` refuses to write on top of a file it
+  could not parse, by design (§50.6) — the file must be fixed or deleted by
+  hand first, exactly like a merge conflict is not auto-resolved.
+- **No metadata text files are written to a delivery destination.** Content
+  Package metadata stays preview-only, exactly as §49 left it; §49.15/§26
+  of this brief both deferred that on purpose, and nothing here changed
+  that scope.
+- **Delivery/release-bundle artifacts do not carry resolved platform
+  copy.** Audited directly (§49.6's reasoning extends unchanged): a
+  release bundle answers "what shipped," not "what should the caption
+  say," and adding social copy to it would duplicate what Content Package
+  already answers live. Not added.
+
+### 50.19 Files changed
+
+New:
+
+- `src/domain/content/metadataTemplates.ts`
+- `services/content/metadataTemplateSettings.ts`
+- `server/routes/contentMetadataSettings.ts`
+- `scripts/content-metadata.mts`
+- `ui/components/ContentMetadataSettingsPanel.tsx`
+- `ui/components/ContentMetadataOverridesEditor.tsx`
+- `ui/components/templateFields.ts`
+- `tests/metadata-templates.test.mts`
+- `tests/content-metadata-settings.test.mts`
+
+Changed (additive only — see §50.6/§50.7/§50.9 for exactly what did and did
+not change):
+
+- `src/domain/tracks/errors.ts` (`TEMPLATE_INVALID`)
+- `src/domain/tracks/types.ts` (`contentMetadataOverrides` field)
+- `src/domain/tracks/metadata.ts` (coerce/serialize/validate the new field)
+- `src/domain/api/views.ts` (settings view/patch types, re-exports,
+  `TrackMetadataPatch.contentMetadataOverrides`)
+- `src/domain/content/platformMetadata.ts` (rewritten to render through
+  `metadataTemplates.ts`; `PlatformMetadata` gained `hashtags`)
+- `src/domain/content/contentPackage.ts` (threads templates through;
+  `ContentPackagePlatformEntry` gained `hashtags`; `ContentPackageView`
+  gained `templatesProblem`)
+- `server/http/errors.ts` (status mapping for `TEMPLATE_INVALID`)
+- `server/routes/tracks.ts` (the §50.7 bug fix)
+- `server/routes/contentPackage.ts` (resolves and threads templates)
+- `server/app.ts` (route registration)
+- `services/tracks/updateTrackMetadata.ts` (merges the new field)
+- `scripts/content-package.mts` (resolves global templates)
+- `ui/api/client.ts` (`getContentMetadataSettings`,
+  `updateContentMetadataSettings`)
+- `ui/components/ContentPackagePanel.tsx` (threads `globalTemplates`
+  through; shows hashtags)
+- `ui/components/MetadataForm.tsx` (embeds the overrides editor)
+- `ui/components/TrackDetail.tsx`, `ui/App.tsx` (fetch/thread the new
+  settings)
+- `ui/styles/app.css` (`.templates*`)
+- `package.json` (`content-metadata` script)
+- `.gitignore` (`content-metadata.local.json`)
+- `tests/api-integration.test.mts`, `tests/content-package.test.mts`
+- `docs/HANDOFF_PHASE_2B_TO_2C.md` (this section)
+
+### 50.20 Commits
+
+1. Domain: the template model, renderer, placeholders, built-in defaults,
+   precedence resolution.
+2. Global settings persistence (service + API + CLI).
+3. Per-track overrides (schema, validation, the metadata write path, and
+   the route-handler bug fix once found).
+4. Content Package/UI integration.
+5. Tests.
+6. Documentation (this section).
+
+No push was made.
+
+### 50.21 Recommended next feature (not started)
+
+**Non-blocking platform-length guidance** in the settings/overrides preview
+— a small, purely advisory line under a rendered preview ("512 characters —
+YouTube descriptions are commonly truncated past ~5000" / "this title is
+118 characters"), never a hard validation error, using whatever length
+figures are stable enough to hard-code without chasing a moving platform
+target. The renderer and validator already expose exactly the rendered text
+and its length; this would be a UI-only addition reading them, with no new
+domain concept required.
 
 Not started, per instruction.
 

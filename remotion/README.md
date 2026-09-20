@@ -565,6 +565,50 @@ Default behavior is inspection only; `--apply` renders the package's own
 missing/stale outputs, reusing the same planner and render call as
 `npm run render-missing`.
 
+### Editable metadata templates
+
+The title/description/caption/keywords/hashtags a content package generates
+come from small, editable templates rather than fixed code, resolved per
+field with this precedence:
+
+```
+per-track override  ->  global template  ->  built-in default
+```
+
+Templates are plain text with a fixed set of placeholders —
+`{title} {artist} {key} {bpm} {subtitle} {slug} {platform} {filename}`, plus
+`{tagline}` and `{subtitleSuffix}` (subtitle-aware fallbacks used by the
+built-in defaults) — no expressions, no conditionals, no code. `{{title}}`
+escapes to a literal `{title}`.
+
+**Global templates** live in the Delivery panel's "Content metadata
+templates" section, or from the terminal:
+
+```console
+npm run content-metadata -- --show
+npm run content-metadata -- --set youtube.titleTemplate "{title} | {artist}"
+npm run content-metadata -- --reset youtube.titleTemplate
+npm run content-metadata -- --reset-all
+```
+
+Stored in `content-metadata.local.json` (gitignored, machine-local — only
+the fields you actually override are written; the built-in Toshi defaults
+ship in code). A malformed file is never silently ignored: it is reported
+(in the panel, in the API, in the CLI) and built-in defaults are used until
+it is fixed.
+
+**Per-track overrides** live in a track's own metadata editor, under
+"Content metadata overrides" (collapsed by default). Each field shows
+"Inherited" with a live preview of what it currently resolves to, or, once
+overridden, an editable box and "Clear override (inherit)". Saved through
+the same metadata save as everything else in that form — there is no
+second write path.
+
+None of this affects what gets rendered into a video, and none of it can
+make a current export go stale: only the fields actually burned into the
+composition (title, key, BPM, subtitle, cover, audio) do that, exactly as
+before this feature existed.
+
 ### Delivery history
 
 A release bundle says what a track ships *now*. It cannot say what went out last
