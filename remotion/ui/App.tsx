@@ -3,7 +3,7 @@ import {
   DEFAULT_RENDER_PRESET_ID,
   type RenderPresetId,
 } from "../src/domain/video/renderPresets.ts";
-import type { DestinationHealthView } from "../src/domain/api/views.ts";
+import type { ContentPackageBatchApplyView, DestinationHealthView } from "../src/domain/api/views.ts";
 import {
   createRenderBatch,
   getContentMetadataSettings,
@@ -60,6 +60,8 @@ export const App: React.FC = () => {
   /** Tracks ticked for a batch. Empty means the single-track workflow. */
   const [checked, setChecked] = useState<readonly string[]>([]);
   const [batchId, setBatchId] = useState<string | null>(null);
+  /** Kept while the panel is closed so reopening can reattach to exact jobs. */
+  const [contentPackageApply, setContentPackageApply] = useState<ContentPackageBatchApplyView | null>(null);
   const [queueError, setQueueError] = useState<ApiRequestError | null>(null);
 
   const select = useCallback((slug: string) => {
@@ -332,6 +334,8 @@ export const App: React.FC = () => {
               tracks={checked}
               hasDestination={Boolean(delivery.data && delivery.data.root !== null)}
               onQueued={setBatchId}
+              applied={contentPackageApply}
+              onApplied={setContentPackageApply}
               onChanged={refreshAll}
               onClose={() => setShowingBatchPackage(false)}
             />

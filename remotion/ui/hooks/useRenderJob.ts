@@ -3,7 +3,7 @@ import type {
   RenderJobLogEntry,
   RenderJobView,
 } from "../../src/domain/api/views.ts";
-import { getRender, getRenderLogs, renderEventsUrl } from "../api/client.ts";
+import { ApiRequestError, getRender, getRenderLogs, renderEventsUrl } from "../api/client.ts";
 
 /**
  * Follows one render job over Server-Sent Events.
@@ -29,6 +29,7 @@ const MAX_LOGS = 200;
 export const useRenderJob = (
   jobId: string | null,
   onFinished: () => void,
+  loadLogs = true,
 ): RenderJobState => {
   const [job, setJob] = useState<RenderJobView | null>(null);
   const [logs, setLogs] = useState<readonly RenderJobLogEntry[]>([]);
@@ -47,6 +48,9 @@ export const useRenderJob = (
       return;
     }
 
+    let cancelled = false;
+    setJob(null);
+    setLogs([]);
     setMissing(false);
     notifiedJobRef.current = null;
 
@@ -59,12 +63,15 @@ export const useRenderJob = (
     const source = new EventSource(renderEventsUrl(jobId));
 
     const onJob = (event: MessageEvent<string>) => {
+      if (cancelled) return;
       setJob(JSON.parse(event.data) as RenderJobView);
     };
 
     const onTerminal = (event: MessageEvent<string>) => {
+      if (cancelled) return;
       setJob(JSON.parse(event.data) as RenderJobView);
       notifyFinished();
+      source.close();
     };
 
     source.addEventListener("status", onJob);
@@ -74,6 +81,7 @@ export const useRenderJob = (
     source.addEventListener("cancelled", onTerminal);
 
     source.addEventListener("log", (event: MessageEvent<string>) => {
+      if (cancelled || !loadLogs) return;
       const entry = JSON.parse(event.data) as RenderJobLogEntry;
 
       setLogs((previous) => [...previous, entry].slice(-MAX_LOGS));
@@ -84,32 +92,43 @@ export const useRenderJob = (
     source.addEventListener("error", () => {
       void getRender(jobId)
         .then((current) => {
+          if (cancelled) return;
           setJob(current);
           if (current.status === "completed" || current.status === "failed" || current.status === "cancelled") {
             notifyFinished();
             source.close();
           }
         })
-        .catch(() => {
-          setMissing(true);
-          source.close();
+        .catch((cause: unknown) => {
+          if (cancelled) return;
+          // A temporary transport/API failure is not a missing render job.
+          // EventSource reconnects automatically; only an authoritative 404
+          // means the server has forgotten this in-memory job.
+          if (cause instanceof ApiRequestError && cause.status === 404) {
+            setMissing(true);
+            source.close();
+          }
         });
     });
 
     // Seed the log panel for a job that finished before this mounted, where
     // there is no live stream left to replay from.
-    void getRenderLogs(jobId)
-      .then((snapshot) => {
-        setLogs((previous) =>
-          previous.length === 0 ? snapshot.logs : previous,
-        );
-      })
-      .catch(() => undefined);
+    if (loadLogs) {
+      void getRenderLogs(jobId)
+        .then((snapshot) => {
+          if (cancelled) return;
+          setLogs((previous) =>
+            previous.length === 0 ? snapshot.logs : previous,
+          );
+        })
+        .catch(() => undefined);
+    }
 
     return () => {
+      cancelled = true;
       source.close();
     };
-  }, [jobId]);
+  }, [jobId, loadLogs]);
 
   return { job, logs, missing };
 };

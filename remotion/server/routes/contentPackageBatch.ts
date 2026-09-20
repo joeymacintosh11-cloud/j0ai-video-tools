@@ -3,6 +3,7 @@ import type {
   ContentPackageBatchApplyView,
   ContentPackageBatchPlanView,
   ContentPackagePlannedActionView,
+  ContentPackageBatchJobReferenceView,
 } from "../../src/domain/api/views.ts";
 import {
   deriveBatchContentPackage,
@@ -46,6 +47,28 @@ const toPlannedActionView = (
   staleReasons: action.staleReasons,
   reason: action.reason,
 });
+
+const jobReference = (
+  action: ContentPackagePlannedAction,
+  jobId: string | null,
+  outcome: ContentPackageBatchJobReferenceView["outcome"],
+): ContentPackageBatchJobReferenceView => ({
+  actionId: `${action.slug}::${action.platformId}::${action.presetId}`,
+  slug: action.slug,
+  platformId: action.platformId,
+  presetId: action.presetId,
+  jobId,
+  outcome,
+});
+
+const adoptedReferences = (actions: readonly ContentPackagePlannedAction[]): readonly ContentPackageBatchJobReferenceView[] => {
+  const jobs = renderManager.listJobs();
+  return actions.map((action) => {
+    const matches = jobs.filter((job) => job.slug === action.slug && job.presetId === action.presetId);
+    const active = matches.find((job) => job.status !== "completed" && job.status !== "failed" && job.status !== "cancelled");
+    return jobReference(action, (active ?? matches[0])?.id ?? null, "adopted");
+  });
+};
 
 /** POST /api/content-package/batch/inspect */
 export const handleInspectContentPackageBatch = async (
@@ -182,12 +205,14 @@ export const handleApplyContentPackageBatch = async (
     invalid: plan.invalid,
     duplicates: plan.duplicates,
   };
+  const adopted = adoptedReferences(plan.adopted);
 
   if (plan.renderable.length === 0) {
     const view: ContentPackageBatchApplyView = {
       ...common,
       batchId: null,
       renderBatch: null,
+      jobReferences: adopted,
       timedOut: false,
       queued: [],
       lockedElsewhere: [],
@@ -200,19 +225,25 @@ export const handleApplyContentPackageBatch = async (
   const { batch, locked } = renderManager.startBatch(
     toRenderTargetsFromPlan(plan),
   );
-  const queuedKeys = new Set(
-    batch.jobs.map((job) => `${job.slug}::${job.presetId}`),
+  const queuedJobs = new Map(
+    batch.jobs.map((job) => [`${job.slug}::${job.presetId}`, job.id]),
   );
   const lockedKeys = new Set(
     locked.map((target) => `${target.slug}::${target.preset}`),
   );
 
   const queued = plan.renderable.filter((action) =>
-    queuedKeys.has(`${action.slug}::${action.presetId}`),
+    queuedJobs.has(`${action.slug}::${action.presetId}`),
   );
   const lockedElsewhere = plan.renderable.filter((action) =>
     lockedKeys.has(`${action.slug}::${action.presetId}`),
   );
+  const jobReferences = [
+    ...adopted,
+    ...queued.map((action) => jobReference(action,
+      queuedJobs.get(`${action.slug}::${action.presetId}`)!, "queued")),
+    ...lockedElsewhere.map((action) => jobReference(action, null, "locked_elsewhere")),
+  ];
 
   const { settled } = wait
     ? await waitForBatchSettle(batch.id, timeoutMs)
@@ -222,6 +253,7 @@ export const handleApplyContentPackageBatch = async (
     ...common,
     batchId: batch.id,
     renderBatch: renderManager.getBatch(batch.id),
+    jobReferences,
     timedOut: wait && !settled,
     queued: queued.map(toPlannedActionView),
     lockedElsewhere: lockedElsewhere.map(toPlannedActionView),

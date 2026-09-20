@@ -807,6 +807,8 @@ export type ContentPackageBatchApplyView = {
   readonly tracks: number;
   readonly batchId: string | null;
   readonly renderBatch: RenderBatchView | null;
+  /** Exact action → render job correlation returned by the server at Apply time. */
+  readonly jobReferences: readonly ContentPackageBatchJobReferenceView[];
   /** True only when `wait` was requested and the batch had not settled by `timeoutMs`. */
   readonly timedOut: boolean;
   readonly queued: readonly ContentPackagePlannedActionView[];
@@ -819,6 +821,15 @@ export type ContentPackageBatchApplyView = {
   readonly duplicates: readonly string[];
   /** True when every renderable target was already ready, in flight, or blocked. */
   readonly nothingToDo: boolean;
+};
+
+export type ContentPackageBatchJobReferenceView = {
+  readonly actionId: string;
+  readonly slug: string;
+  readonly platformId: PlatformId;
+  readonly presetId: RenderPresetId;
+  readonly jobId: string | null;
+  readonly outcome: "queued" | "adopted" | "locked_elsewhere";
 };
 
 /**

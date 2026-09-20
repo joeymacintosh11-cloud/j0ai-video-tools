@@ -1783,10 +1783,42 @@ body {
 
 .batchpackage__row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 6px 0;
   border-bottom: 1px solid var(--border);
+}
+
+.batchpackage__platforms {
+  flex-basis: 100%;
+  list-style: none;
+  margin: 0 0 0 26px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.batchpackage__platform {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.batchpackage__platform > :first-child {
+  min-width: 105px;
+}
+
+.batchpackage__progress {
+  display: inline-block;
+  width: 80px;
+}
+
+.batchpackage__joberror {
+  color: var(--deep-red);
 }
 
 .batchpackage__slug {

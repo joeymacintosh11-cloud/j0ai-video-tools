@@ -82,6 +82,38 @@ export type DeriveBatchContentPackageOptions = {
   readonly now?: () => string;
 };
 
+const entryFromPackage = (pkg: ContentPackageView): BatchTrackEntry => ({
+  slug: pkg.slug,
+  title: pkg.title,
+  packageStatus: pkg.packageStatus,
+  platforms: pkg.platforms,
+  readyCount: pkg.counts.ready,
+  missingCount: pkg.counts.missing,
+  staleCount: pkg.counts.stale,
+  renderingCount: pkg.counts.rendering,
+  blockedCount: pkg.counts.blocked,
+  selected: true,
+  availableActions: Array.from(new Set(pkg.platforms.flatMap((platform) => platform.actions))),
+});
+
+const totalsFor = (tracks: readonly BatchTrackEntry[]): BatchContentPackageTotals => {
+  const sum = (pick: (entry: BatchTrackEntry) => number): number =>
+    tracks.reduce((total, entry) => total + pick(entry), 0);
+
+  return {
+    tracks: tracks.length,
+    complete: tracks.filter((t) => t.packageStatus === "complete").length,
+    incomplete: tracks.filter((t) => t.packageStatus === "incomplete").length,
+    stale: tracks.filter((t) => t.packageStatus === "stale").length,
+    blocked: tracks.filter((t) => t.packageStatus === "blocked").length,
+    rendering: sum((t) => t.renderingCount),
+    totalPlatformTargets: sum((t) => t.readyCount + t.missingCount + t.staleCount + t.renderingCount + t.blockedCount),
+    readyTargets: sum((t) => t.readyCount),
+    missingTargets: sum((t) => t.missingCount),
+    staleTargets: sum((t) => t.staleCount),
+  };
+};
+
 /** Aggregates already-derived per-track packages — reuses, never recomputes, readiness. */
 export const deriveBatchContentPackage = (
   packages: readonly ContentPackageView[],
@@ -89,40 +121,7 @@ export const deriveBatchContentPackage = (
 ): BatchContentPackageView => {
   const now = options.now ?? (() => new Date().toISOString());
 
-  const tracks: BatchTrackEntry[] = packages.map((pkg) => ({
-    slug: pkg.slug,
-    title: pkg.title,
-    packageStatus: pkg.packageStatus,
-    platforms: pkg.platforms,
-    readyCount: pkg.counts.ready,
-    missingCount: pkg.counts.missing,
-    staleCount: pkg.counts.stale,
-    renderingCount: pkg.counts.rendering,
-    blockedCount: pkg.counts.blocked,
-    selected: true,
-    availableActions: Array.from(
-      new Set(pkg.platforms.flatMap((platform) => platform.actions)),
-    ),
-  }));
-
-  const sum = (pick: (entry: BatchTrackEntry) => number): number =>
-    tracks.reduce((total, entry) => total + pick(entry), 0);
-
-  const totals: BatchContentPackageTotals = {
-    tracks: tracks.length,
-    complete: tracks.filter((t) => t.packageStatus === "complete").length,
-    incomplete: tracks.filter((t) => t.packageStatus === "incomplete").length,
-    stale: tracks.filter((t) => t.packageStatus === "stale").length,
-    blocked: tracks.filter((t) => t.packageStatus === "blocked").length,
-    rendering: sum((t) => t.renderingCount),
-    totalPlatformTargets: packages.reduce(
-      (total, pkg) => total + pkg.counts.selected,
-      0,
-    ),
-    readyTargets: sum((t) => t.readyCount),
-    missingTargets: sum((t) => t.missingCount),
-    staleTargets: sum((t) => t.staleCount),
-  };
+  const tracks = packages.map(entryFromPackage);
 
   return {
     inspectedAt: now(),
@@ -130,8 +129,19 @@ export const deriveBatchContentPackage = (
     tracks,
     invalid: options.invalid ?? [],
     duplicates: options.duplicates ?? [],
-    totals,
+    totals: totalsFor(tracks),
   };
+};
+
+/** Replace one authoritative package after a job settles, then recompute coherent totals. */
+export const replaceBatchTrackPackage = (
+  view: BatchContentPackageView,
+  pkg: ContentPackageView,
+  now: () => string = () => new Date().toISOString(),
+): BatchContentPackageView => {
+  if (!view.tracks.some((track) => track.slug === pkg.slug)) return view;
+  const tracks = view.tracks.map((track) => track.slug === pkg.slug ? entryFromPackage(pkg) : track);
+  return { ...view, inspectedAt: now(), tracks, totals: totalsFor(tracks) };
 };
 
 /* ------------------------------------------------------------------ *
