@@ -8,6 +8,10 @@ import { syncBuiltinESMExports } from "node:module";
 import test, { type TestContext } from "node:test";
 import { handleRequest } from "../server/app.ts";
 import { CONTENT_METADATA_SETTINGS_FILE } from "../services/content/metadataTemplateSettings.ts";
+import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
+import { publishExport } from "../services/render/publishExport.ts";
+import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
+import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
 import { fixture, tempFiles } from "./fixtures.mts";
 
 const api = async (t: TestContext) => {
@@ -809,4 +813,185 @@ test("GET /api/content-package reflects a configured global template, via the re
   const youtube = body.data.platforms.find((p: { platformId: string }) => p.platformId === "youtube");
   assert.equal(youtube.title, "Fixture — configured globally");
   assert.equal(body.data.templatesProblem, null);
+});
+
+/* ------------------------------------------------------------------ *
+ * Batch Content Package Generation
+ * ------------------------------------------------------------------ */
+
+/** A fixture with a cover/beat on disk and a helper to publish a "current" export for one preset. */
+const batchFixture = async (t: TestContext, extra: Record<string, unknown> = {}) => {
+  const f = await fixture(t, extra);
+  await fs.writeFile(f.cover, "cover");
+  await fs.writeFile(f.beat, "audio");
+  t.after(() => fs.rm(f.outputDir, { recursive: true, force: true }));
+  const props = buildTrackProps({
+    slug: f.slug,
+    metadata: parseTrackMetadata(JSON.parse(await fs.readFile(f.metadata, "utf8")), "fixture"),
+    analysisAvailable: true,
+  });
+  const publish = (presetId: "youtube-16x9" | "vertical-9x16" | "square-1x1") =>
+    publishExport(f.slug, presetId, fingerprintInputs(props, presetId), async (file) => {
+      await fs.writeFile(file, "successful video");
+    });
+  return { ...f, publish };
+};
+
+const postBatch = (base: string, action: "inspect" | "plan" | "apply", body: unknown) =>
+  fetch(`${base}/api/content-package/batch/${action}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+test("POST /api/content-package/batch/inspect aggregates several tracks, matching the worked example", async (t) => {
+  const a = await batchFixture(t, { exportPresets: ["youtube-16x9"] });
+  await a.publish("youtube-16x9");
+  const b = await batchFixture(t, { exportPresets: ["youtube-16x9"] });
+  // b's youtube export is left missing.
+
+  const { base } = await api(t);
+  const response = await postBatch(base, "inspect", { tracks: [a.slug, b.slug] });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.data.totals.tracks, 2);
+  assert.equal(body.data.totals.readyTargets, 1);
+  assert.equal(body.data.totals.missingTargets, 1);
+});
+
+test("POST /api/content-package/batch/inspect rejects an empty track list", async (t) => {
+  const { base } = await api(t);
+  const response = await postBatch(base, "inspect", { tracks: [] });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, "INVALID_REQUEST");
+});
+
+test("POST /api/content-package/batch/inspect rejects a batch over the maximum size", async (t) => {
+  const { base } = await api(t);
+  const response = await postBatch(base, "inspect", {
+    tracks: Array.from({ length: 101 }, (_, i) => `track-${i}`),
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, "INVALID_REQUEST");
+});
+
+test("POST /api/content-package/batch/inspect de-duplicates a repeated track and reports it", async (t) => {
+  const a = await batchFixture(t);
+  const { base } = await api(t);
+  const response = await postBatch(base, "inspect", { tracks: [a.slug, a.slug] });
+  const body = await response.json();
+  assert.equal(body.data.totals.tracks, 1);
+  assert.deepEqual(body.data.duplicates, [a.slug]);
+});
+
+test("POST /api/content-package/batch/inspect reports a not-found track without failing the rest", async (t) => {
+  const a = await batchFixture(t, { exportPresets: ["youtube-16x9"] });
+  await a.publish("youtube-16x9");
+  const { base } = await api(t);
+  const response = await postBatch(base, "inspect", { tracks: [a.slug, "batch-probe-missing-track"] });
+  const body = await response.json();
+  assert.equal(body.data.totals.tracks, 1);
+  assert.equal(body.data.invalid.length, 1);
+  assert.equal(body.data.invalid[0].slug, "batch-probe-missing-track");
+});
+
+test("POST /api/content-package/batch/inspect rejects an unknown platform", async (t) => {
+  const a = await batchFixture(t);
+  const { base } = await api(t);
+  const response = await postBatch(base, "inspect", { tracks: [a.slug], platforms: ["twitter"] });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, "INVALID_PLATFORM");
+});
+
+test("POST /api/content-package/batch/plan classifies renderable, ready and blocked without queueing anything", async (t) => {
+  const ready = await batchFixture(t, { exportPresets: ["youtube-16x9"] });
+  await ready.publish("youtube-16x9");
+  const missing = await batchFixture(t, { exportPresets: ["youtube-16x9"] });
+  const blocked = await fixture(t, { bpm: "not-a-number" });
+
+  const { base } = await api(t);
+  const response = await postBatch(base, "plan", {
+    tracks: [ready.slug, missing.slug, blocked.slug],
+    platforms: ["youtube"],
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.data.ready.length, 1);
+  assert.equal(body.data.renderable.length, 1);
+  assert.equal(body.data.renderable[0].kind, "render_missing");
+  assert.equal(body.data.blocked.length, 1);
+
+  // Planning never queues: the missing target still reads as missing, not
+  // rendering/queued, immediately afterwards.
+  const detail = await (await fetch(`${base}/api/tracks/${missing.slug}`)).json();
+  assert.equal(detail.data.exports[0].status, "missing");
+});
+
+test("POST /api/content-package/batch/apply is a successful no-op when everything is already ready", async (t) => {
+  const a = await batchFixture(t, { exportPresets: ["youtube-16x9"] });
+  await a.publish("youtube-16x9");
+  const { base } = await api(t);
+  const response = await postBatch(base, "apply", { tracks: [a.slug], platforms: ["youtube"] });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.data.batchId, null);
+  assert.equal(body.data.nothingToDo, true);
+  assert.equal(body.data.alreadyReady.length, 1);
+});
+
+test("POST /api/content-package/batch/apply queues missing targets through the existing render queue", async (t) => {
+  const childProcess = (await import("node:child_process")).default;
+  const { Worker } = await import("./managerHarness.mts");
+  const { renderManager } = await import("../server/services/renderManager.ts");
+  const worker = new Worker();
+  worker.pid = 54321;
+  t.mock.method(childProcess, "fork", () => worker);
+  syncBuiltinESMExports();
+  t.after(() => {
+    worker.emit("message", { type: "cancelled" });
+    worker.emit("exit", 0, null);
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+
+  const a = await batchFixture(t, { exportPresets: ["youtube-16x9"] });
+  const { base } = await api(t);
+  const response = await postBatch(base, "apply", { tracks: [a.slug], platforms: ["youtube"] });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.ok(body.data.batchId);
+  assert.equal(body.data.queued.length, 1);
+  assert.equal(body.data.queued[0].slug, a.slug);
+  assert.equal(body.data.nothingToDo, false);
+
+  const view = (await (await fetch(`${base}/api/tracks/${a.slug}`)).json()).data.exports[0];
+  assert.equal(view.status, "rendering");
+
+  renderManager.cancelBatch(body.data.batchId);
+});
+
+test("apply revalidates immediately before queueing — a target published after /plan is not re-queued", async (t) => {
+  const a = await batchFixture(t, { exportPresets: ["youtube-16x9"] });
+  const { base } = await api(t);
+
+  const planned = await (await postBatch(base, "plan", { tracks: [a.slug], platforms: ["youtube"] })).json();
+  assert.equal(planned.data.renderable.length, 1);
+
+  // Another caller (or a previous apply) finishes the render before this
+  // apply's own fresh read.
+  await a.publish("youtube-16x9");
+
+  const applied = await (await postBatch(base, "apply", { tracks: [a.slug], platforms: ["youtube"] })).json();
+  assert.equal(applied.data.batchId, null);
+  assert.equal(applied.data.nothingToDo, true);
+  assert.equal(applied.data.alreadyReady.length, 1);
+});
+
+test("POST /api/content-package/batch/apply rejects a malformed body before touching anything", async (t) => {
+  const { base } = await api(t);
+  for (const body of [{}, { tracks: "not-an-array" }, { tracks: [] }, { tracks: [123] }]) {
+    const response = await postBatch(base, "apply", body);
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal((await response.json()).error.code, "INVALID_REQUEST");
+  }
 });
