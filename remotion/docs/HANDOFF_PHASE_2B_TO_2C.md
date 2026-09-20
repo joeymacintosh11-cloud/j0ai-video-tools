@@ -6752,6 +6752,17 @@ inspect. It recorded four per-job SSE connections because the panel was
 remounted once; each mount had one connection per unique active job. A
 separate real cancellation left its package incomplete.
 
+An additional exact-shape browser probe used three further 3-second tracks
+with all three platforms selected. Eight genuine exports were prepared, and
+one Square output was deliberately changed after publication. Fresh inspect
+confirmed **9 targets: 7 ready, 1 missing, 1 stale**. The browser selected
+all three, planned two actions, and applied them through the real panel.
+Visible totals moved through `7 ready / 1 queued / 1 rendering`, then
+`8 ready / 1 rendering`, then **9 ready** with no panel reopen or manual
+refresh. Chrome recorded exactly two per-job SSE subscriptions and two
+targeted package GETs (one each for the missing and stale tracks), real
+progress values, and zero page exceptions. Selection was cleared afterward.
+
 A targeted fault proxy severed one real job SSE stream mid-render while
 leaving the page and API alive. Chrome recorded a second subscription, real
 progress recovery, one targeted package GET, and final Ready with no console
