@@ -12,6 +12,7 @@ import {
   listTracks,
 } from "./api/client.ts";
 import { ApiRequestError } from "./api/client.ts";
+import { BatchContentPackagePanel } from "./components/BatchContentPackagePanel.tsx";
 import { ContentMetadataSettingsPanel } from "./components/ContentMetadataSettingsPanel.tsx";
 import { DeliverPanel } from "./components/DeliverPanel.tsx";
 import { DeliveryHistoryPanel } from "./components/DeliveryHistoryPanel.tsx";
@@ -39,6 +40,7 @@ export const App: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [showingSettings, setShowingSettings] = useState(false);
   const [showingHistory, setShowingHistory] = useState(false);
+  const [showingBatchPackage, setShowingBatchPackage] = useState(false);
   /**
    * The last catalogue-wide destination scan, held in memory only. A scan is
    * always explicit (never run automatically on a poll or a render), so this
@@ -124,6 +126,18 @@ export const App: React.FC = () => {
         ? previous.filter((candidate) => candidate !== slug)
         : [...previous, slug],
     );
+  }, []);
+
+  // Always this exact listed set — there is no filter to hide a wider
+  // catalogue behind, so "select all" can never silently reach past what is
+  // visible right now.
+  const selectAllTracks = useCallback(() => {
+    setChecked((tracks.data ?? []).map((track) => track.slug));
+  }, [tracks.data]);
+
+  const clearSelection = useCallback(() => {
+    setChecked([]);
+    setShowingBatchPackage(false);
   }, []);
 
   /** Queues every ticked track in every ticked format. */
@@ -242,7 +256,7 @@ export const App: React.FC = () => {
             <button
               type="button"
               className="button button--quiet"
-              onClick={() => setChecked([])}
+              onClick={clearSelection}
             >
               Clear
             </button>
@@ -263,6 +277,13 @@ export const App: React.FC = () => {
               }}
               onChanged={refreshAll}
             />
+            <button
+              type="button"
+              className={`button button--quiet${showingBatchPackage ? " button--active" : ""}`}
+              onClick={() => setShowingBatchPackage((previous) => !previous)}
+            >
+              {showingBatchPackage ? "Hide content packages" : "Inspect content packages"}
+            </button>
           </>
         ) : (
           <span className="muted">
@@ -295,6 +316,8 @@ export const App: React.FC = () => {
             onSelect={select}
             checked={checked}
             onToggleChecked={toggleChecked}
+            onSelectAll={selectAllTracks}
+            onClearSelection={clearSelection}
             health={health}
           />
         )}
@@ -302,6 +325,16 @@ export const App: React.FC = () => {
         {detail.error ? (
           <div style={{ padding: 20 }}>
             <ErrorBanner error={detail.error} title="Could not load track" />
+          </div>
+        ) : showingBatchPackage && checked.length > 0 ? (
+          <div className="detail">
+            <BatchContentPackagePanel
+              tracks={checked}
+              hasDestination={Boolean(delivery.data && delivery.data.root !== null)}
+              onQueued={setBatchId}
+              onChanged={refreshAll}
+              onClose={() => setShowingBatchPackage(false)}
+            />
           </div>
         ) : showingHistory ? (
           <div className="detail">

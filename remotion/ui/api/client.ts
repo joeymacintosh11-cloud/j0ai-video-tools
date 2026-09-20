@@ -5,8 +5,11 @@ import type {
   ApiError,
   ApiErrorCode,
   ApiResponse,
+  BatchContentPackageView,
   ContentMetadataSettingsPatch,
   ContentMetadataSettingsView,
+  ContentPackageBatchApplyView,
+  ContentPackageBatchPlanView,
   ContentPackageView,
   CreateRenderBatchBody,
   CreateRenderBatchView,
@@ -380,6 +383,62 @@ export const getContentPackage = (
   for (const platform of platforms ?? []) params.append("platform", platform);
 
   return request<ContentPackageView>(`/api/content-package?${params.toString()}`);
+};
+
+/* ------------------------------------------------------------------ *
+ * Batch Content Package Generation
+ * ------------------------------------------------------------------ */
+
+type ContentPackageBatchRequest = {
+  readonly tracks: readonly string[];
+  readonly mode?: Exclude<ContentPackageMode, "custom">;
+  readonly platforms?: readonly PlatformId[];
+};
+
+/** Aggregated package view over several tracks — read-only, nothing queued. */
+export const inspectContentPackageBatch = (
+  tracks: readonly string[],
+  mode: Exclude<ContentPackageMode, "custom"> = "intent",
+  platforms?: readonly PlatformId[],
+): Promise<BatchContentPackageView> => {
+  const body: ContentPackageBatchRequest = { tracks, mode, ...(platforms ? { platforms } : {}) };
+  return jsonRequest<BatchContentPackageView>(
+    "/api/content-package/batch/inspect",
+    "POST",
+    body,
+  );
+};
+
+/** What applying would queue, without queueing anything. */
+export const planContentPackageBatch = (
+  tracks: readonly string[],
+  mode: Exclude<ContentPackageMode, "custom"> = "intent",
+  platforms?: readonly PlatformId[],
+): Promise<ContentPackageBatchPlanView> => {
+  const body: ContentPackageBatchRequest = { tracks, mode, ...(platforms ? { platforms } : {}) };
+  return jsonRequest<ContentPackageBatchPlanView>(
+    "/api/content-package/batch/plan",
+    "POST",
+    body,
+  );
+};
+
+/**
+ * Re-plans from current state and queues missing/stale renders through the
+ * existing render queue. `batchId`, when non-null, follows exactly like any
+ * other render batch (GET /api/render-batches/:id/events).
+ */
+export const applyContentPackageBatch = (
+  tracks: readonly string[],
+  mode: Exclude<ContentPackageMode, "custom"> = "intent",
+  platforms?: readonly PlatformId[],
+): Promise<ContentPackageBatchApplyView> => {
+  const body: ContentPackageBatchRequest = { tracks, mode, ...(platforms ? { platforms } : {}) };
+  return jsonRequest<ContentPackageBatchApplyView>(
+    "/api/content-package/batch/apply",
+    "POST",
+    body,
+  );
 };
 
 /**

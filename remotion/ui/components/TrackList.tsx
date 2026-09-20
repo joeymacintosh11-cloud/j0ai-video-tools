@@ -43,6 +43,9 @@ export const TrackList: React.FC<{
   readonly onSelect: (slug: string) => void;
   readonly checked: readonly string[];
   readonly onToggleChecked: (slug: string) => void;
+  /** Ticks every track currently listed here — always this whole list, never a hidden superset. */
+  readonly onSelectAll: () => void;
+  readonly onClearSelection: () => void;
   /**
    * The last catalogue-wide destination scan, or null if none has been run
    * this session. Never fetched here, and never implied to be current — a scan
@@ -50,7 +53,16 @@ export const TrackList: React.FC<{
    * last click found.
    */
   readonly health?: DestinationHealthView | null;
-}> = ({ tracks, selectedSlug, onSelect, checked, onToggleChecked, health = null }) => {
+}> = ({
+  tracks,
+  selectedSlug,
+  onSelect,
+  checked,
+  onToggleChecked,
+  onSelectAll,
+  onClearSelection,
+  health = null,
+}) => {
   const packageStatuses = useMemo(() => {
     const byslug = new Map<string, ReturnType<typeof packageStatusFor>>();
     for (const track of tracks) byslug.set(track.slug, packageStatusFor(track));
@@ -61,8 +73,20 @@ export const TrackList: React.FC<{
   <nav className="tracklist" aria-label="Tracks">
     <div className="tracklist__head">
       <span>Tracks</span>
-      <span>
-        {checked.length > 0 ? `${checked.length} of ${tracks.length}` : tracks.length}
+      <span className="tracklist__headactions">
+        <span>
+          {checked.length > 0 ? `${checked.length} of ${tracks.length}` : tracks.length}
+        </span>
+        {tracks.length > 0 ? (
+          <button
+            type="button"
+            className="button button--quiet button--tiny"
+            title={`Select all ${tracks.length} listed track${tracks.length === 1 ? "" : "s"}`}
+            onClick={checked.length === tracks.length ? onClearSelection : onSelectAll}
+          >
+            {checked.length === tracks.length ? "Select none" : "Select all"}
+          </button>
+        ) : null}
       </span>
     </div>
 
