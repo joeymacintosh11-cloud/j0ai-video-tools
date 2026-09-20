@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   PLACEHOLDER_KEYS,
   resolveMetadataTemplates,
@@ -62,22 +62,31 @@ export const ContentMetadataSettingsPanel: React.FC<{
   readonly previewSubject: PlatformMetadataSubject | null;
   readonly onChanged: () => void;
 }> = ({ settings, previewSubject, onChanged }) => {
+  const [baseline, setBaseline] = useState(settings);
   const [draft, setDraft] = useState<PartialMetadataTemplates>(settings.templates);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiRequestError | null>(null);
   const [saved, setSaved] = useState(false);
+  // After our own save, the parent still holds its pre-save snapshot until
+  // its reload finishes. Do not re-seed from that known-old snapshot.
+  const awaitingParentRevision = useRef<string | null>(null);
+
+  const dirty = useMemo(
+    () => Object.keys(diffTemplates(baseline.templates, draft)).length > 0,
+    [baseline.templates, draft],
+  );
 
   // Re-seed when the server's answer changes, so an edit made elsewhere (the
   // CLI, or a hand-edited settings file) is reflected rather than overwritten.
   useEffect(() => {
-    setDraft(settings.templates);
-    setSaved(false);
-  }, [settings.templates]);
-
-  const dirty = useMemo(
-    () => Object.keys(diffTemplates(settings.templates, draft)).length > 0,
-    [settings.templates, draft],
-  );
+    if (settings.revision === awaitingParentRevision.current) return;
+    awaitingParentRevision.current = null;
+    if (settings.revision !== baseline.revision && !dirty) {
+      setBaseline(settings);
+      setDraft(settings.templates);
+      setSaved(false);
+    }
+  }, [settings, baseline.revision, dirty]);
 
   const resolved = useMemo(() => resolveMetadataTemplates(draft, null), [draft]);
 
@@ -85,7 +94,9 @@ export const ContentMetadataSettingsPanel: React.FC<{
     setBusy(true);
     setError(null);
     try {
-      const result = await updateContentMetadataSettings(diffTemplates(settings.templates, draft));
+      const result = await updateContentMetadataSettings(diffTemplates(baseline.templates, draft), baseline.revision);
+      awaitingParentRevision.current = settings.revision;
+      setBaseline(result);
       setDraft(result.templates);
       setSaved(true);
       onChanged();
@@ -114,6 +125,12 @@ export const ContentMetadataSettingsPanel: React.FC<{
       {settings.problem ? (
         <p className="note note--warning" role="status">
           <span className="note__message">{settings.problem}</span>
+        </p>
+      ) : null}
+      {settings.revision !== baseline.revision &&
+      settings.revision !== awaitingParentRevision.current && dirty ? (
+        <p className="note note--warning" role="status">
+          <span className="note__message">Templates changed elsewhere while you were editing. Your draft is preserved; saving will report a conflict. Copy your edits before reloading.</span>
         </p>
       ) : null}
 

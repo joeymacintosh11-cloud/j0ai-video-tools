@@ -96,6 +96,15 @@ test("literal braces around an unrecognized word never get reported as unknown",
   assert.deepEqual(result.unknownPlaceholders, []);
 });
 
+test("literal brace escapes do not rewrite identical-looking user values", () => {
+  const sentinel = "\u0000TOSHI_LBRACE\u0000";
+  const result = renderTemplate("{{title}} {title}", {
+    title: sentinel, artist: "", key: "", bpm: "", subtitle: "", slug: "",
+    platform: "", filename: "", tagline: "", subtitleSuffix: "",
+  });
+  assert.equal(result.text, `{title} ${sentinel}`);
+});
+
 test("empty optional placeholders render as empty string, not the literal token", () => {
   const result = renderTemplate("Subtitle: [{subtitle}]", {
     title: "", artist: "", key: "", bpm: "", subtitle: "", slug: "",
@@ -193,6 +202,28 @@ test("an unknown placeholder is rejected with a clear message naming it", () => 
   assert.equal(problems.length, 1);
   assert.match(problems[0], /\{vibe\}/);
   assert.match(problems[0], /youtube\.titleTemplate/);
+});
+
+test("malformed single braces are rejected; doubled braces render literally", () => {
+  for (const input of ["{ title }", "{title.foo}", "{{{title}}}", "{title\ntitle}", "{}", "{title", "title}", '{"name": 1}']) {
+    assert.notEqual(validateTemplateString(input, "field").problems.length, 0, input);
+  }
+  for (const input of ["{unknown}", "{Title}", "{constructor}", "{__proto__}"]) {
+    assert.notEqual(validateTemplateString(input, "field").problems.length, 0, input);
+  }
+  assert.deepEqual(validateTemplateString('{{"name": 1}} and {{title}}', "field").problems, []);
+  assert.deepEqual(validateTemplateString('"{title}"', "field").problems, []);
+  assert.equal(validateTemplateString("{{__proto__}}", "field").value, "{{__proto__}}");
+});
+
+test("empty strings are intentional at both precedence levels; whitespace is preserved until render trim", () => {
+  const global = { youtube: { titleTemplate: "", descriptionTemplate: " " } };
+  const track = { youtube: { titleTemplate: "" } };
+  assert.equal(resolveMetadataTemplates(global, track).youtube.titleTemplate, "");
+  assert.equal(resolveMetadataTemplates(global, null).youtube.titleTemplate, "");
+  assert.equal(resolveMetadataTemplates(global, null).youtube.descriptionTemplate, " ");
+  assert.equal(validateTemplateString("", "field").value, "");
+  assert.equal(validateTemplateString(" ", "field").value, " ");
 });
 
 test("a non-string template value is rejected", () => {

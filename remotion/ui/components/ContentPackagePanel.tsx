@@ -144,9 +144,10 @@ export const ContentPackagePanel: React.FC<{
   readonly track: TrackDetailView;
   /** The global content-metadata templates; null while still loading or unconfigured. */
   readonly globalTemplates: PartialMetadataTemplates | null;
+  readonly templatesProblem: string | null;
   readonly onChanged: () => void;
   readonly onBatchStarted: (batchId: string) => void;
-}> = ({ track, globalTemplates, onChanged, onBatchStarted }) => {
+}> = ({ track, globalTemplates, templatesProblem, onChanged, onBatchStarted }) => {
   const [mode, setMode] = useState<"intent" | "full">("intent");
 
   const pkg = useMemo(
@@ -160,9 +161,9 @@ export const ContentPackagePanel: React.FC<{
           contentMetadataOverrides: track.metadata?.contentMetadataOverrides,
           exports: track.exports,
         },
-        { mode, globalTemplates },
+        { mode, globalTemplates, templatesProblem },
       ),
-    [track, mode, globalTemplates],
+    [track, mode, globalTemplates, templatesProblem],
   );
 
   const selectedPresetIds = useMemo(
@@ -179,6 +180,9 @@ export const ContentPackagePanel: React.FC<{
 
   return (
     <div className="contentpackage">
+      {pkg.templatesProblem ? (
+        <p className="note note--warning" role="status"><span className="note__message">{pkg.templatesProblem}</span></p>
+      ) : null}
       <div className="contentpackage__summary">
         <PackageStatusBadge status={pkg.packageStatus} />
         <span className="exportmissing__counts">

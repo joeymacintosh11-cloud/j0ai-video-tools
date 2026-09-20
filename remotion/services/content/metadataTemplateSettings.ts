@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
+import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import {
   applyMetadataTemplatesResetPatch,
   assertNoTemplateProblems,
@@ -42,6 +44,8 @@ export const EMPTY_CONTENT_METADATA_SETTINGS: ContentMetadataSettingsStored = {
 
 export type ReadContentMetadataSettingsResult = {
   readonly settings: ContentMetadataSettingsStored;
+  /** Hash of the exact file bytes, or "missing" if no file exists. */
+  readonly revision: string;
   /**
    * Set only when the file exists but could not be read as valid settings —
    * never for a simply-absent file, which just means "nothing configured
@@ -59,22 +63,25 @@ export type ReadContentMetadataSettingsResult = {
  * pretend nothing is wrong either.
  */
 export const readContentMetadataSettings =
-  async (): Promise<ReadContentMetadataSettingsResult> => {
+  async (filePath = CONTENT_METADATA_SETTINGS_FILE): Promise<ReadContentMetadataSettingsResult> => {
     let raw: string;
     try {
-      raw = await readFile(CONTENT_METADATA_SETTINGS_FILE, "utf8");
+      raw = await readFile(filePath, "utf8");
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
-        return { settings: EMPTY_CONTENT_METADATA_SETTINGS, problem: null };
+        return { settings: EMPTY_CONTENT_METADATA_SETTINGS, revision: "missing", problem: null };
       }
       return {
         settings: EMPTY_CONTENT_METADATA_SETTINGS,
-        problem: `${CONTENT_METADATA_SETTINGS_FILE} could not be read: ${
+        revision: "unreadable",
+        problem: `${filePath} could not be read: ${
           error instanceof Error ? error.message : String(error)
         }. Using built-in defaults until it is fixed.`,
       };
     }
+
+    const revision = createHash("sha256").update(raw).digest("hex");
 
     let parsed: unknown;
     try {
@@ -82,22 +89,38 @@ export const readContentMetadataSettings =
     } catch (error) {
       return {
         settings: EMPTY_CONTENT_METADATA_SETTINGS,
-        problem: `${CONTENT_METADATA_SETTINGS_FILE} is not valid JSON: ${
+        revision,
+        problem: `${filePath} is not valid JSON: ${
           error instanceof Error ? error.message : String(error)
         }. Using built-in defaults until it is fixed.`,
       };
     }
 
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return { settings: EMPTY_CONTENT_METADATA_SETTINGS, revision,
+        problem: `${filePath} must contain a settings object. Using built-in defaults until it is fixed.` };
+    }
     const record = parsed as Record<string, unknown>;
+    const shapeProblems: string[] = [];
+    if (record.schemaVersion !== CONTENT_METADATA_TEMPLATES_SCHEMA_VERSION) {
+      shapeProblems.push(`schemaVersion must be ${CONTENT_METADATA_TEMPLATES_SCHEMA_VERSION}.`);
+    }
+    if (record.templates === undefined || record.templates === null) {
+      shapeProblems.push("templates must be an object.");
+    }
+    for (const key of Object.keys(record)) {
+      if (key !== "schemaVersion" && key !== "templates") shapeProblems.push(`Unknown settings key "${key}".`);
+    }
     const { templates, problems } = parseMetadataTemplates(
       record.templates,
       "templates",
     );
 
-    if (problems.length > 0) {
+    if (shapeProblems.length > 0 || problems.length > 0) {
       return {
         settings: EMPTY_CONTENT_METADATA_SETTINGS,
-        problem: `${CONTENT_METADATA_SETTINGS_FILE} is malformed: ${problems.join(" ")} Using built-in defaults until it is fixed.`,
+        revision,
+        problem: `${filePath} is malformed: ${[...shapeProblems, ...problems].join(" ")} Using built-in defaults until it is fixed.`,
       };
     }
 
@@ -106,6 +129,7 @@ export const readContentMetadataSettings =
         schemaVersion: CONTENT_METADATA_TEMPLATES_SCHEMA_VERSION,
         templates: templates ?? {},
       },
+      revision,
       problem: null,
     };
   };
@@ -122,20 +146,24 @@ export const readContentMetadataSettings =
  */
 export const writeContentMetadataSettingsPatch = async (
   rawPatch: unknown,
-): Promise<ContentMetadataSettingsStored> =>
-  withFileMutation(CONTENT_METADATA_SETTINGS_FILE, async () => {
+  expectedRevision?: string,
+  filePath = CONTENT_METADATA_SETTINGS_FILE,
+): Promise<{ settings: ContentMetadataSettingsStored; revision: string }> =>
+  withFileMutation(filePath, async () => {
     const { patch, problems: patchProblems } = parseMetadataTemplatesResetPatch(
       rawPatch,
       "templates",
     );
     assertNoTemplateProblems(patchProblems);
 
-    const { settings: current, problem } = await readContentMetadataSettings();
+    const { settings: current, problem, revision } = await readContentMetadataSettings(filePath);
     if (problem !== null) {
       assertNoTemplateProblems([
-        `${CONTENT_METADATA_SETTINGS_FILE} is currently unreadable and must be fixed or removed by hand before it can be edited here: ${problem}`,
+        `${filePath} is currently unreadable and must be fixed or removed by hand before it can be edited here: ${problem}`,
       ]);
     }
+    const conflict = () => new TrackError(trackIssue("TEMPLATE_CONFLICT", "Content metadata settings changed since they were read. Refresh before saving again."));
+    if (expectedRevision !== undefined && expectedRevision !== revision) throw conflict();
 
     const next: ContentMetadataSettingsStored = {
       schemaVersion: CONTENT_METADATA_TEMPLATES_SCHEMA_VERSION,
@@ -145,9 +173,14 @@ export const writeContentMetadataSettingsPatch = async (
       ),
     };
 
-    await writeAtomicFile(CONTENT_METADATA_SETTINGS_FILE, (handle) =>
-      handle.writeFile(`${JSON.stringify(next, null, 2)}\n`, "utf-8"),
+    const serialized = `${JSON.stringify(next, null, 2)}\n`;
+    await writeAtomicFile(filePath, (handle) =>
+      handle.writeFile(serialized, "utf-8"),
+      async () => {
+        const latest = await readContentMetadataSettings(filePath);
+        if (latest.problem !== null || latest.revision !== revision) throw conflict();
+      },
     );
 
-    return next;
+    return { settings: next, revision: createHash("sha256").update(serialized).digest("hex") };
   });

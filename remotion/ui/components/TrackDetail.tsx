@@ -173,6 +173,7 @@ export const TrackDetail: React.FC<{
         <ContentPackagePanel
           track={track}
           globalTemplates={contentMetadataSettings?.templates ?? null}
+          templatesProblem={contentMetadataSettings?.problem ?? null}
           onChanged={onChanged}
           onBatchStarted={onBatchStarted}
         />

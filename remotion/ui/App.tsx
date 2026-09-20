@@ -277,6 +277,11 @@ export const App: React.FC = () => {
           <ErrorBanner error={queueError} title="Could not queue renders" />
         </div>
       ) : null}
+      {contentMetadataSettings.error ? (
+        <div className="app__toolbar app__toolbar--error">
+          <ErrorBanner error={contentMetadataSettings.error} title="Could not load content metadata settings" />
+        </div>
+      ) : null}
 
       <div className="app__body">
         {tracks.error ? (

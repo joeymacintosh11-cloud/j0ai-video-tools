@@ -151,6 +151,12 @@ const readExportPresets = (
 
 const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch => {
   const patch: Record<string, unknown> = {};
+  const allowed = ["title", "artist", "key", "subtitle", "deliveryFolder", "bpm", "exportPresets", "contentMetadataOverrides"];
+  for (const key of Object.keys(body)) {
+    if (!allowed.includes(key)) {
+      throw new TrackError(trackIssue("INVALID_REQUEST", `Unknown metadata field "${key}".`));
+    }
+  }
 
   // deliveryFolder is included: an empty string clears it, which is why it is
   // read as a plain string rather than validated away here.

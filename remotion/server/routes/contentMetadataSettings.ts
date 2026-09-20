@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+import { parseMetadataTemplatesResetPatch } from "../../src/domain/content/metadataTemplates.ts";
 import type { ContentMetadataSettingsView } from "../../src/domain/api/views.ts";
 import {
   CONTENT_METADATA_SETTINGS_FILE,
@@ -17,10 +19,11 @@ import { readJsonBody, sendOk } from "../http/json.ts";
  */
 
 const toView = async (): Promise<ContentMetadataSettingsView> => {
-  const { settings, problem } = await readContentMetadataSettings();
+  const { settings, problem, revision } = await readContentMetadataSettings();
 
   return {
     schemaVersion: settings.schemaVersion,
+    revision,
     templates: settings.templates,
     problem,
     settingsPath: CONTENT_METADATA_SETTINGS_FILE,
@@ -38,8 +41,19 @@ export const handleUpdateContentMetadataSettings = async (
   response: ServerResponse,
 ): Promise<void> => {
   const body = await readJsonBody(request);
-
-  await writeContentMetadataSettingsPatch(body);
-
-  sendOk(response, await toView());
+  if (Object.keys(body).length === 0) {
+    throw new TrackError(trackIssue("INVALID_REQUEST", "Provide at least one template field to set or reset."));
+  }
+  const parsed = parseMetadataTemplatesResetPatch(body);
+  if (parsed.problems.length === 0 && parsed.patch === null) {
+    throw new TrackError(trackIssue("INVALID_REQUEST", "Provide at least one template field to set or reset."));
+  }
+  const ifMatch = request.headers["if-match"];
+  if (ifMatch !== undefined &&
+      (typeof ifMatch !== "string" || !/^"(?:[a-f0-9]{64}|missing|unreadable)"$/.test(ifMatch))) {
+    throw new TrackError(trackIssue("INVALID_REQUEST", "If-Match must contain a quoted settings revision."));
+  }
+  const { settings, revision } = await writeContentMetadataSettingsPatch(body, ifMatch?.slice(1, -1));
+  sendOk(response, { schemaVersion: settings.schemaVersion, templates: settings.templates,
+    revision, problem: null, settingsPath: CONTENT_METADATA_SETTINGS_FILE } satisfies ContentMetadataSettingsView);
 };

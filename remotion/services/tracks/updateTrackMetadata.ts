@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { withFileMutation, writeAtomicFile } from "./atomicFile.ts";
 import { metadataRevision } from "./metadataRevision.ts";
+import { parseMetadataTemplates } from "../../src/domain/content/metadataTemplates.ts";
 import type { TrackMetadataPatch } from "../../src/domain/api/views.ts";
 import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import {
@@ -58,6 +59,14 @@ const readExistingDraft = async (
         source,
       ),
     );
+  }
+
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    const override = (parsed as Record<string, unknown>).contentMetadataOverrides;
+    const { problems } = parseMetadataTemplates(override);
+    if (problems.length > 0) {
+      throw new TrackError(trackIssue("TEMPLATE_INVALID", `${source}: ${problems.join(" ")}`, source));
+    }
   }
 
   const current = coerceMetadataDraft(parsed);

@@ -67,7 +67,7 @@ const showTemplates = async (): Promise<void> => {
   const { settings, problem } = await readContentMetadataSettings();
 
   if (problem) {
-    console.log(`! ${problem}`);
+    throw new TrackError(trackIssue("TEMPLATE_INVALID", problem));
   }
 
   console.log(`Settings file: ${CONTENT_METADATA_SETTINGS_FILE}\n`);
@@ -131,14 +131,14 @@ runCli("inspecting content metadata settings", async () => {
       process.exit(1);
     }
     await writeContentMetadataSettingsPatch(patchFor(path, value));
-    console.log(`✓ ${path} updated. Default copy for a track with no overrides of its own is unaffected.`);
+    console.log(`✓ ${path} updated.`);
     return;
   }
 
-  // --show, or no recognized flag: read-only by default.
-  await showTemplates();
-  if (argv.length > 0 && !argv.includes("--show")) {
-    console.log(`\nUnrecognized argument(s): ${argv.join(" ")}`);
+  if (argv.length > 0 && (argv.length !== 1 || argv[0] !== "--show")) {
     printUsage();
+    throw new TrackError(trackIssue("INVALID_REQUEST", `Unrecognized argument(s): ${argv.join(" ")}`));
   }
+  // --show, or no flag: read-only by default.
+  await showTemplates();
 });

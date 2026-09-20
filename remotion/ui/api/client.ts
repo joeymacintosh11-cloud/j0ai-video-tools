@@ -397,12 +397,13 @@ export const getContentMetadataSettings = (): Promise<ContentMetadataSettingsVie
  */
 export const updateContentMetadataSettings = (
   patch: ContentMetadataSettingsPatch,
+  revision?: string,
 ): Promise<ContentMetadataSettingsView> =>
-  jsonRequest<ContentMetadataSettingsView>(
-    "/api/content-metadata-settings",
-    "PATCH",
-    patch,
-  );
+  request<ContentMetadataSettingsView>("/api/content-metadata-settings", {
+    method: "PATCH",
+    headers: { "content-type": "application/json", ...(revision ? { "if-match": `"${revision}"` } : {}) },
+    body: JSON.stringify(patch),
+  });
 
 /* ------------------------------------------------------------------ *
  * Release bundles

@@ -58,20 +58,7 @@ export const MAX_TEMPLATE_LENGTH = 2000;
  * The renderer
  * ------------------------------------------------------------------ */
 
-const PLACEHOLDER_PATTERN = /\{([a-zA-Z][a-zA-Z0-9_]*)\}/g;
-
-// `{{` / `}}` are a literal-brace escape, handled as two string passes before
-// and after substitution rather than inside the placeholder regex, so there
-// is exactly one well-defined rule ("double the brace") instead of any
-// lookahead/lookbehind ambiguity about what counts as "escaped".
-const LBRACE_SENTINEL = "\u0000TOSHI_LBRACE\u0000";
-const RBRACE_SENTINEL = "\u0000TOSHI_RBRACE\u0000";
-
-const escapeLiteralBraces = (template: string): string =>
-  template.split("{{").join(LBRACE_SENTINEL).split("}}").join(RBRACE_SENTINEL);
-
-const restoreLiteralBraces = (text: string): string =>
-  text.split(LBRACE_SENTINEL).join("{").split(RBRACE_SENTINEL).join("}");
+const PLACEHOLDER_NAME_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]*$/;
 
 /**
  * Rendered text is trimmed, and runs of three or more newlines are capped at
@@ -87,24 +74,41 @@ const normalizeRenderedText = (text: string): string =>
 export type TemplateScan = {
   readonly known: readonly PlaceholderKey[];
   readonly unknown: readonly string[];
+  readonly malformed: readonly string[];
 };
 
-/** Which placeholders a template references, ignoring `{{literal}}` text. */
+/** Scan the same brace escapes and placeholder tokens the renderer supports. */
 export const scanTemplatePlaceholders = (template: string): TemplateScan => {
-  const escaped = escapeLiteralBraces(template);
   const known = new Set<PlaceholderKey>();
   const unknown: string[] = [];
-
-  for (const match of escaped.matchAll(PLACEHOLDER_PATTERN)) {
-    const name = match[1];
-    if (isPlaceholderKey(name)) {
-      known.add(name);
-    } else if (!unknown.includes(name)) {
-      unknown.push(name);
+  const malformed: string[] = [];
+  for (let i = 0; i < template.length;) {
+    if (template.startsWith("{{", i)) {
+      const end = template.indexOf("}}", i + 2);
+      if (end < 0 || /[{}]/.test(template.slice(i + 2, end))) {
+        malformed.push(template.slice(i, Math.min(template.length, i + 40)));
+        break;
+      }
+      i = end + 2;
+      continue;
     }
+    if (template[i] === "{") {
+      const end = template.indexOf("}", i + 1);
+      const name = end < 0 ? "" : template.slice(i + 1, end);
+      if (!PLACEHOLDER_NAME_PATTERN.test(name)) {
+        malformed.push(template.slice(i, end < 0 ? Math.min(template.length, i + 40) : end + 1));
+      } else if (isPlaceholderKey(name)) {
+        known.add(name);
+      } else if (!unknown.includes(name)) {
+        unknown.push(name);
+      }
+      i = end < 0 ? template.length : end + 1;
+      continue;
+    }
+    if (template[i] === "}") malformed.push("}");
+    i++;
   }
-
-  return { known: [...known], unknown };
+  return { known: [...known], unknown, malformed };
 };
 
 export type TemplateRenderResult = {
@@ -127,19 +131,36 @@ export const renderTemplate = (
   template: string,
   values: PlaceholderValues,
 ): TemplateRenderResult => {
-  const escaped = escapeLiteralBraces(template);
   const unknownPlaceholders: string[] = [];
-
-  const substituted = escaped.replace(PLACEHOLDER_PATTERN, (whole, name: string) => {
-    if (isPlaceholderKey(name)) {
-      return values[name];
+  let substituted = "";
+  for (let i = 0; i < template.length;) {
+    if (template.startsWith("{{", i)) {
+      const end = template.indexOf("}}", i + 2);
+      if (end >= 0 && !/[{}]/.test(template.slice(i + 2, end))) {
+        substituted += `{${template.slice(i + 2, end)}}`;
+        i = end + 2;
+        continue;
+      }
     }
-    if (!unknownPlaceholders.includes(name)) unknownPlaceholders.push(name);
-    return whole;
-  });
+    if (template[i] === "{") {
+      const end = template.indexOf("}", i + 1);
+      const name = end < 0 ? "" : template.slice(i + 1, end);
+      if (PLACEHOLDER_NAME_PATTERN.test(name)) {
+        if (isPlaceholderKey(name)) substituted += values[name];
+        else {
+          if (!unknownPlaceholders.includes(name)) unknownPlaceholders.push(name);
+          substituted += template.slice(i, end + 1);
+        }
+        i = end + 1;
+        continue;
+      }
+    }
+    substituted += template[i];
+    i++;
+  }
 
   return {
-    text: normalizeRenderedText(restoreLiteralBraces(substituted)),
+    text: normalizeRenderedText(substituted),
     unknownPlaceholders,
   };
 };
@@ -281,7 +302,10 @@ export const validateTemplateString = (
       problems: [`"${label}" must be at most ${MAX_TEMPLATE_LENGTH} characters.`],
     };
   }
-  const { unknown } = scanTemplatePlaceholders(value);
+  const { unknown, malformed } = scanTemplatePlaceholders(value);
+  if (malformed.length > 0) {
+    return { value: undefined, problems: [`"${label}" has malformed braces or placeholder syntax: ${malformed.join(", ")}. Use {{ and }} for literal braces.`] };
+  }
   if (unknown.length > 0) {
     return {
       value: undefined,
@@ -383,8 +407,8 @@ export const coerceMetadataTemplates = (
     for (const fieldKey of fieldKeysFor(platform)) {
       const value = block[fieldKey];
       if (typeof value === "string" && value.length <= MAX_TEMPLATE_LENGTH) {
-        const { unknown } = scanTemplatePlaceholders(value);
-        if (unknown.length === 0) fields[fieldKey] = value;
+        const { unknown, malformed } = scanTemplatePlaceholders(value);
+        if (unknown.length === 0 && malformed.length === 0) fields[fieldKey] = value;
       }
     }
     if (Object.keys(fields).length > 0) result[platform] = fields;

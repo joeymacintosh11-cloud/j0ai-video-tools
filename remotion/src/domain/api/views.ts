@@ -747,6 +747,7 @@ export type ContentPackageQuery = {
  */
 export type ContentMetadataSettingsView = {
   readonly schemaVersion: number;
+  readonly revision: string;
   readonly templates: PartialMetadataTemplates;
   /**
    * Set when the settings file exists but could not be read (malformed

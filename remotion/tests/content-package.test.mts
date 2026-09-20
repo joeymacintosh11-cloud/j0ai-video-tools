@@ -542,6 +542,17 @@ test("an existing metadata.json with no contentMetadataOverrides field is still 
   assert.equal(inspection.metadata?.contentMetadataOverrides, undefined);
 });
 
+test("an unrelated metadata PATCH cannot silently erase malformed existing overrides", async (t) => {
+  const f = await fixture(t);
+  const raw = JSON.parse(await readFile(f.metadata, "utf8"));
+  raw.contentMetadataOverrides = { youtube: { titleTemplate: "{unknown}" } };
+  await writeFile(f.metadata, `${JSON.stringify(raw)}\n`);
+  const before = await readFile(f.metadata, "utf8");
+  await assert.rejects(() => updateTrackMetadata(f.slug, { title: "New title" }),
+    (error: unknown) => error instanceof TrackError && error.code === "TEMPLATE_INVALID");
+  assert.equal(await readFile(f.metadata, "utf8"), before);
+});
+
 test("a track that declares an unknown placeholder in its overrides is reported invalid, and the file is not written", async (t) => {
   const f = await setup(t, { exportPresets: ["youtube-16x9"] });
   await assert.rejects(
@@ -587,6 +598,28 @@ test("saving contentMetadataOverrides through the metadata PATCH round-trips thr
   assert.deepEqual(second.metadata.contentMetadataOverrides, { youtube: { titleTemplate: "{title} v2" } });
 });
 
+test("concurrent title, override and clear edits cannot silently overwrite one another", async (t) => {
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  const revision = metadataRevision(await readFile(f.metadata, "utf8"));
+  const results = await Promise.allSettled([
+    updateTrackMetadata(f.slug, { title: "Concurrent title" }, revision),
+    updateTrackMetadata(f.slug, { contentMetadataOverrides: { youtube: { titleTemplate: "Concurrent copy" } } }, revision),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected" && result.reason instanceof TrackError && result.reason.code === "METADATA_CONFLICT").length, 1);
+  const after = JSON.parse(await readFile(f.metadata, "utf8"));
+  assert.equal(after.title === "Concurrent title" || after.contentMetadataOverrides?.youtube?.titleTemplate === "Concurrent copy", true);
+
+  await updateTrackMetadata(f.slug, { contentMetadataOverrides: { youtube: { titleTemplate: "Before clear" } } });
+  const fresh = metadataRevision(await readFile(f.metadata, "utf8"));
+  const second = await Promise.allSettled([
+    updateTrackMetadata(f.slug, { contentMetadataOverrides: null }, fresh),
+    updateTrackMetadata(f.slug, { contentMetadataOverrides: { reels: { captionTemplate: "Other copy" } } }, fresh),
+  ]);
+  assert.equal(second.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(second.filter((result) => result.status === "rejected" && result.reason instanceof TrackError && result.reason.code === "METADATA_CONFLICT").length, 1);
+});
+
 test("editing contentMetadataOverrides never changes the render fingerprint — text templates cannot make a video stale", async (t) => {
   const f = await setup(t, { exportPresets: ["youtube-16x9"] });
   await f.publish("youtube-16x9");
@@ -613,6 +646,17 @@ test("editing a field that is actually rendered into the video (title) still mak
   const pkg = await f.packageView();
   assert.equal(pkg.packageStatus, "stale");
   const youtube = pkg.platforms.find((p) => p.platformId === "youtube")!;
+  assert.deepEqual(youtube.staleReasons, ["metadata_changed"]);
+});
+
+test("a rendered title change plus a copy override is stale for metadata, not for the template", async (t) => {
+  const f = await setup(t, { exportPresets: ["youtube-16x9"] });
+  await f.publish("youtube-16x9");
+  await updateTrackMetadata(f.slug, {
+    title: "Changed in video",
+    contentMetadataOverrides: { youtube: { titleTemplate: "Changed copy" } },
+  });
+  const youtube = (await f.packageView()).platforms.find((platform) => platform.platformId === "youtube")!;
   assert.deepEqual(youtube.staleReasons, ["metadata_changed"]);
 });
 

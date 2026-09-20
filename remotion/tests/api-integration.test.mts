@@ -110,6 +110,10 @@ test("PATCH metadata persists contentMetadataOverrides through the HTTP route, n
   );
   assert.equal(invalid.status, 400);
   assert.equal((await invalid.json()).error.code, "TEMPLATE_INVALID");
+
+  const unexpected = await patchWith({ title: "Valid", contentMetadataOverride: {} });
+  assert.equal(unexpected.status, 400);
+  assert.equal((await unexpected.json()).error.code, "INVALID_REQUEST");
 });
 
 test("upload disk errors return structured JSON and leave the API healthy", async (t) => {
@@ -722,6 +726,25 @@ test("GET /api/content-metadata-settings reads real settings without ever writin
   // Whatever this machine's real file holds (most commonly nothing at all),
   // reading it is never itself a write.
   assert.equal(typeof body.data.templates, "object");
+  assert.match(body.data.revision, /^(missing|[a-f0-9]{64})$/);
+});
+
+test("settings PATCH rejects empty bodies and invalid revisions before writing", async (t) => {
+  const { base } = await api(t);
+  const before = await (await fetch(`${base}/api/content-metadata-settings`)).json();
+  for (const [body, headers] of [
+    [{}, { "content-type": "application/json" }],
+    [{ youtube: {} }, { "content-type": "application/json" }],
+    [{ youtube: { titleTemplate: "{title}" } }, { "content-type": "application/json", "if-match": "bogus" }],
+  ] as const) {
+    const response = await fetch(`${base}/api/content-metadata-settings`, {
+      method: "PATCH", headers, body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, "INVALID_REQUEST");
+  }
+  const after = await (await fetch(`${base}/api/content-metadata-settings`)).json();
+  assert.deepEqual(after.data, before.data);
 });
 
 test("PATCH /api/content-metadata-settings rejects an unknown placeholder and writes nothing", async (t) => {
