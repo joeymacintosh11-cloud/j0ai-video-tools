@@ -5,6 +5,7 @@ export type TrackErrorCode =
   | "INVALID_SLUG"
   | "INVALID_REQUEST"
   | "INVALID_PRESET"
+  | "INVALID_PLATFORM"
   | "COVER_MISSING"
   | "AUDIO_MISSING"
   | "METADATA_MISSING"

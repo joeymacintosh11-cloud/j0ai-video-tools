@@ -25,6 +25,8 @@ import type {
   RemediationPlanSummary,
 } from "../delivery/destinationFixPlan.ts";
 import type { ReleaseBundleFreshness } from "../delivery/releaseBundle.ts";
+import type { ContentPackageMode } from "../content/contentPackage.ts";
+import type { PlatformId } from "../content/platformProfiles.ts";
 import type { TrackErrorCode, TrackIssue } from "../tracks/errors.ts";
 import type {
   TrackMetadata,
@@ -704,6 +706,26 @@ export type ReleaseBundlesView = {
 };
 
 /* ------------------------------------------------------------------ *
+ * Content packages
+ * ------------------------------------------------------------------ */
+
+/**
+ * GET /api/content-package
+ *
+ * A platform-facing view over state the app already computes — export
+ * coverage/freshness, queue state and delivery state — never a second source
+ * of truth. See src/domain/content/contentPackage.ts for the derivation and
+ * the reasoning behind it.
+ */
+export type ContentPackageQuery = {
+  readonly track: string;
+  /** "intent" (default) uses the track's own exportPresets; "full" wants every platform. */
+  readonly mode?: ContentPackageMode;
+  /** Overrides mode with an exact platform set. Repeatable query param. */
+  readonly platforms?: readonly PlatformId[];
+};
+
+/* ------------------------------------------------------------------ *
  * Delivery history
  * ------------------------------------------------------------------ */
 
@@ -931,3 +953,19 @@ export type {
   RemediationPlanSummary,
   RemediationSafety,
 } from "../delivery/destinationFixPlan.ts";
+
+/** Content package types, re-exported so clients need one import. */
+export type {
+  ContentPackageCounts,
+  ContentPackageMode,
+  ContentPackagePlatformEntry,
+  ContentPackageStatus,
+  ContentPackageView,
+  PlatformAction,
+  PlatformReadiness,
+} from "../content/contentPackage.ts";
+export type {
+  PlatformId,
+  PlatformProfile,
+} from "../content/platformProfiles.ts";
+export type { PlatformMetadataSubject } from "../content/platformMetadata.ts";
