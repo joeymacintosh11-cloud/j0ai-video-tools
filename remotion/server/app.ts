@@ -20,6 +20,10 @@ import {
 } from "./routes/deliveryHistory.ts";
 import { handleExportMissing } from "./routes/exportMissing.ts";
 import { handleGetContentPackage } from "./routes/contentPackage.ts";
+import {
+  handleGetContentMetadataSettings,
+  handleUpdateContentMetadataSettings,
+} from "./routes/contentMetadataSettings.ts";
 import { handleReleaseBundles } from "./routes/releaseBundles.ts";
 import {
   handleBatchEvents,
@@ -233,6 +237,19 @@ const route = async (
   if (collection === "content-package" && segments.length === 2) {
     if (method === "GET") {
       await handleGetContentPackage(request, response);
+      return;
+    }
+    sendNotFound(response, "Endpoint");
+    return;
+  }
+
+  if (collection === "content-metadata-settings" && segments.length === 2) {
+    if (method === "GET") {
+      await handleGetContentMetadataSettings(response);
+      return;
+    }
+    if (method === "PATCH") {
+      await handleUpdateContentMetadataSettings(request, response);
       return;
     }
     sendNotFound(response, "Endpoint");
