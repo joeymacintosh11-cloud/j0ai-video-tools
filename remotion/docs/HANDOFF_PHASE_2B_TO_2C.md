@@ -6771,11 +6771,82 @@ the page, which correctly demonstrated the documented browser-reload
 limitation rather than an SSE reconnect case. The temporary proxy, Chrome
 profiles, synthetic tracks and outputs, and local servers were removed.
 
-### 53.4 Scope and next feature
+### 53.4 Platform-level state detail
+
+Each selected platform occupies exactly one target bucket. Its visible state
+is the union of package readiness and any active job state:
+- If job is queued/rendering, display that instead of package readiness
+- If job is queued, state is "queued"
+- If job is rendering/preparing, state is "rendering" (progress if available)
+- If job is completed and package read is in progress, state is "checking"
+- Otherwise, show package readiness (ready/missing/stale/blocked)
+
+A platform where the job is render_failed always shows the error message
+from the job; a cancelled job shows cancelled status; a completed job that
+refreshed to stale/missing shows both "completed" badge and the new readiness.
+
+Track rows show aggregated counts: ready (not under job control), total
+(selected platforms), queued (unique queued jobs), and rendering (unique
+rendering jobs). These counts never double-count a platform with an active
+job.
+
+### 53.5 Lost-event and scope protection
+
+The panel retains the most recent Apply response in `App` state while closed.
+On reopen, it uses exact `jobReferences` (actionId, jobId) to re-subscribe to
+those exact job SSE streams, not a catalogue-wide re-inspect. Scope tracking
+prevents old refresh responses from overwriting a newer track selection or
+mode change: each pending refresh is versioned by slug, and only the latest
+version of each slug's refresh is applied if scope is unchanged. Metadata
+edits, export-intent edits, and mode changes during render correctly degrade
+to letting the completed job's readiness stand as-is until the user manually
+re-selects the batch or switches its mode.
+
+### 53.6 Metadata and export-intent edits during render
+
+The panel preserves the Apply response's `mode` in state (`applied?.mode`) so
+mode switches do not accidentally lose context. When a job completes, it
+queues a single-track package refresh at the *current* mode; if the user
+changed modes, they see the package in the new scope. Metadata edits (fields
+like title/artist/key that fingerprint into render inputs) go stale after
+render but are detected normally. Export-intent edits (which formats were
+declared for a track) change what the new scope shows; if the user adds a new
+format mid-render and switches to full mode, they see it as missing, and the
+batch totals re-aggregate correctly. No special handling is needed for either
+case — the refresh mechanism handles both.
+
+### 53.7 Files changed
+
+New:
+- `ui/components/batchProgressModel.ts` — `deriveLiveBatchProgress`, live state types.
+- `tests/batch-progress.test.mts` — live aggregation, failure/cancellation, scope changes.
+
+Changed:
+- `src/domain/content/contentPackageBatch.ts` — `replaceBatchTrackPackage` to update one track.
+- `server/routes/contentPackageBatch.ts` — `ContentPackageBatchJobReferenceView` in apply response.
+- `src/domain/api/views.ts` — job reference views, apply response includes `renderBatch`.
+- `ui/App.tsx` — retain applied response across panel close.
+- `ui/components/BatchContentPackagePanel.tsx` — live job subscription per unique ID, refresh
+  coalescing (50ms per slug), scope/version tracking, display platform job state and progress.
+- `ui/hooks/useRenderJob.ts` — no new functionality, only called with more payload.
+- `ui/styles/app.css` — `.batchpackage__platform`, `.batchpackage__progress`, `.batchpackage__joberror`.
+- `tests/api-integration.test.mts` — one new test for apply response job references.
+
+### 53.8 Commits
+
+1. Show live batch job progress and refresh package readiness (3c87623).
+2. Test batch job correlation and live target aggregation (a96c35d).
+3. Document Live Batch Progress & Auto-Refresh.
+
+### 53.9 Final git status
+
+All changes committed. Working tree clean. 6 commits ahead of `origin/main`
+(from Batch Content Package Generation §52 + Live Batch Progress §53),
+0 behind. No push made.
+
+### 53.10 Scope and next feature
 
 The batch panel still exposes no dedicated batch-wide cancel. Delivery
 readiness is not folded into render progress. A later feature could persist
-or reconstruct a batch session across browser reloads; it was not started.
-
-Local commits: `3c87623` (implementation), `a96c35d` (tests), followed by
-this documentation commit. No push.
+or reconstruct a batch session across browser reloads, allowing users to
+resume an inspected batch after a browser reload; it was not started.
