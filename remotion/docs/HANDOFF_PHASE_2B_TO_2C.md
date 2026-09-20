@@ -18,7 +18,7 @@ in §23a rather than silently corrected.
 
 ## 0. Read this first
 
-**§52 (Batch Content Package Generation) is the newest state.**
+**§53 (Live Batch Progress & Auto-Refresh) is the newest state.**
 Sections 1–34 describe the project as it stood at the end of Phase 2B.
 §35–48 cover formats, batching, export-missing, per-track intent,
 stale/re-export detection, cross-process render locks, local delivery,
@@ -32,7 +32,9 @@ status are exactly as §49 left them. §51 is a hardening pass over §50, with
 no behavior change to §49. §52 adds orchestration across several tracks at
 once — inspect, plan and apply several Content Packages together — entirely
 on top of §49's single-track resolver and the existing render queue (§37);
-it defines no new readiness rule and no second queue. All of §35–49 landed,
+it defines no new readiness rule and no second queue. §53 follows the exact
+render jobs returned by Apply in the batch panel and refreshes only affected
+track packages after terminal events. All of §35–49 landed,
 all verified, all still true. Where an older section disagrees with the
 code, the code wins.
 
@@ -6663,3 +6665,106 @@ returned `batchId`'s SSE stream directly, the way `QueueDrawer` already
 does, so the panel's own ready/missing/stale counts update as jobs finish
 without the user needing to reopen it or switch modes) — see §52.20's first
 limitation. Not started, per instruction.
+
+---
+
+## 53. Live Batch Progress & Auto-Refresh (2026-09-20)
+
+This section supersedes §52.20's first limitation and §52.23's proposed
+feature. Batch package readiness now updates in the open panel during real
+renders. No second queue, progress endpoint, WebSocket, server poller, or
+delivery-progress model was added.
+
+### 53.1 Architecture and exact correlation
+
+`POST /api/content-package/batch/apply` still re-plans from fresh state and
+uses `renderManager.startBatch` as final authority. Its response now adds
+`jobReferences`: stable `actionId`, slug, platform, preset, exact job ID and
+immediate outcome (`queued`, `adopted`, or `locked_elsewhere`). Queued IDs
+come from the returned render batch. Adopted IDs come from the manager's
+active job record. A cross-process lock has no in-memory job ID and is
+explicitly null. The UI never guesses identity from a track name afterward.
+
+`App` retains the most recent Apply response while the panel is closed. The
+panel mounts one `useRenderJob` follower per unique job ID, including adopted
+jobs. That existing hook uses `/api/renders/:id/events`; the SSE route
+replays current state on subscribe and terminal state even across the
+replay/subscribe race. QueueDrawer continues to use its existing batch SSE
+hook. The panel requests no log history and discards log events.
+
+Three layers stay separate: persisted package readiness from the single-track
+resolver; authoritative job status/progress from the render manager; and
+transient subscription state. `deriveLiveBatchProgress` overlays the exact
+job references on a package snapshot. Each selected platform occupies one
+batch bucket, so stale/missing plus rendering is counted as rendering once.
+Track rows show their own ready count and active work. Progress percentages
+come only from real job frames/progress; a job with no meaningful value gets
+status text alone. A completed job enters `checking` while its package is
+being read; completion never directly produces Ready.
+
+### 53.2 Terminal refresh and failure behavior
+
+Completion, failure, and cancellation all queue a narrow
+`GET /api/content-package?track=<slug>` in the currently selected mode.
+Terminals within 50 ms are coalesced by slug. The returned single-track
+package replaces only that track in the batch snapshot and recomputes
+totals. Old full-inspect and targeted responses cannot overwrite a newer
+scope or refresh. A failed package read leaves the job terminal status and
+an explicit refresh error visible; closing and reopening re-inspects. A
+successful job can therefore still end in stale/missing readiness if its
+rendered inputs or export intent changed in the meantime. A failed or
+cancelled job does not requeue itself, and siblings retain their own state.
+
+The API's `wait:true`/`timeoutMs` still limits waiting only. The response
+keeps its job IDs, and the panel follows those jobs after a timed-out Apply.
+The normal panel call remains non-waiting. The batch CLI remains synchronous
+and has no `--wait` flag; this milestone made no CLI change.
+
+`useRenderJob` closes its EventSource on terminal and unmount. After an SSE
+error it re-reads the job with `GET /api/renders/:id`; terminal results are
+used immediately, transient GET failures let EventSource reconnect, and
+only an authoritative 404 marks the job missing. A panel close/reopen
+re-subscribes to exact retained IDs and re-inspects packages. Selection and
+mode changes re-inspect the new scope, while job references remain keyed by
+slug and platform. A browser reload loses the in-memory batch selection,
+although renders continue; users can re-inspect. Server restart still loses
+in-memory render jobs, as before.
+
+### 53.3 Verification and performance
+
+Focused tests cover exact queued/adopted IDs, timeout without cancelling,
+live aggregation, independent failure/cancellation, completed-but-stale
+readiness, scope changes, duplicate job references, and a 12-target mixed
+job model. The full suite passed at normal concurrency after local loopback
+access was granted: **536/536 passed** (the sandboxed attempt failed only because its HTTP tests
+could not bind `127.0.0.1`). TypeScript, ESLint, Vite build, and diff checks
+passed. The existing single-track package, QueueDrawer, queue, and SSE API
+tests remain in the full suite.
+
+A real headless Chrome/CDP probe used three isolated 3-second synthetic
+tracks (one ready, two missing), selected them through the UI, inspected,
+planned, and applied. The panel visibly went from `1 ready / 2 missing` to
+`1 ready / 1 rendering / 1 queued`, displayed actual percentages, then
+`2 ready / 1 rendering` and `3 ready` without manual refresh. Closing and
+reopening mid-render recovered. For two completed jobs on different tracks,
+Chrome recorded exactly two narrow package GETs and no recurring batch
+inspect. It recorded four per-job SSE connections because the panel was
+remounted once; each mount had one connection per unique active job. A
+separate real cancellation left its package incomplete.
+
+A targeted fault proxy severed one real job SSE stream mid-render while
+leaving the page and API alive. Chrome recorded a second subscription, real
+progress recovery, one targeted package GET, and final Ready with no console
+exception. Restarting the Vite process itself was also tried; Vite reloaded
+the page, which correctly demonstrated the documented browser-reload
+limitation rather than an SSE reconnect case. The temporary proxy, Chrome
+profiles, synthetic tracks and outputs, and local servers were removed.
+
+### 53.4 Scope and next feature
+
+The batch panel still exposes no dedicated batch-wide cancel. Delivery
+readiness is not folded into render progress. A later feature could persist
+or reconstruct a batch session across browser reloads; it was not started.
+
+Local commits: `3c87623` (implementation), `a96c35d` (tests), followed by
+this documentation commit. No push.
