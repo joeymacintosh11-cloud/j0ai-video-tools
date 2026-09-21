@@ -738,7 +738,17 @@ class RenderManager {
       slug: job.slug,
       presetId: job.presetId,
       state: status,
-      error: job.error,
+      // Reconstructed, not `job.error` itself: the live error carries an
+      // optional `details` (the raw Error#stack from a spawn/IPC failure,
+      // see `onError` above), which `RenderJournalEvent`'s schema
+      // deliberately has no field for (src/domain/render/renderJournal.ts).
+      // `job.error` is a plain variable, not an object literal, so passing
+      // it straight through would not have been caught by TypeScript's
+      // excess-property check — any stray extra field survives a runtime
+      // `JSON.stringify` regardless of what the journal's type declares.
+      // The journal is durable, restart-surviving evidence; a stack trace
+      // has no business living there.
+      error: job.error ? { code: job.error.code, message: job.error.message } : null,
     });
 
     // Settling is the only moment history can grow.
