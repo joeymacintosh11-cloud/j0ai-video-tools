@@ -1,4 +1,4 @@
-import type { ContentPackageBatchJobReferenceView } from "../src/domain/api/views.ts";
+import type { ContentPackageBatchJobReferenceView, RenderJobView } from "../src/domain/api/views.ts";
 import {
   PLATFORM_IDS,
   PLATFORM_PROFILES,
@@ -187,3 +187,18 @@ export const pruneSessionJobIds = (
   jobIds: ReadonlySet<string>,
 ): readonly BatchSessionJobReference[] =>
   references.filter((reference) => !jobIds.has(reference.jobId));
+
+export type RecoveredJobDisposition = "active" | "terminal" | "mismatch";
+
+/** Exact identity check plus the server-authoritative current lifecycle state. */
+export const classifyRecoveredJob = (
+  reference: BatchSessionJobReference,
+  job: RenderJobView,
+): RecoveredJobDisposition => {
+  if (job.id !== reference.jobId || job.slug !== reference.slug || job.presetId !== reference.presetId) {
+    return "mismatch";
+  }
+  return job.status === "queued" || job.status === "preparing" || job.status === "rendering"
+    ? "active"
+    : "terminal";
+};

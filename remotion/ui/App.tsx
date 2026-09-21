@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_RENDER_PRESET_ID,
   type RenderPresetId,
 } from "../src/domain/video/renderPresets.ts";
 import type { ContentPackageBatchApplyView, DestinationHealthView } from "../src/domain/api/views.ts";
+import { PLATFORM_LIST, type PlatformId } from "../src/domain/content/platformProfiles.ts";
 import {
   createRenderBatch,
   getContentMetadataSettings,
@@ -29,11 +30,25 @@ import { TrackDetail } from "./components/TrackDetail.tsx";
 import { TrackList } from "./components/TrackList.tsx";
 import { useAsync } from "./hooks/useAsync.ts";
 import { useWindowFocus } from "./hooks/useWindowFocus.ts";
+import {
+  clearBatchSession,
+  loadBatchSession,
+  mergeSessionJobReferences,
+  pruneSessionJobIds,
+  reconcileBatchSession,
+  saveBatchSession,
+  toSessionJobReferences,
+  type BatchSessionJobReference,
+  type BatchSessionMode,
+} from "./batchSession.ts";
 
 const slugFromHash = (): string | null =>
   window.location.hash.replace(/^#/, "") || null;
 
 export const App: React.FC = () => {
+  const [initialBatchSession] = useState(() => loadBatchSession(window.localStorage));
+  const restoreCandidate = useRef(initialBatchSession);
+  const [batchSessionReady, setBatchSessionReady] = useState(restoreCandidate.current === null);
   // The selected track lives in the URL hash, so a reload (and Vite's HMR)
   // keeps you on the track you were looking at.
   const [selectedSlug, setSelectedSlug] = useState<string | null>(slugFromHash);
@@ -41,6 +56,10 @@ export const App: React.FC = () => {
   const [showingSettings, setShowingSettings] = useState(false);
   const [showingHistory, setShowingHistory] = useState(false);
   const [showingBatchPackage, setShowingBatchPackage] = useState(false);
+  const [batchMode, setBatchMode] = useState<BatchSessionMode>("intent");
+  const [batchPlatforms, setBatchPlatforms] = useState<readonly PlatformId[]>(
+    PLATFORM_LIST.map((platform) => platform.id),
+  );
   /**
    * The last catalogue-wide destination scan, held in memory only. A scan is
    * always explicit (never run automatically on a poll or a render), so this
@@ -62,6 +81,7 @@ export const App: React.FC = () => {
   const [batchId, setBatchId] = useState<string | null>(null);
   /** Kept while the panel is closed so reopening can reattach to exact jobs. */
   const [contentPackageApply, setContentPackageApply] = useState<ContentPackageBatchApplyView | null>(null);
+  const [contentPackageJobReferences, setContentPackageJobReferences] = useState<readonly BatchSessionJobReference[]>([]);
   const [queueError, setQueueError] = useState<ApiRequestError | null>(null);
 
   const select = useCallback((slug: string) => {
@@ -96,6 +116,54 @@ export const App: React.FC = () => {
     ),
     [selectedSlug],
   );
+
+  // Catalogue data is authoritative for selection. Browser storage is not
+  // applied until every stored slug can be intersected with the current list.
+  useEffect(() => {
+    if (batchSessionReady || tracks.data === null) return;
+    const candidate = restoreCandidate.current;
+    restoreCandidate.current = null;
+    const restored = candidate
+      ? reconcileBatchSession(candidate, new Set(tracks.data.map((track) => track.slug)))
+      : null;
+    if (restored) {
+      setChecked(restored.selectedSlugs);
+      setBatchMode(restored.mode);
+      setBatchPlatforms(restored.platforms.length > 0
+        ? restored.platforms
+        : PLATFORM_LIST.map((platform) => platform.id));
+      setContentPackageJobReferences(restored.jobReferences);
+      setShowingBatchPackage(restored.panelOpen);
+    } else {
+      clearBatchSession(window.localStorage);
+    }
+    setBatchSessionReady(true);
+  }, [batchSessionReady, tracks.data]);
+
+  // Track deletion is also authoritative after initial restore. Additions are
+  // never selected implicitly.
+  useEffect(() => {
+    if (!batchSessionReady || tracks.data === null) return;
+    const available = new Set(tracks.data.map((track) => track.slug));
+    setChecked((previous) => previous.filter((slug) => available.has(slug)));
+    setContentPackageJobReferences((previous) => previous.filter((reference) => available.has(reference.slug)));
+  }, [batchSessionReady, tracks.data]);
+
+  useEffect(() => {
+    if (!batchSessionReady) return;
+    if (checked.length === 0) {
+      clearBatchSession(window.localStorage);
+      return;
+    }
+    const selected = new Set(checked);
+    saveBatchSession(window.localStorage, {
+      selectedSlugs: checked,
+      mode: batchMode,
+      platforms: batchMode === "platforms" ? batchPlatforms : [],
+      jobReferences: contentPackageJobReferences.filter((reference) => selected.has(reference.slug)),
+      panelOpen: showingBatchPackage,
+    });
+  }, [batchMode, batchPlatforms, batchSessionReady, checked, contentPackageJobReferences, showingBatchPackage]);
 
   // Select the first track once the list arrives, so the app opens on content
   // rather than an empty panel.
@@ -138,8 +206,21 @@ export const App: React.FC = () => {
   }, [tracks.data]);
 
   const clearSelection = useCallback(() => {
+    clearBatchSession(window.localStorage);
     setChecked([]);
     setShowingBatchPackage(false);
+    setContentPackageApply(null);
+    setContentPackageJobReferences([]);
+  }, []);
+
+  const handleContentPackageApplied = useCallback((view: ContentPackageBatchApplyView) => {
+    setContentPackageApply(view);
+    const incoming = toSessionJobReferences(view.jobReferences);
+    setContentPackageJobReferences((previous) => mergeSessionJobReferences(previous, incoming));
+  }, []);
+
+  const pruneContentPackageJobs = useCallback((jobIds: ReadonlySet<string>) => {
+    setContentPackageJobReferences((previous) => pruneSessionJobIds(previous, jobIds));
   }, []);
 
   /** Queues every ticked track in every ticked format. */
@@ -154,7 +235,7 @@ export const App: React.FC = () => {
       const created = await createRenderBatch(targets);
 
       setBatchId(created.batchId);
-      setChecked([]);
+      clearSelection();
       refreshAll();
     } catch (cause) {
       setQueueError(
@@ -248,7 +329,9 @@ export const App: React.FC = () => {
       </div>
 
       <div className="app__toolbar app__toolbar--selection">
-        {checked.length > 0 ? (
+        {!batchSessionReady ? (
+          <span className="muted">Restoring batch…</span>
+        ) : checked.length > 0 ? (
           <>
             <span className="actions__result">
               {checked.length} track{checked.length === 1 ? "" : "s"} ×{" "}
@@ -275,7 +358,7 @@ export const App: React.FC = () => {
               formats={null}
               onQueued={(id) => {
                 setBatchId(id);
-                setChecked([]);
+                clearSelection();
               }}
               onChanged={refreshAll}
             />
@@ -324,7 +407,9 @@ export const App: React.FC = () => {
           />
         )}
 
-        {detail.error ? (
+        {!batchSessionReady ? (
+          <div className="placeholder">Restoring batch…</div>
+        ) : detail.error ? (
           <div style={{ padding: 20 }}>
             <ErrorBanner error={detail.error} title="Could not load track" />
           </div>
@@ -334,8 +419,14 @@ export const App: React.FC = () => {
               tracks={checked}
               hasDestination={Boolean(delivery.data && delivery.data.root !== null)}
               onQueued={setBatchId}
-              applied={contentPackageApply}
-              onApplied={setContentPackageApply}
+              mode={batchMode}
+              platforms={batchPlatforms}
+              jobReferences={contentPackageJobReferences}
+              initialJobs={contentPackageApply?.renderBatch?.jobs ?? []}
+              onModeChange={setBatchMode}
+              onPlatformsChange={setBatchPlatforms}
+              onApplied={handleContentPackageApplied}
+              onJobIdsPruned={pruneContentPackageJobs}
               onChanged={refreshAll}
               onClose={() => setShowingBatchPackage(false)}
             />

@@ -9,12 +9,22 @@ import type {
   RenderJobView,
 } from "../../src/domain/api/views.ts";
 import {
+  PLATFORM_LIST,
+  type PlatformId,
+} from "../../src/domain/content/platformProfiles.ts";
+import {
   ApiRequestError,
   applyContentPackageBatch,
   getContentPackage,
+  getRender,
   inspectContentPackageBatch,
   planContentPackageBatch,
 } from "../api/client.ts";
+import {
+  classifyRecoveredJob,
+  type BatchSessionJobReference,
+  type BatchSessionMode,
+} from "../batchSession.ts";
 import { useRenderJob } from "../hooks/useRenderJob.ts";
 import { deriveLiveBatchProgress } from "./batchProgressModel.ts";
 import { PackageStatusBadge } from "./ContentPackagePanel.tsx";
@@ -65,12 +75,20 @@ export const BatchContentPackagePanel: React.FC<{
   readonly tracks: readonly string[];
   readonly hasDestination: boolean;
   readonly onQueued: (batchId: string) => void;
-  readonly applied: ContentPackageBatchApplyView | null;
+  readonly mode: BatchSessionMode;
+  readonly platforms: readonly PlatformId[];
+  readonly jobReferences: readonly BatchSessionJobReference[];
+  readonly initialJobs: readonly RenderJobView[];
+  readonly onModeChange: (mode: BatchSessionMode) => void;
+  readonly onPlatformsChange: (platforms: readonly PlatformId[]) => void;
   readonly onApplied: (view: ContentPackageBatchApplyView) => void;
+  readonly onJobIdsPruned: (jobIds: ReadonlySet<string>) => void;
   readonly onChanged: () => void;
   readonly onClose: () => void;
-}> = ({ tracks, hasDestination, onQueued, applied, onApplied, onChanged, onClose }) => {
-  const [mode, setMode] = useState<"intent" | "full">(applied?.mode === "full" ? "full" : "intent");
+}> = ({
+  tracks, hasDestination, onQueued, mode, platforms, jobReferences, initialJobs,
+  onModeChange, onPlatformsChange, onApplied, onJobIdsPruned, onChanged, onClose,
+}) => {
   const [inspecting, setInspecting] = useState(false);
   const [inspectError, setInspectError] = useState<ApiRequestError | null>(null);
   const [inspectView, setInspectView] = useState<BatchContentPackageView | null>(null);
@@ -83,25 +101,38 @@ export const BatchContentPackagePanel: React.FC<{
   const [applyError, setApplyError] = useState<ApiRequestError | null>(null);
   const [applyNote, setApplyNote] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Readonly<Record<string, RenderJobView>>>(() =>
-    Object.fromEntries((applied?.renderBatch?.jobs ?? []).map((job) => [job.id, job])));
+    Object.fromEntries(initialJobs.map((job) => [job.id, job])));
+  const [terminalReferences, setTerminalReferences] = useState<readonly BatchSessionJobReference[]>([]);
   const [missingJobs, setMissingJobs] = useState<ReadonlySet<string>>(new Set());
+  const [restoringJobs, setRestoringJobs] = useState(jobReferences.length > 0);
+  const [recoveryErrors, setRecoveryErrors] = useState<Readonly<Record<string, string>>>({});
   const [refreshingSlugs, setRefreshingSlugs] = useState<ReadonlySet<string>>(new Set());
   const [refreshErrors, setRefreshErrors] = useState<Readonly<Record<string, string>>>({});
 
   const requestId = useRef(0);
-  const scope = JSON.stringify([tracks, mode]);
+  const requestMode: "intent" | "full" = mode === "full" ? "full" : "intent";
+  const requestPlatforms = mode === "platforms" ? platforms : undefined;
+  const scope = JSON.stringify([tracks, requestMode, requestPlatforms]);
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
   const tracksRef = useRef(tracks);
   tracksRef.current = tracks;
-  const modeRef = useRef(mode);
-  modeRef.current = mode;
-  const appliedRef = useRef(applied);
-  appliedRef.current = applied;
+  const modeRef = useRef(requestMode);
+  modeRef.current = requestMode;
+  const platformsRef = useRef(requestPlatforms);
+  platformsRef.current = requestPlatforms;
+  const jobReferencesRef = useRef(jobReferences);
+  jobReferencesRef.current = jobReferences;
+  const jobsRef = useRef(jobs);
+  jobsRef.current = jobs;
   const refreshQueue = useRef(new Set<string>());
+  const refreshJobIds = useRef(new Map<string, Set<string>>());
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshVersion = useRef(new Map<string, number>());
   const notified = useRef(new Set<string>());
+  const recovered = useRef(new Set(initialJobs
+    .filter((job) => ["queued", "preparing", "rendering"].includes(job.status))
+    .map((job) => job.id)));
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -112,21 +143,18 @@ export const BatchContentPackagePanel: React.FC<{
     };
   }, []);
 
-  useEffect(() => {
-    setJobs(Object.fromEntries((applied?.renderBatch?.jobs ?? []).map((job) => [job.id, job])));
-    setMissingJobs(new Set());
-    notified.current.clear();
-  }, [applied]);
-
   const onSnapshot = useCallback((jobId: string, job: RenderJobView | null, missing: boolean) => {
-    if (job) setJobs((previous) => previous[jobId] === job ? previous : { ...previous, [jobId]: job });
+    if (job) {
+      jobsRef.current = { ...jobsRef.current, [jobId]: job };
+      setJobs((previous) => previous[jobId] === job ? previous : { ...previous, [jobId]: job });
+    }
     if (missing) setMissingJobs((previous) => previous.has(jobId) ? previous : new Set([...previous, jobId]));
   }, []);
 
   const onTerminal = useCallback((jobId: string) => {
     if (notified.current.has(jobId)) return;
     notified.current.add(jobId);
-    const slugs = new Set((appliedRef.current?.jobReferences ?? [])
+    const slugs = new Set(jobReferencesRef.current
       .filter((ref) => ref.jobId === jobId && tracksRef.current.includes(ref.slug))
       .map((ref) => ref.slug));
     if (slugs.size === 0) return;
@@ -134,7 +162,12 @@ export const BatchContentPackagePanel: React.FC<{
     // refresh. The following requests touch only the affected tracks.
     requestId.current++;
     setInspecting(false);
-    for (const slug of slugs) refreshQueue.current.add(slug);
+    for (const slug of slugs) {
+      refreshQueue.current.add(slug);
+      const ids = refreshJobIds.current.get(slug) ?? new Set<string>();
+      ids.add(jobId);
+      refreshJobIds.current.set(slug, ids);
+    }
     setRefreshingSlugs((previous) => new Set([...previous, ...slugs]));
     if (refreshTimer.current !== null) return;
     refreshTimer.current = setTimeout(() => {
@@ -143,13 +176,31 @@ export const BatchContentPackagePanel: React.FC<{
       refreshQueue.current.clear();
       const scopeAtStart = scopeRef.current;
       const modeAtStart = modeRef.current;
+      const platformsAtStart = platformsRef.current;
       for (const slug of pending) {
         const version = (refreshVersion.current.get(slug) ?? 0) + 1;
         refreshVersion.current.set(slug, version);
-        void getContentPackage(slug, modeAtStart)
+        void getContentPackage(slug, modeAtStart, platformsAtStart)
           .then((pkg) => {
             if (!mounted.current || scopeRef.current !== scopeAtStart || refreshVersion.current.get(slug) !== version) return;
             setInspectView((previous) => previous ? replaceBatchTrackPackage(previous, pkg) : previous);
+            const terminalIds = refreshJobIds.current.get(slug);
+            if (terminalIds) {
+              const finalReferences = jobReferencesRef.current.filter((reference) => {
+                const job = jobsRef.current[reference.jobId];
+                return terminalIds.has(reference.jobId) && job &&
+                  ["completed", "failed", "cancelled"].includes(job.status);
+              });
+              if (finalReferences.length > 0) {
+                setTerminalReferences((previous) => {
+                  const merged = new Map(previous.map((reference) => [reference.actionId, reference]));
+                  for (const reference of finalReferences) merged.set(reference.actionId, reference);
+                  return [...merged.values()];
+                });
+              }
+              refreshJobIds.current.delete(slug);
+              onJobIdsPruned(terminalIds);
+            }
             setRefreshErrors((previous) => {
               if (!(slug in previous)) return previous;
               const next = { ...previous };
@@ -171,13 +222,22 @@ export const BatchContentPackagePanel: React.FC<{
           });
       }
     }, 50);
-  }, []);
+  }, [onJobIdsPruned]);
 
-  const uniqueJobIds = useMemo(() => [...new Set((applied?.jobReferences ?? [])
-    .map((ref) => ref.jobId).filter((id): id is string => id !== null))], [applied]);
+  const uniqueJobIds = useMemo(() => [...new Set(jobReferences
+    .map((ref) => ref.jobId))], [jobReferences]);
+  const activeJobIds = uniqueJobIds.filter((jobId) => {
+    const job = jobs[jobId];
+    return job && ["queued", "preparing", "rendering"].includes(job.status);
+  });
+  const displayedReferences = useMemo(() => {
+    const merged = new Map(terminalReferences.map((reference) => [reference.actionId, reference]));
+    for (const reference of jobReferences) merged.set(reference.actionId, reference);
+    return [...merged.values()];
+  }, [jobReferences, terminalReferences]);
   const live = useMemo(() => inspectView
-    ? deriveLiveBatchProgress(inspectView, applied?.jobReferences ?? [], jobs, refreshingSlugs)
-    : null, [inspectView, applied, jobs, refreshingSlugs]);
+    ? deriveLiveBatchProgress(inspectView, displayedReferences.map((reference) => ({ ...reference, outcome: "adopted" as const })), jobs, refreshingSlugs)
+    : null, [displayedReferences, inspectView, jobs, refreshingSlugs]);
 
   useEffect(() => {
     const id = ++requestId.current;
@@ -201,7 +261,7 @@ export const BatchContentPackagePanel: React.FC<{
     }
 
     setInspecting(true);
-    void inspectContentPackageBatch(tracks, mode)
+    void inspectContentPackageBatch(tracks, requestMode, requestPlatforms)
       .then((view) => {
         if (requestId.current !== id) return;
         setInspectView(view);
@@ -217,11 +277,59 @@ export const BatchContentPackagePanel: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
 
+  // A persisted job ID is only a hint. Re-read every exact ID before opening
+  // an SSE stream; only server-confirmed queued/running jobs are followed.
+  useEffect(() => {
+    if (inspectView === null) return;
+    const pending = jobReferences.filter((reference) => !recovered.current.has(reference.jobId));
+    if (pending.length === 0) {
+      setRestoringJobs(false);
+      return;
+    }
+    let cancelled = false;
+    setRestoringJobs(true);
+    void Promise.all(pending.map(async (reference) => {
+      try {
+        const job = await getRender(reference.jobId);
+        if (cancelled) return;
+        const disposition = classifyRecoveredJob(reference, job);
+        if (disposition === "mismatch") {
+          setMissingJobs((previous) => new Set([...previous, reference.jobId]));
+          onTerminal(reference.jobId);
+          return;
+        }
+        jobsRef.current = { ...jobsRef.current, [job.id]: job };
+        setJobs((previous) => ({ ...previous, [job.id]: job }));
+        setRecoveryErrors((previous) => {
+          if (!(job.id in previous)) return previous;
+          const next = { ...previous };
+          delete next[job.id];
+          return next;
+        });
+        if (disposition === "terminal") onTerminal(job.id);
+      } catch (cause) {
+        if (cancelled) return;
+        const error = asApiError(cause);
+        if (error.status === 404) {
+          setMissingJobs((previous) => new Set([...previous, reference.jobId]));
+          onTerminal(reference.jobId);
+        } else {
+          setRecoveryErrors((previous) => ({ ...previous, [reference.jobId]: error.message }));
+        }
+      } finally {
+        recovered.current.add(reference.jobId);
+      }
+    })).finally(() => {
+      if (!cancelled) setRestoringJobs(false);
+    });
+    return () => { cancelled = true; };
+  }, [inspectView, jobReferences, onTerminal]);
+
   const refreshInspect = () => {
     const id = ++requestId.current;
     setInspecting(true);
     setInspectError(null);
-    void inspectContentPackageBatch(tracks, mode)
+    void inspectContentPackageBatch(tracks, requestMode, requestPlatforms)
       .then((view) => {
         if (requestId.current !== id) return;
         setInspectView(view);
@@ -240,7 +348,7 @@ export const BatchContentPackagePanel: React.FC<{
     setPlanError(null);
     setApplyNote(null);
     try {
-      const result = await planContentPackageBatch(tracks, mode);
+      const result = await planContentPackageBatch(tracks, requestMode, requestPlatforms);
       if (scopeRef.current === requestScope) setPlan(result);
     } catch (cause) {
       if (scopeRef.current === requestScope) setPlanError(asApiError(cause));
@@ -254,7 +362,18 @@ export const BatchContentPackagePanel: React.FC<{
     setApplying(true);
     setApplyError(null);
     try {
-      const result = await applyContentPackageBatch(tracks, mode);
+      const result = await applyContentPackageBatch(tracks, requestMode, requestPlatforms);
+      if (result.renderBatch) {
+        jobsRef.current = {
+          ...jobsRef.current,
+          ...Object.fromEntries(result.renderBatch.jobs.map((job) => [job.id, job])),
+        };
+        setJobs((previous) => ({
+          ...previous,
+          ...Object.fromEntries(result.renderBatch!.jobs.map((job) => [job.id, job])),
+        }));
+        for (const job of result.renderBatch.jobs) recovered.current.add(job.id);
+      }
       onApplied(result);
       if (result.batchId) {
         onQueued(result.batchId);
@@ -280,7 +399,7 @@ export const BatchContentPackagePanel: React.FC<{
     return null;
   }
 
-  const activeKeys = new Set((applied?.jobReferences ?? [])
+  const activeKeys = new Set(jobReferences
     .filter((ref) => ref.jobId && jobs[ref.jobId] &&
       ["queued", "preparing", "rendering"].includes(jobs[ref.jobId].status))
     .map((ref) => `${ref.slug}::${ref.presetId}`));
@@ -289,7 +408,7 @@ export const BatchContentPackagePanel: React.FC<{
 
   return (
     <section className="batchpackage" aria-label="Batch content package">
-      {uniqueJobIds.map((jobId) => (
+      {activeJobIds.map((jobId) => (
         <JobFollower key={jobId} jobId={jobId} onSnapshot={onSnapshot} onTerminal={onTerminal} />
       ))}
       <header className="batchpackage__head">
@@ -298,16 +417,26 @@ export const BatchContentPackagePanel: React.FC<{
           <button
             type="button"
             className={`button button--quiet${mode === "intent" ? " button--active" : ""}`}
-            onClick={() => setMode("intent")}
+            onClick={() => onModeChange("intent")}
           >
             Intended formats
           </button>
           <button
             type="button"
             className={`button button--quiet${mode === "full" ? " button--active" : ""}`}
-            onClick={() => setMode("full")}
+            onClick={() => onModeChange("full")}
           >
             Full package (3)
+          </button>
+          <button
+            type="button"
+            className={`button button--quiet${mode === "platforms" ? " button--active" : ""}`}
+            onClick={() => {
+              if (platforms.length === 0) onPlatformsChange(PLATFORM_LIST.map((platform) => platform.id));
+              onModeChange("platforms");
+            }}
+          >
+            Selected platforms
           </button>
         </div>
         <span className="app__spacer" />
@@ -316,7 +445,33 @@ export const BatchContentPackagePanel: React.FC<{
         </button>
       </header>
 
+      {mode === "platforms" ? (
+        <div className="contentpackage__modes" aria-label="Batch platforms">
+          {PLATFORM_LIST.map((platform) => {
+            const selected = platforms.includes(platform.id);
+            return (
+              <button
+                key={platform.id}
+                type="button"
+                className={`button button--quiet${selected ? " button--active" : ""}`}
+                disabled={selected && platforms.length === 1}
+                onClick={() => onPlatformsChange(selected
+                  ? platforms.filter((id) => id !== platform.id)
+                  : [...platforms, platform.id])}
+              >
+                {platform.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       {inspectError ? <ErrorBanner error={inspectError} title="Could not inspect packages" /> : null}
+
+      {restoringJobs ? <p className="muted">Reconnecting to renders…</p> : null}
+      {Object.entries(recoveryErrors).map(([jobId, message]) => (
+        <p key={jobId} className="note note--warning" role="status">Could not reconnect to render {jobId}: {message}</p>
+      ))}
 
       {inspecting && inspectView === null ? (
         <p className="muted">Inspecting…</p>

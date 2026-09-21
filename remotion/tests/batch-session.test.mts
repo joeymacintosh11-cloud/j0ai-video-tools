@@ -7,6 +7,7 @@ import {
   BATCH_SESSION_SCHEMA_VERSION,
   BATCH_SESSION_STORAGE_KEY,
   clearBatchSession,
+  classifyRecoveredJob,
   loadBatchSession,
   mergeSessionJobReferences,
   parseBatchSession,
@@ -17,6 +18,7 @@ import {
   type BatchSession,
   type StorageLike,
 } from "../ui/batchSession.ts";
+import type { RenderJobView } from "../src/domain/api/views.ts";
 
 const NOW = Date.parse("2026-09-21T12:00:00.000Z");
 
@@ -26,6 +28,13 @@ const reference = (slug = "track-a", jobId = "00000000-0000-4000-8000-0000000000
   platformId: "youtube" as const,
   presetId: "youtube-16x9" as const,
   jobId,
+});
+
+const job = (status: RenderJobView["status"], overrides: Partial<RenderJobView> = {}): RenderJobView => ({
+  id: reference().jobId, slug: "track-a", presetId: "youtube-16x9", batchId: "batch",
+  status, progress: 0, framesRendered: null, totalFrames: null, fps: null, elapsedMs: 0,
+  startedAt: null, queuedAt: new Date(NOW).toISOString(), finishedAt: null,
+  outputPath: null, outputLabel: null, error: null, ...overrides,
 });
 
 const session = (overrides: Partial<BatchSession> = {}): BatchSession => ({
@@ -143,6 +152,21 @@ test("new references replace the same action and terminal IDs prune without touc
   const merged = mergeSessionJobReferences([old, sibling], [replacement]);
   assert.deepEqual(merged, [replacement, sibling]);
   assert.deepEqual(pruneSessionJobIds(merged, new Set(["new-job"])), [sibling]);
+});
+
+test("queued and rendering jobs recover as active; every terminal state is prunable", () => {
+  for (const status of ["queued", "preparing", "rendering"] as const) {
+    assert.equal(classifyRecoveredJob(reference(), job(status)), "active");
+  }
+  for (const status of ["completed", "failed", "cancelled"] as const) {
+    assert.equal(classifyRecoveredJob(reference(), job(status)), "terminal");
+  }
+});
+
+test("recovery never adopts a job whose exact id or target identity differs", () => {
+  assert.equal(classifyRecoveredJob(reference(), job("rendering", { id: "another-job" })), "mismatch");
+  assert.equal(classifyRecoveredJob(reference(), job("rendering", { slug: "track-b" })), "mismatch");
+  assert.equal(classifyRecoveredJob(reference(), job("rendering", { presetId: "square-1x1" })), "mismatch");
 });
 
 test("storage access failures never crash the workflow", () => {
