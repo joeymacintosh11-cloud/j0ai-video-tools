@@ -623,6 +623,60 @@ export const recentRenderJobsForSlug = (
 };
 
 /**
+ * A stable key for one exact render target — the same (slug, presetId) pair
+ * `DestinationFinding` already carries. Exported so a caller building or
+ * reading `buildMostRecentJobIndex`'s result always agrees on how a target
+ * is named, rather than each call site re-joining the two strings its own
+ * way.
+ */
+export const targetKey = (slug: string, presetId: string): string =>
+  `${slug}::${presetId}`;
+
+/**
+ * The single most recent job for every exact (slug, presetId) target the
+ * journal has ever seen, in one pass — built once per caller, not once per
+ * target. This is what lets destination-health attach render context to
+ * many findings from one journal read instead of a lookup-shaped rescan per
+ * finding (`server/services/destinationHealthRenderContext.ts`).
+ *
+ * Deliberately not built from `recentRenderJobsForSlug`: that function's own
+ * `limit` bounds how many of a *track's* most recent jobs it considers
+ * (across every preset that track has), so a preset that simply renders less
+ * often than its siblings could have its own true most-recent job fall
+ * outside that bound. Grouping by the exact target instead of the track
+ * means every target's answer is independent of how active its siblings are.
+ *
+ * `excludeJobIds` carries the same "live always wins" meaning
+ * `recentRenderJobsForSlug` already gives it — a job id the caller already
+ * knows is currently live in `renderManager` is never eligible to become
+ * anyone's "most recent" answer.
+ */
+export const buildMostRecentJobIndex = (
+  reconstruction: RenderJournalReconstruction,
+  currentBootId: string,
+  excludeJobIds: ReadonlySet<string> = new Set(),
+): ReadonlyMap<string, RecoveredRenderJob> => {
+  const bestOrder = new Map<string, number>();
+  const bestRecord = new Map<string, RenderJournalJobRecord>();
+
+  for (const job of reconstruction.jobs.values()) {
+    if (excludeJobIds.has(job.jobId)) continue;
+    const key = targetKey(job.slug, job.presetId);
+    const index = reconstruction.order.get(job.jobId) ?? -1;
+    if (index > (bestOrder.get(key) ?? -1)) {
+      bestOrder.set(key, index);
+      bestRecord.set(key, job);
+    }
+  }
+
+  const result = new Map<string, RecoveredRenderJob>();
+  for (const [key, record] of bestRecord) {
+    result.set(key, classifyRecoveredJob(record, currentBootId));
+  }
+  return result;
+};
+
+/**
  * A short, human-friendly rendering of a recorded timestamp — "Today,
  * 14:32", "Yesterday, 18:04", "20 Sep, 13:10" — for operator scanning. Pure
  * and dependency-free like `formatBundleTimestamp`

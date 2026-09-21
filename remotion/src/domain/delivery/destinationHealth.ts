@@ -108,6 +108,26 @@ export const DESTINATION_FINDING_SEVERITY: Record<
   release_bundle_pair_mismatch: "warning",
 };
 
+/**
+ * Optional historical context, attached after the fact by
+ * `server/services/destinationHealthRenderContext.ts` — never by the scanner
+ * itself (see that module's own comment on the architecture boundary this
+ * preserves). The `state` union deliberately excludes `"completed"`: a
+ * completed render has no explanatory value for *why* the destination copy
+ * this finding is about is currently missing or wrong (see
+ * `RENDER_CONTEXT_ELIGIBLE_CODES`'s own comment) — leaving it out of the
+ * type makes that a compile-time guarantee, not a runtime policy someone
+ * could get wrong later.
+ */
+export type DestinationFindingRenderContext = {
+  readonly jobId: string;
+  readonly state: "failed" | "cancelled" | "interrupted";
+  readonly recordedAt: string;
+  readonly presetId: RenderPresetId;
+  /** A short, safe sentence — see `describeRenderContext`. */
+  readonly note: string;
+};
+
 export type DestinationFinding = {
   readonly code: DestinationFindingCode;
   readonly severity: DestinationFindingSeverity;
@@ -117,6 +137,14 @@ export type DestinationFinding = {
   readonly presetId: RenderPresetId | null;
   /** Path relative to the destination root, when the finding names one. */
   readonly relativePath: string | null;
+  /**
+   * Explanatory-only historical render context, when relevant — never a
+   * reason this finding exists, never a reason it would not. Absent (never
+   * `null`/`undefined` explicitly) on a finding no exact render history was
+   * found for, or one whose code is not in `RENDER_CONTEXT_ELIGIBLE_CODES`,
+   * so an older client that never looks at this field sees no change at all.
+   */
+  readonly renderContext?: DestinationFindingRenderContext;
 };
 
 /** Builds one finding, filling in the severity from the code. */
@@ -136,6 +164,58 @@ export const destinationFinding = (
   presetId: extra.presetId ?? null,
   relativePath: extra.relativePath ?? null,
 });
+
+/**
+ * Which finding codes render history can ever explain, decided from what
+ * each code actually means (§4 of the milestone this implements: "inspect
+ * actual finding codes first").
+ *
+ * `delivered_file_missing`/`delivered_file_changed` are about the exact copy
+ * at the destination no longer matching what a receipt recorded — a fact a
+ * recent failed/interrupted/cancelled render attempt for the same exact
+ * target can genuinely help explain ("nobody has successfully re-delivered
+ * this since, because the last render attempt didn't succeed either").
+ *
+ * Every other code is deliberately excluded, because render history cannot
+ * explain it or because it has no single (slug, presetId) target to match
+ * against in the first place: root-level findings
+ * (`destination_root_identity_changed`, `destination_folder_unreadable`)
+ * have no slug at all; `track_folder_missing`, `unexpected_export_file`,
+ * `unexpected_track_folder` and every `release_bundle_*` code carry a slug
+ * but never a presetId (a whole folder, an unaccounted-for file, an orphan,
+ * or a bundle are none of them about one specific render); and
+ * `destination_file_unreadable` is a permissions/read problem at the
+ * destination, unrelated to whether a render ever succeeded.
+ */
+export const RENDER_CONTEXT_ELIGIBLE_CODES: ReadonlySet<DestinationFindingCode> =
+  new Set(["delivered_file_missing", "delivered_file_changed"]);
+
+/**
+ * The short, safe sentence shown as a finding's render context.
+ *
+ * Deliberately states chronology, never causality (§15 of the milestone this
+ * implements): "most recent render attempt was interrupted" is what the
+ * journal actually witnessed; "this file is missing because of that" is not
+ * a claim this function — or the scan — ever has evidence for. `error` is
+ * read only for its `message`; a caller is expected to have already
+ * discarded anything else an error object might carry (see
+ * `server/services/destinationHealthRenderContext.ts`'s own comment on why
+ * that matters).
+ */
+export const describeRenderContext = (
+  state: "failed" | "cancelled" | "interrupted",
+  error: { readonly message: string } | null,
+): string => {
+  if (state === "interrupted") {
+    return "Most recent render attempt was interrupted by a server restart.";
+  }
+  if (state === "cancelled") {
+    return "Most recent render attempt was cancelled.";
+  }
+  return error === null
+    ? "Most recent render attempt failed."
+    : `Most recent render attempt failed: ${error.message}`;
+};
 
 /* ------------------------------------------------------------------ *
  * What counts as "ours" — the one place this is decided
