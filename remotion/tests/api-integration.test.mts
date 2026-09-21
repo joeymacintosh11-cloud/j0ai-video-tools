@@ -13,6 +13,9 @@ import { publishExport } from "../services/render/publishExport.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
 import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
 import { fixture, tempFiles } from "./fixtures.mts";
+import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
+
+await isolateRenderJournalForThisFile();
 
 const api = async (t: TestContext) => {
   const server = createServer((req, res) => {

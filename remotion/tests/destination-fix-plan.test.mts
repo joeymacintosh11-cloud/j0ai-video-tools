@@ -22,6 +22,9 @@ import { trackOutputLocation } from "../services/tracks/trackLocations.ts";
 import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
 import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
 import { fixture } from "./fixtures.mts";
+import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
+
+await isolateRenderJournalForThisFile();
 
 const execFileAsync = promisify(execFile);
 

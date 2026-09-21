@@ -26,6 +26,9 @@ import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
 import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
 import { Worker } from "./managerHarness.mts";
 import { fixture } from "./fixtures.mts";
+import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
+
+await isolateRenderJournalForThisFile();
 
 /**
  * Confirmed delivery after a queued render: the wait-mode half of the fix

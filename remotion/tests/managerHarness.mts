@@ -1,7 +1,10 @@
 import childProcess, { type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import type { TestContext } from "node:test";
 
@@ -47,6 +50,30 @@ export const manager = async (
   t.after(() => {
     t.mock.restoreAll();
     syncBuiltinESMExports();
+  });
+
+  // renderManager journals every lifecycle transition (see
+  // server/services/renderJournal.ts). Redirecting it to a throwaway temp
+  // directory means these tests — which use a fake worker and never touch a
+  // real render — never write into this repository's real
+  // out/.render-journal/, and never race each other over a shared file.
+  const journalDir = await mkdtemp(path.join(tmpdir(), "toshi-manager-test-journal-"));
+  const previousJournalDir = process.env.TOSHI_RENDER_JOURNAL_DIR;
+  process.env.TOSHI_RENDER_JOURNAL_DIR = journalDir;
+  t.after(async () => {
+    // renderManager fires journal writes without awaiting them (deliberately
+    // — see server/services/renderJournal.ts), so one can still be mid-flight
+    // when the test function itself returns. Waiting for the journal to go
+    // idle *before* touching env or the directory is what makes this
+    // deterministic: a fixed delay was tried first and was not reliable — an
+    // in-flight write's own `mkdirSync(root, { recursive: true })` would
+    // silently recreate the directory this was about to remove, once, right
+    // after removal, with no error on either side.
+    const { waitForRenderJournalIdle } = await import("../server/services/renderJournal.ts");
+    await waitForRenderJournalIdle();
+    if (previousJournalDir === undefined) delete process.env.TOSHI_RENDER_JOURNAL_DIR;
+    else process.env.TOSHI_RENDER_JOURNAL_DIR = previousJournalDir;
+    await rm(journalDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   const module = (await import(
