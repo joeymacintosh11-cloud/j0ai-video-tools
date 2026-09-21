@@ -19,6 +19,7 @@ import {
   handleReconcileDeliveryHistory,
 } from "./routes/deliveryHistory.ts";
 import { handleExportMissing } from "./routes/exportMissing.ts";
+import { handleGetRenderHistory } from "./routes/renderHistory.ts";
 import { handleGetContentPackage } from "./routes/contentPackage.ts";
 import {
   handleApplyContentPackageBatch,
@@ -317,6 +318,15 @@ const route = async (
       return;
     }
 
+    sendNotFound(response, "Endpoint");
+    return;
+  }
+
+  if (collection === "render-history" && segments.length === 2) {
+    if (method === "GET") {
+      handleGetRenderHistory(request, response);
+      return;
+    }
     sendNotFound(response, "Endpoint");
     return;
   }

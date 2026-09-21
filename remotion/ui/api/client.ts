@@ -35,6 +35,7 @@ import type {
   ReleaseBundleBody,
   ReleaseBundlesView,
   RenderBatchView,
+  RenderHistoryView,
   RenderJobView,
   RenderLogsView,
   RenderTarget,
@@ -257,6 +258,21 @@ export const cancelRender = (jobId: string): Promise<RenderJobView> =>
 /** SSE endpoint for a job's live progress; consumed with EventSource. */
 export const renderEventsUrl = (jobId: string): string =>
   `/api/renders/${encodeURIComponent(jobId)}/events`;
+
+/**
+ * A track's most recent renders, newest first, sourced from the durable
+ * render journal — never a live job, never package readiness. See
+ * GET /api/render-history (server/routes/renderHistory.ts).
+ */
+export const getRenderHistory = (
+  slug: string,
+  limit?: number,
+): Promise<RenderHistoryView> => {
+  const params = new URLSearchParams({ track: slug });
+  if (limit !== undefined) params.set("limit", String(limit));
+
+  return request<RenderHistoryView>(`/api/render-history?${params.toString()}`);
+};
 
 /* ------------------------------------------------------------------ *
  * Render batches

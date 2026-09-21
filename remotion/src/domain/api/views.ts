@@ -14,6 +14,7 @@ import type {
   DeliveryLogProblem,
   DeliveryLogStatus,
 } from "../delivery/deliveryHistory.ts";
+import type { RenderJournalStatus } from "../render/renderJournal.ts";
 import type {
   DestinationFinding,
   DestinationHealthCounts,
@@ -1069,6 +1070,62 @@ export type DestinationFixApplyView = {
   readonly results: readonly RemediationActionResult[];
 };
 
+/* ------------------------------------------------------------------ *
+ * Operator-facing render history (durable journal, one track)
+ * ------------------------------------------------------------------ */
+
+/**
+ * One historical render, as `GET /api/render-history` reports it — always a
+ * job the durable journal remembers, never a live one (a live job is
+ * answered by `GET /api/renders/:id`/its SSE stream, not this endpoint).
+ * Grouped by job: one entry per job's final reconstructed state, never one
+ * per lifecycle event (src/domain/render/renderJournal.ts's
+ * `recentRenderJobsForSlug`).
+ *
+ * Deliberately as narrow as `RenderJobView`'s own historical fields — no
+ * progress, no output path, nothing the journal itself never recorded.
+ */
+export type RenderHistoryJobView = {
+  readonly jobId: string;
+  readonly slug: string;
+  readonly presetId: RenderPresetId;
+  /**
+   * Never "queued"/"preparing"/"rendering": every job this endpoint reports
+   * has already settled from the durable journal's point of view, exactly
+   * like `classifyRecoveredJob`'s own guarantee.
+   */
+  readonly status: "completed" | "failed" | "cancelled" | "interrupted";
+  readonly recordedAt: string;
+  readonly historical: true;
+  readonly recoveredAfterRestart: boolean;
+  readonly error: RenderJobError | null;
+};
+
+/** GET /api/render-history query. */
+export type RenderHistoryQuery = {
+  readonly track: string;
+  readonly limit?: number;
+};
+
+/**
+ * GET /api/render-history?track=<slug>&limit=<n>
+ *
+ * Read-only summary of one track's most recent renders, sourced entirely
+ * from the durable render journal (never from package readiness, delivery,
+ * or the live render manager — see src/domain/render/renderJournal.ts).
+ * Mirrors `DeliveryHistoryView`'s own status/statusNote split: a damaged
+ * journal still reports whatever history could be read, with `status`/
+ * `statusNote` saying so rather than the endpoint failing outright.
+ */
+export type RenderHistoryView = {
+  readonly slug: string;
+  readonly status: RenderJournalStatus;
+  readonly statusNote: string | null;
+  /** Newest first, bounded by `limit`. */
+  readonly jobs: readonly RenderHistoryJobView[];
+  readonly limit: number;
+};
+
 /** GET /api/renders/:jobId/logs */
 export type RenderLogsView = {
   readonly id: string;
@@ -1102,6 +1159,9 @@ export type {
   DeliveryLogProblem,
   DeliveryLogStatus,
 };
+
+/** Render journal status, re-exported so clients need one import. */
+export type { RenderJournalStatus };
 
 /** Destination health types, re-exported so clients need one import. */
 export type {
