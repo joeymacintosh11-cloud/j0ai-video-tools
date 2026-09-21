@@ -2145,6 +2145,14 @@ body {
   margin: 10px 0 2px;
 }
 
+/* Deliberately quieter than the finding it sits under — explanatory
+   context, never a second finding of its own. */
+.health__rendercontext {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
 /* ---------------------------------------------------------------- *
  * Destination fix plan
  *

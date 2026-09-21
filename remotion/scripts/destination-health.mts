@@ -1,5 +1,7 @@
 import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
+import { enrichDestinationHealthWithRenderContext } from "../server/services/destinationHealthRenderContext.ts";
 import { readDeliverySettings } from "../services/delivery/deliverySettings.ts";
+import { formatBundleTimestamp } from "../src/domain/delivery/releaseBundle.ts";
 import type {
   DestinationFinding,
   DestinationHealthStatus,
@@ -74,6 +76,11 @@ const printFinding = (finding: DestinationFinding) => {
   const mark = finding.severity === "error" ? "✗" : finding.severity === "warning" ? "!" : "·";
   const where = finding.relativePath ?? finding.slug ?? "";
   console.log(`  ${mark} [${finding.severity}] ${finding.message}${where ? ` (${where})` : ""}`);
+  if (finding.renderContext) {
+    console.log(
+      `      Recent render: ${finding.renderContext.note} (${formatBundleTimestamp(finding.renderContext.recordedAt)})`,
+    );
+  }
 };
 
 runCli("scanning the destination", async () => {
@@ -85,10 +92,11 @@ runCli("scanning the destination", async () => {
   }
 
   const settings = await readDeliverySettings();
-  const result = await scanDestinationHealth({
+  const scanned = await scanDestinationHealth({
     slugs: tracks.length === 0 ? undefined : tracks,
     settings,
   });
+  const result = enrichDestinationHealthWithRenderContext(scanned);
 
   if (json) {
     console.log(JSON.stringify(result, null, 2));

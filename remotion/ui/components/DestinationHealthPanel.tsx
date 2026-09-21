@@ -45,6 +45,18 @@ const FindingRow: React.FC<{ readonly finding: DestinationFinding }> = ({ findin
         </>
       ) : null}
     </span>
+    {/* Explanatory context only — deliberately styled weaker than the
+        finding itself, and never claims to be why the finding exists (the
+        finding's own message above is the only claim of that). */}
+    {finding.renderContext ? (
+      <div className="health__rendercontext">
+        Recent render: {finding.renderContext.note}
+        {" · "}
+        <span title={new Date(finding.renderContext.recordedAt).toISOString()}>
+          {formatBundleTimestamp(finding.renderContext.recordedAt)}
+        </span>
+      </div>
+    ) : null}
   </li>
 );
 
