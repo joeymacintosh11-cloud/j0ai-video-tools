@@ -24,6 +24,7 @@ import {
   type RenderJobView,
   type WorkerEvent,
 } from "../types.ts";
+import { recordRenderJournalEvent } from "./renderJournal.ts";
 
 const WORKER_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -184,6 +185,14 @@ class RenderManager {
     this.jobs.set(job.id, job);
     this.queue.push(job.id);
     this.appendLog(job, "info", `Queued ${presetId} render for "${slug}".`);
+    void recordRenderJournalEvent({
+      jobId: job.id,
+      batchId: job.batchId,
+      slug: job.slug,
+      presetId: job.presetId,
+      state: "queued",
+      error: null,
+    });
 
     return job;
   }
@@ -532,6 +541,14 @@ class RenderManager {
     job.status = "preparing";
     job.startedAt = Date.now();
     this.emit(job, { type: "status", job: this.toView(job) });
+    void recordRenderJournalEvent({
+      jobId: job.id,
+      batchId: job.batchId,
+      slug: job.slug,
+      presetId: job.presetId,
+      state: "preparing",
+      error: null,
+    });
 
     let child: ChildProcess | null = null;
     let finalized = false;
@@ -616,6 +633,19 @@ class RenderManager {
       case "status":
         job.status = event.status;
         this.emit(job, { type: "status", job: this.toView(job) });
+        // Only "rendering" is journaled here: "preparing" is already recorded
+        // by drainQueue before the worker is even forked, and re-recording
+        // the same state a job is already in is a harmless no-op anyway.
+        if (event.status === "rendering") {
+          void recordRenderJournalEvent({
+            jobId: job.id,
+            batchId: job.batchId,
+            slug: job.slug,
+            presetId: job.presetId,
+            state: "rendering",
+            error: null,
+          });
+        }
         break;
 
       case "resolved":
@@ -686,7 +716,7 @@ class RenderManager {
     this.emit(job, { type: "log", entry });
   }
 
-  private finish(job: RenderJob, status: RenderJobStatus): void {
+  private finish(job: RenderJob, status: "completed" | "failed" | "cancelled"): void {
     if (isTerminalStatus(job.status)) {
       return;
     }
@@ -702,6 +732,14 @@ class RenderManager {
     } else {
       this.emit(job, { type: "failed", job: view });
     }
+    void recordRenderJournalEvent({
+      jobId: job.id,
+      batchId: job.batchId,
+      slug: job.slug,
+      presetId: job.presetId,
+      state: status,
+      error: job.error,
+    });
 
     // Settling is the only moment history can grow.
     this.trimHistory();

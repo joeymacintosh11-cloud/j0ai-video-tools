@@ -22,6 +22,11 @@ export const TERMINAL_STATUSES: readonly RenderJobStatus[] = [
   "completed",
   "failed",
   "cancelled",
+  // Not a state the render manager ever assigns live — see RenderJobStatus's
+  // own comment — but a historical "interrupted" answer must be just as
+  // final to every caller that only checks isTerminalStatus(): no SSE retry,
+  // no cancel attempt, no ghost spinner.
+  "interrupted",
 ];
 
 export const isTerminalStatus = (status: RenderJobStatus): boolean =>

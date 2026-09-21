@@ -345,13 +345,24 @@ export type TrackPreviewView<TInputProps = unknown> = {
  * Render jobs
  * ------------------------------------------------------------------ */
 
+/**
+ * `interrupted` is never assigned by the render manager itself — nothing
+ * observes a job "becoming" interrupted, so nothing ever emits it as a live
+ * status transition. It exists purely as a recovered/historical answer: the
+ * render journal's honest description of a job that was queued/preparing/
+ * rendering the last time any process recorded it, and whose owning process
+ * is not the one answering now (see src/domain/render/renderJournal.ts and
+ * server/services/renderJournal.ts). A client sees it only from
+ * `GET /api/renders/:id` when `historical` is also true.
+ */
 export type RenderJobStatus =
   | "queued"
   | "preparing"
   | "rendering"
   | "completed"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "interrupted";
 
 export type RenderJobLogEntry = {
   readonly at: string;
@@ -387,6 +398,21 @@ export type RenderJobView = {
   readonly outputPath: string | null;
   readonly outputLabel: string | null;
   readonly error: RenderJobError | null;
+  /**
+   * Set only when this view was answered from the durable render journal
+   * rather than from a job the render manager currently holds live in
+   * memory. Absent (never `false`) on every ordinary live response, so
+   * existing callers that never look at it see no change at all.
+   */
+  readonly historical?: boolean;
+  /**
+   * Only meaningful alongside `historical: true`. `true` means the job's
+   * last recorded activity belonged to a different process than the one
+   * answering — a genuine restart. `false` means the same process answering
+   * now is the one that ran it, and it has simply aged out of the render
+   * manager's bounded in-memory history after settling.
+   */
+  readonly recoveredAfterRestart?: boolean;
 };
 
 /** POST /api/tracks/:slug/render */

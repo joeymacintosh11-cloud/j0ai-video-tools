@@ -7,7 +7,7 @@ import type { ContentPackagePlatformEntry } from "../../src/domain/content/conte
 
 export type LiveTargetState =
   | "ready" | "missing" | "stale" | "blocked" | "queued" | "preparing" | "rendering" | "cancelling" | "checking";
-export type LiveJobState = "queued" | "preparing" | "rendering" | "cancelling" | "completed" | "render_failed" | "cancelled";
+export type LiveJobState = "queued" | "preparing" | "rendering" | "cancelling" | "completed" | "render_failed" | "cancelled" | "interrupted";
 
 export type LivePlatformEntry = {
   readonly platform: ContentPackagePlatformEntry;
@@ -52,6 +52,11 @@ const jobStateFor = (
     case "completed": return "completed";
     case "failed": return "render_failed";
     case "cancelled": return "cancelled";
+    // A prior server process's job, now historical — never a live state, so
+    // it never overrides package readiness below (see readinessState's
+    // caller: only queued/preparing/rendering/cancelling do that). This
+    // exists purely so the panel can say why, rather than staying silent.
+    case "interrupted": return "interrupted";
   }
 };
 

@@ -43,6 +43,7 @@ const PHASE_TEXT: Record<RenderJobStatus, string> = {
   completed: "Completed",
   failed: "Failed",
   cancelled: "Cancelled",
+  interrupted: "Interrupted — the server restarted before this finished",
 };
 
 const formatElapsed = (ms: number): string => {

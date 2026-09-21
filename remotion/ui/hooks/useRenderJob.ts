@@ -94,7 +94,15 @@ export const useRenderJob = (
         .then((current) => {
           if (cancelled) return;
           setJob(current);
-          if (current.status === "completed" || current.status === "failed" || current.status === "cancelled") {
+          // "interrupted" included: a job the journal now answers for
+          // historically is exactly as final as any other terminal state —
+          // retrying the stream would only reconnect to nothing.
+          if (
+            current.status === "completed" ||
+            current.status === "failed" ||
+            current.status === "cancelled" ||
+            current.status === "interrupted"
+          ) {
             notifyFinished();
             source.close();
           }

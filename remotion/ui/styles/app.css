@@ -861,6 +861,9 @@ body {
 .badge--job-cancelled {
   color: var(--text-faint);
 }
+.badge--job-interrupted {
+  color: var(--status-invalid);
+}
 
 @keyframes badge-pulse {
   0%,

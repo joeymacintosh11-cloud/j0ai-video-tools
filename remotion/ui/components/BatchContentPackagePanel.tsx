@@ -615,6 +615,7 @@ export const BatchContentPackagePanel: React.FC<{
                       <span>{platform.label}</span>
                       <span className="muted">
                         {jobState === "render_failed" ? "Render failed"
+                          : jobState === "interrupted" ? "Interrupted by server restart"
                           : jobState === "cancelled" ? "Cancelled"
                             : jobState === "cancelling" ? "Cancelling"
                             : state === "checking" ? "Checking package state"

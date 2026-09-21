@@ -1,9 +1,70 @@
 import type { ServerResponse } from "node:http";
-import type { RenderLogsView } from "../../src/domain/api/views.ts";
+import type { RenderJobView, RenderLogsView } from "../../src/domain/api/views.ts";
+import { TrackError } from "../../src/domain/tracks/errors.ts";
 import { sendOk } from "../http/json.ts";
 import { openSseStream } from "../http/sse.ts";
+import { getHistoricalRenderJob } from "../services/renderJournal.ts";
 import { renderManager } from "../services/renderManager.ts";
 import { isTerminalStatus } from "../types.ts";
+
+/**
+ * A view built from the durable journal rather than from a live job.
+ *
+ * Deliberately sparse next to `renderManager.toView()`'s output: the journal
+ * never recorded progress, frame counts, fps, timing detail or output paths
+ * (see src/domain/render/renderJournal.ts's own comment on why it stays
+ * narrow), so this reports only what is actually known rather than padding
+ * the shape with fabricated zeros. `elapsedMs` is 0 for the same reason —
+ * there is no live clock to measure against any more.
+ */
+const historicalView = (jobId: string): RenderJobView | null => {
+  const recovered = getHistoricalRenderJob(jobId);
+  if (recovered === null) return null;
+
+  return {
+    id: recovered.jobId,
+    slug: recovered.slug,
+    presetId: recovered.presetId as RenderJobView["presetId"],
+    batchId: recovered.batchId,
+    status: recovered.status,
+    progress: 0,
+    framesRendered: null,
+    totalFrames: null,
+    fps: null,
+    elapsedMs: 0,
+    startedAt: null,
+    queuedAt: recovered.recordedAt,
+    finishedAt: recovered.status === "interrupted" ? null : recovered.recordedAt,
+    outputPath: null,
+    outputLabel: null,
+    // The journal only ever records what was already a real job.error at
+    // write time, whose code was already a valid TrackErrorCode — the
+    // domain journal type just does not import that whole union to stay
+    // decoupled from it (src/domain/render/renderJournal.ts).
+    error: recovered.error as RenderJobView["error"],
+    historical: true,
+    recoveredAfterRestart: recovered.recoveredAfterRestart,
+  };
+};
+
+/**
+ * Live authority always wins (§17 of the milestone this implements): the
+ * journal is only ever consulted once `renderManager` itself has said a job
+ * id is not one it currently holds. A journal entry can therefore never
+ * shadow or downgrade a job that is genuinely still running.
+ */
+const getJobOrHistorical = (jobId: string): RenderJobView => {
+  try {
+    return renderManager.getJob(jobId);
+  } catch (error) {
+    if (!(error instanceof TrackError) || error.code !== "RENDER_JOB_NOT_FOUND") throw error;
+
+    const historical = historicalView(jobId);
+    if (historical !== null) return historical;
+
+    throw error;
+  }
+};
 
 export const handleListRenders = (response: ServerResponse): void => {
   sendOk(response, renderManager.listJobs());
@@ -13,7 +74,7 @@ export const handleGetRender = (
   jobId: string,
   response: ServerResponse,
 ): void => {
-  sendOk(response, renderManager.getJob(jobId));
+  sendOk(response, getJobOrHistorical(jobId));
 };
 
 export const handleGetRenderLogs = (
