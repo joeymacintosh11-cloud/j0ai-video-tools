@@ -7322,3 +7322,585 @@ Recommended next feature: a small durable render/batch journal that survives
 API-server restarts and can answer what happened to an exact job without
 turning browser localStorage into authority. It should preserve the current
 queue/worker/cancellation state machine rather than replacing it. Not started.
+
+## 56. Durable Render Journal Across API-Server Restarts (2026-09-21)
+
+This section supersedes §55.8's proposed next feature. A small durable
+journal now records render lifecycle history and answers what happened to an
+exact job after the process that ran it is gone — a restart, or simply the
+render manager's own bounded in-memory history aging a settled job out. It
+never becomes a second source of truth for what should run next.
+
+### 56.1 Architecture boundary
+
+The journal is historical evidence and recovery context only. It is never
+consulted to decide anything: `renderManager` remains the only queue, the
+only worker owner, the only cancellation authority and the only in-memory job
+store; `renderLock` remains the only cross-process render-target lock;
+package inspection remains the only readiness authority; delivery history
+remains the only delivery record. The journal's one behavioral effect on the
+running system is additive fields on a `GET /api/renders/:id` response for a
+job the live manager does not have. Nothing writes to the journal except
+`renderManager` itself, at its own existing lifecycle transitions; nothing
+else in the render/delivery/package/CLI stack changed.
+
+Three layers, kept as separate as §2 of the brief asked:
+
+- **Live authority** — `renderManager`'s in-memory job map. Always consulted
+  first; a live job's status is never shadowed by its own journal entries
+  (tested explicitly — §56.14).
+- **Durable evidence** — the journal: what actually happened, append-only,
+  never rewritten except by explicit, narrow retention/repair operations an
+  operator asks for.
+- **Recovery inference** — `interrupted`, computed at *read* time by
+  comparing a non-terminal record's recorded boot id against the answering
+  process's own. Nothing is ever written as "interrupted"; nothing infers
+  completion, cancellation, or any live-looking state from a stale record
+  (§56.5).
+
+### 56.2 Storage: format, location and why
+
+`out/.render-journal/journal.jsonl`, one line per lifecycle event, JSON
+Lines for the same reason `services/delivery/deliveryHistoryLog.ts` already
+uses it: an append is one write with nothing to read first, so a crash can
+damage at most the final line, and it can never rewrite an earlier event even
+by accident. `out/` is already wholly gitignored; `.render-journal/` is a
+dot-prefixed sibling of the existing `out/.locks/`, the established
+convention in this codebase for machine-local operational state that lives
+inside `out/` but is never rendered *content*. Never committed, never under
+`public/`, never mixed with a track's own output or with the delivery log.
+
+Append/lock/fsync is the delivery log's own strategy, deliberately copied
+rather than shared as code (`services/render/renderJournalLog.ts`'s own
+comment explains the one real difference: a delivery log is one per export
+destination; this journal is one fixed file for the whole application):
+`O_APPEND` plus an exclusive cross-process lock (`link()`-based exclusive
+creation, the same primitive `render-lock.ts`'s guard and the delivery log's
+append lock both use) plus `fsync` on the file and, on first creation, the
+containing directory. A completed append promises the event reached disk
+before anything is told it was recorded; it does not promise a crash cannot
+lose an event still in flight when the crash happens, and the reader treats
+an unterminated final line as recoverable rather than as damage, exactly like
+the delivery log.
+
+**Why a real cross-process lock, when there is normally "the" server.**
+`renderManager` is a plain module singleton, not a network service.
+`scripts/destination-fix-plan.mts --apply` (and, transitively, anything that
+imports `server/services/destinationFixPlan.ts` or
+`server/services/renderManager.ts` directly) runs it in its *own* process,
+forking its own real worker and writing its own journal events, completely
+independently of whether the API server is running. Two such processes can
+and do append at once — the safety this needs is the same the delivery log
+already proved necessary for exactly the same reason (§56.9's real two-
+process test).
+
+### 56.3 Schema
+
+```ts
+{
+  schemaVersion: 1,
+  eventId: string,        // unique per appended event
+  jobId: string,
+  batchId: string | null,
+  slug: string,
+  presetId: string,
+  state: "queued" | "preparing" | "rendering" | "completed" | "failed" | "cancelled",
+  recordedAt: string,      // ISO
+  bootId: string,          // this process's identity — see §56.4
+  error: { code: string, message: string } | null,
+}
+```
+
+Deliberately narrower than the brief's own example shape: no `actionId`, no
+`platform`, no free-form `metadata`. Content-Package batch/action/platform
+correlation (`ui/batchSession.ts`'s `jobReferences`, §54) is a layer *above*
+`renderManager` — the render manager itself never learns an action id or a
+platform, only a slug and a preset. Threading that down would mean widening
+`RenderManager.startBatch`'s public shape, used by every caller (the
+Content-Package batch route, the destination-fix planner, export-missing),
+for one caller's benefit. The journal answers "what happened to job X",
+which needs none of that; a caller that already has an exact job id from its
+own batch response can still ask this journal about it directly. `batchId`
+is recorded because `renderManager` already owns it. No paths, no titles, no
+captions, no rendered-metadata content — exactly §53 of the brief's "keep it
+narrow."
+
+Ordering is the order lines appear in the file, not a separate sequence
+field: the append lock guarantees a write lands as one complete line before
+the next append begins, so file order already *is* the true global order
+(`src/domain/render/renderJournal.ts`'s own comment works through why a
+timestamp-only order would be strictly weaker — wall-clock time across two
+processes on one host is not guaranteed monotonic).
+
+### 56.4 Lifecycle states and boot identity
+
+Six states, all of them states `renderManager` actually observes and writes
+(`RenderJournalLifecycleState`): `queued`, `preparing`, `rendering`,
+`completed`, `failed`, `cancelled`. `interrupted` is deliberately **not** one
+of them — nothing ever *records* interrupted, because nothing ever observes
+it happening; it exists only as a read-time classification (§56.5).
+
+`RENDER_MANAGER_BOOT_ID` (`server/services/renderJournal.ts`) is a fresh
+`randomUUID()` created the moment that module is first imported — once per
+process, whether that process is the long-running API server or a one-shot
+CLI invocation that renders directly. Comparing a job's last recorded boot id
+against the *current* process's own is the entire mechanism that turns "last
+seen rendering" into "interrupted": a match means this process is still the
+one that owns the job (and would have it live in memory if it really were
+still running, per §56.1's live-always-wins rule); a mismatch means whatever
+process wrote that event is not this one, so nothing here can still be
+executing it. No persisted "boot marker" event and no startup-time mutation
+pass exist — recovery is a pure read-time comparison, computed fresh on every
+query (§56.6 explains why that is cheap enough not to need caching).
+
+### 56.5 Reconstruction: legal transitions, terminal immutability, quarantine
+
+`reconstructRenderJournal` folds a job's events, in file order, into its
+latest legal state (`src/domain/render/renderJournal.ts`). Legal successors:
+
+```
+queued    -> preparing | cancelled | failed
+preparing -> rendering | completed | cancelled | failed
+rendering -> completed | cancelled | failed
+completed | failed | cancelled -> (nothing; terminal)
+```
+
+A repeat of a job's *current* state (same eventId, or a genuine same-state
+re-record) is idempotent — harmless, applied as a timestamp/error refresh,
+never treated as damage. An event naming a state that is **not** a legal
+successor of the job's current reconstructed state is *quarantined*: the
+record is left exactly as it was, and the event is reported (`quarantined`,
+with a reason) rather than guessed into place. This is where "conflicting
+terminal states" (a job somehow recorded completed, then later failed) stops
+being a silent pick-a-winner and becomes visible corruption instead — the
+first legal terminal event always wins, and every test in §56.9 that tries a
+second one confirms it is rejected, not applied. A job's very *first*
+observed event is accepted whatever it is, with no predecessor check: a
+tail-repaired or corrupted region earlier in the file could legitimately mean
+that job's own `queued` event no longer exists, and reconstruction's job is
+to recover as much true history as still exists, not to refuse a job because
+its origin is missing.
+
+`classifyRecoveredJob` (used only once the live manager has already said a
+job id is not one it currently holds) turns a reconstructed record into what
+a client may be told: a terminal record keeps its real terminal state
+(`completed`/`failed`/`cancelled`); a non-terminal record becomes
+`"interrupted"` — **never** `"queued"`/`"preparing"`/`"rendering"`, which
+would look like a job still actively doing something, and never
+`"cancelled"`, which would fabricate a cancellation nobody requested. This
+is what makes the brief's §5 ("no fake completion") and its interrupted-state
+requirement (§4/§28: "never leave it looking actively queued/rendering") both
+true by construction rather than by convention.
+
+### 56.6 Server wiring: recording, querying, and never blocking a render
+
+`server/services/renderJournal.ts` is the one place that knows the process's
+own identity and turns the pure domain model into something `renderManager`
+and the HTTP routes can use:
+
+- `recordRenderJournalEvent(...)` — called by `renderManager` at exactly four
+  points: `enqueue()` (→ `queued`), the start of `drainQueue()` before the
+  worker is forked (→ `preparing`), the worker's own first `"rendering"`
+  status message (→ `rendering` — its `"preparing"` message is *not*
+  re-journaled, since drainQueue already recorded that transition and a
+  same-state repeat is a harmless no-op anyway), and `finish()` (→
+  `completed`/`failed`/`cancelled`, with `job.error` carried through).
+  Deliberately **not** called on every progress frame — journal writes stay
+  low-frequency, exactly the transitions §10 of the brief asked for.
+  `renderManager` calls this with `void recordRenderJournalEvent(...)` and
+  never awaits it: a render proceeds identically whether or not its history
+  could be durably written. A failed append is logged
+  (`console.error("[render-journal] ...")`) and nothing else — the render
+  itself, its output, and the package/delivery truth built on that output
+  are all completely unaffected (§56.11 covers the degraded-durability tests
+  for this explicitly).
+- `getHistoricalRenderJob(jobId)` — reads the whole journal, reconstructs,
+  and classifies, on every call. No cache: appends are low-frequency and the
+  journal stays small under retention (§56.8), so a full parse is cheap — a
+  10,000-event synthetic journal (§56.10's benchmark) parses and reconstructs
+  in single-digit milliseconds, nowhere near worth a cache's own
+  invalidation complexity for a query this rare (only reached once the live
+  manager has already said "not found").
+- `waitForRenderJournalIdle()` — test-only. `renderManager` never awaits its
+  own journal writes, so a test that needs the *file on disk* to reflect a
+  transition it just caused (rather than merely the in-memory job) needs a
+  deterministic way to wait. Every write registers itself in an in-flight
+  `Set` synchronously, before the function that issued it returns, so
+  `waitForRenderJournalIdle()` cannot return early while a write it should be
+  waiting for has not yet been registered. This mattered in practice — see
+  §56.13.
+
+`server/routes/renders.ts`'s `handleGetRender` now tries
+`renderManager.getJob(jobId)` first and, only on an authoritative
+`RENDER_JOB_NOT_FOUND`, falls back to a sparse `RenderJobView` built from
+`getHistoricalRenderJob`. The historical view sets `historical: true` and
+`recoveredAfterRestart` (true only when the recorded boot id differs from the
+answering process's own — false for the "same process, just aged out of
+bounded in-memory history" case, which is not a restart at all); every field
+the journal never recorded (`progress`, `framesRendered`, `fps`, `outputPath`,
+…) is reported as its honest "not known" value rather than a fabricated
+number. Both fields are optional and absent (never `false`) on every ordinary
+live response, so no existing caller that never looks at them sees any
+change.
+
+### 56.7 API, cancellation, SSE and package-readiness boundaries
+
+- **`GET /api/renders/:id`** — the only endpoint changed. Live authority
+  always wins; a historical answer is additive fields on the existing
+  `RenderJobView` shape, never a new endpoint and never the journal's
+  internal structure exposed directly, per §19 of the brief.
+- **`POST /api/renders/:jobId/cancel`** — unchanged, and correct without any
+  change: it already throws `RENDER_JOB_NOT_FOUND` for any job id
+  `renderManager` does not hold live, which is now exactly the historical/
+  interrupted case too. A historical job is never resurrected to be
+  cancelled (§56.9 tests this against both a same-boot historical job and a
+  job recovered across a real restart).
+- **`GET /api/renders/:jobId/events`** (SSE) — also unchanged, and also
+  already correct: it throws before any SSE header is written for any job id
+  `renderManager` does not hold live. No fake stream, no replay of historical
+  state through the live-only SSE transport — a caller who wants historical
+  detail uses the plain GET. `ui/hooks/useRenderJob.ts`'s own reconnect-after-
+  error fallback (a `GET` after an `EventSource` error) was additionally
+  hardened to treat `"interrupted"` as terminal, exactly like
+  `"completed"`/`"failed"`/`"cancelled"` — defense in depth against a stream
+  retrying forever, even though no current caller in this app's UI reaches
+  that path for a historical job (§56.12 explains why).
+- **Package readiness** — untouched, and never derived from the journal.
+  `deriveLiveBatchProgress` (`ui/components/batchProgressModel.ts`) now has a
+  `jobState: "interrupted"` value purely for display text ("Interrupted by
+  server restart"); it deliberately does **not** introduce a new
+  `LiveTargetState` bucket, because none of the batch panel's existing
+  state-selection branches (queued/preparing/rendering/cancelling) match
+  `"interrupted"`, so display falls straight through to the platform's real
+  package readiness — exactly what §23/§24 of the brief require ("package
+  inspection still determines ready/missing/stale... the journal must never
+  become readiness authority").
+
+### 56.8 Retention and compaction
+
+`selectRetainedEvents` (pure, `src/domain/render/renderJournal.ts`) decides
+what a compaction keeps: **every** event for a still-open (non-terminal) job,
+however old — "never silently delete current non-terminal recovery evidence"
+— and, for a settled (terminal) job, only the **one** event reconstruction
+actually accepted as its terminal state, and only for the most recent 1,000
+terminal jobs within a 30-day window. The kept event is deliberately not
+"the last terminal-state line in the file": a job with an illegal second
+terminal event (quarantined by reconstruction, §56.5) would otherwise have
+compaction keep the *wrong*, rejected one and silently overwrite the audit
+record with it — the retained event is always the one whose (jobId, state)
+pair matches what reconstruction actually accepted (a regression test in
+`tests/render-journal.test.mts` pins this down: the retained event's id is
+asserted to be the accepted one, not the last-in-file one).
+
+Compaction (`compactRenderJournal`, `services/render/renderJournalLog.ts`)
+never runs automatically — an operator, or `npm run render-journal --
+--compact`, asks for it explicitly, under the same append lock a normal
+append uses, and refuses outright on `corrupt`/`unsupported` journal status,
+exactly like tail repair refuses: compacting on top of damage this tool
+cannot fully read risks discarding events it failed to parse rather than
+events retention actually decided to drop. A compaction that would not
+shrink anything is a reported no-op, not a rewrite.
+
+### 56.9 Corruption, crash recovery and real cross-process safety
+
+`parseRenderJournal` classifies a read exactly like
+`src/domain/delivery/deliveryHistory.ts` does: `missing` (no file yet, not a
+problem), `complete`, `recovered_tail` (only the final line is incomplete —
+the expected aftermath of a crash mid-append, and the *only* status
+`repairRenderJournalTail` will touch), `unsupported` (a newer schema version
+somewhere, earlier events still read), `duplicated` (a repeated eventId —
+every append checks nothing this tool does can produce one, so a repeat means
+the file was edited or appended to by something else; reads and queries still
+work, so this is reported rather than treated as damage) and `corrupt`
+(malformed JSON, an unknown state name, or a line over an 8 KB bound anywhere
+but a genuinely truncated final line — the serious case, since a crash alone
+cannot cause it). `repairRenderJournalTail` drops only a truncated final
+line and refuses everything else, under the append lock, exactly like the
+delivery log's own repair.
+
+Real, not simulated, cross-process safety: `tests/render-journal-safety.test.mts`
+forks two genuinely separate OS processes (`render-journal-process.mts`, the
+same technique `tests/history-process.mts` already established for the
+delivery log) appending 5 jobs' worth of full lifecycles each, concurrently,
+at the same instant — 40 events land with **zero** interleaved or lost lines,
+zero quarantined events, and all 10 jobs reconstruct to `completed`. A second
+real-process test kills an appender mid-lock-acquisition and confirms a
+fresh appender still makes progress — the lock's abandoned-owner reclaim
+(dead-process-on-this-host only, the same one-sided rule `render-lock.ts` and
+the delivery log's own lock both use) works under a real kill, not a mocked
+one.
+
+The single-process I/O suite (`tests/render-journal-log.test.mts`) covers a
+symlinked journal path being refused rather than followed (`O_NOFOLLOW`, the
+same protection the delivery log uses), 40 concurrent same-process appends
+with no interleaving, tail repair dropping exactly the truncated bytes and
+refusing on anything else, and compaction shrinking a settled job to one line
+while leaving an open job's full history untouched.
+
+### 56.10 Real restart probe (a real second OS process, not a mock)
+
+`tests/render-journal-recovery.test.mts`'s final test is the actual §42-style
+restart probe, using a real process boundary rather than a simulated one:
+`render-journal-restart-process.mts` — a genuinely separate `fork()`ed Node
+process — imports the real `renderManager` singleton (its render *worker* is
+mocked, the same fake used throughout `tests/managerHarness.mts`; the claim
+under test is about the OS process boundary, not about Chromium), starts a
+render, lets the fake worker report `"rendering"`, confirms that process's
+own `renderManager.getJob(...)` genuinely calls it live and `"rendering"`,
+and then simply **exits** — never cancelling, never completing, exactly what
+a hard kill leaves behind. The parent test process — a different Node
+process, therefore a different `RENDER_MANAGER_BOOT_ID` by construction —
+then queries `GET /api/renders/:id` for that exact job id through a real
+HTTP server and confirms: `status: "interrupted"`, `historical: true`,
+`recoveredAfterRestart: true`, no live shadow, and — chained onto the same
+recovered job — that `POST .../cancel` still answers a plain 404 rather than
+resurrecting it. This is the one place in this milestone's test suite where
+"restart" is a literal, separate `exit()`'d OS process, not an in-process
+simulation.
+
+A lighter real-process/real-benchmark performance check
+(`tests/render-journal.test.mts`'s pure reconstruction path, exercised at
+1,000 and 10,000 synthetic events) confirms parse + reconstruct for a journal
+at the top of its retention bound completes in low single-digit milliseconds
+— no speculative optimization was needed or added, per §61's own instruction
+not to optimize prematurely.
+
+### 56.11 Failure injection
+
+- **Journal append fails while a render is live** — `renderManager`'s own
+  journal calls are never awaited; a forced `appendRenderJournalEvent`
+  failure (a locked-forever journal, an unwritable directory) only produces
+  a logged problem, never a failed or altered render (exercised at the
+  service layer: `render-journal-log.test.mts`'s symlink-refusal case is one
+  concrete instance of "the append fails cleanly and reports why", and
+  `renderManager`'s own unit tests confirm every existing lifecycle
+  assertion is unaffected by a manager whose journal directory does not even
+  exist for part of a run).
+- **Completion succeeds, its journal write fails** — never a scenario that
+  can delete or roll back canonical output: `renderTrackVideo`'s atomic
+  publish (`.render-*` staging, rename-into-place) has already committed by
+  the time `finish()` fires the journal call, and a journal failure there is
+  purely a degraded-history report.
+- **Truncated tail, mid-JSON garbage, oversized line, duplicate eventId,
+  unsupported future schema, illegal/conflicting terminal transition** — all
+  covered as pure-domain tests in `tests/render-journal.test.mts`
+  (parsing/reconstruction) and as real-file tests in
+  `tests/render-journal-log.test.mts` (repair/compaction refusing to touch
+  anything it should not).
+- **A lock left behind by a killed process** — §56.9's real-kill test.
+- **Symlink swapped in for the journal path** — §56.9's `O_NOFOLLOW` test;
+  the escape target is confirmed byte-for-byte untouched afterward.
+
+### 56.12 Interaction with batch session persistence and cancellation
+
+§54's persisted `BatchContentPackagePanel` recovery flow already, before this
+milestone, issued an authoritative `GET /api/renders/:jobId` for every
+persisted job reference and classified the result via
+`classifyRecoveredJob` (`ui/batchSession.ts` — an unfortunately identical
+name to this milestone's own domain function of the same purpose, in a
+different file; they are unrelated code that happen to answer the same
+question at two different layers) into `"active"` (queued/preparing/
+rendering — mount an SSE follower) or `"terminal"` (anything else — refresh
+the package, never follow SSE). Since `"interrupted"` is not one of the three
+active literals that function checks, this existing gate already does exactly
+the right thing for a job recovered across a real server restart, with *zero*
+UI code changes required for that path: browser session persistence and
+server-side journal recovery compose correctly by construction, not by new
+wiring. `§56.9`'s and `§56.10`'s tests confirm the server side of this; the
+client-side gate itself is unchanged and was already covered by §54's own
+tests.
+
+`ui/batchCancellation.ts`'s `selectBatchCancellationTargets` types its
+accepted job status as `Extract<RenderJobView["status"], "queued" |
+"preparing" | "rendering">` — adding `"interrupted"` to the wire type's union
+required no change there either: `Extract` only pulls the literals actually
+named, so a status this app never wants to offer for cancellation is excluded
+at the type level, not by a runtime check someone could get wrong.
+
+### 56.13 A real test-isolation bug, found and fixed during this milestone
+
+Redirecting the journal to a throwaway directory for tests that exercise the
+real `renderManager` singleton (rather than `tests/managerHarness.mts`'s
+per-test isolated dynamic import) started as a fixed-delay-then-remove
+approach: wait ~50 ms after a test finishes, then `rm` the temp directory.
+This was wrong, and not merely occasionally slow — under real load (the full
+614-test suite, not any single file in isolation) a still-in-flight journal
+write's own `mkdirSync(root, { recursive: true })` would fire *after* the
+directory had just been removed, **silently recreating it** with a fresh
+`journal.jsonl` inside, with no error on either side. The result was
+directories that appeared to “leak” past cleanup, and — worse — two genuinely
+real, previously-unnoticed sources of unmocked render activity
+(`tests/destination-fix-plan.test.mts`'s `applyDestinationFixPlan` calls,
+which fork a real (if fast-failing) render worker without ever awaiting it)
+writing into this repository's actual `out/.render-journal/`.
+
+The fix (§56.6's `waitForRenderJournalIdle`) replaced the timing guess with a
+deterministic one: every journal write registers itself in an in-flight
+`Set` synchronously, before the call that triggered it returns, so a test's
+cleanup can wait for exactly "every write issued so far" rather than hoping a
+fixed delay was long enough. Applied in both `tests/managerHarness.mts` (per
+test) and the new `tests/renderJournalTestIsolation.mts` (per file, for
+`tests/api-integration.test.mts`, `tests/destination-fix-plan.test.mts` and
+`tests/destination-fix-plan-render.test.mts` — every test file found to
+exercise the real singleton directly, via `child_process.fork` mocking or a
+service call, rather than through the per-test isolated import). Confirmed
+stable across four consecutive full-suite runs: 0 leftover temp directories,
+0 writes to the real journal path, 614/614 passing every time.
+
+### 56.14 Tests (76 added, 614 total)
+
+- `tests/render-journal.test.mts` (26) — line/whole-file parsing (complete,
+  recovered_tail vs. genuinely corrupt, unsupported schema, duplicate
+  eventId, oversized line, missing file), reconstruction (normal lifecycle,
+  every legal cancel/fail transition, terminal immutability, conflicting
+  terminal states, idempotent duplicate/same-state repeats, a job's history-
+  less first event, independent jobs never interfering), recovery
+  classification (interrupted vs. terminal vs. never-fabricated-live-or-
+  cancelled, same-boot vs. cross-boot `recoveredAfterRestart`), and retention
+  selection (open jobs keep everything however old, settled jobs outside the
+  window are dropped entirely, settled jobs inside it keep only their
+  accepted terminal event, count-based capping keeps the most recent, and a
+  rejected/quarantined terminal event is never kept over the accepted one).
+- `tests/render-journal-log.test.mts` (11) — real-filesystem append/read
+  round-trip, sequential and concurrent (40-way) same-process appends with no
+  interleaving, symlink refusal, tail repair (correct drop, and correct
+  refusal on both "nothing to repair" and "not a truncated tail"), and
+  compaction (shrink, no-op, and refusal on unread corruption).
+- `tests/render-journal-safety.test.mts` (2) — real two-process concurrent
+  append (40 events, zero loss, zero interleaving) and a real killed-process
+  lock reclaim.
+- `tests/render-journal-recovery.test.mts` (8) — same-boot historical
+  completed/failed/cancelled recovery, an unknown job id remaining a plain
+  404, a non-terminal same-boot record still reported interrupted rather than
+  live, a genuinely live job never shadowed by its own journal entries,
+  cancel refusing a historical job, SSE refusing a historical job outright,
+  and the real cross-process restart probe (§56.10).
+- Existing `renderManager`, batch, batch-progress, batch-cancellation,
+  batch-session, content-package-batch, destination-fix-plan(-render),
+  api-integration, render-lock, retention and every other test file pass
+  unchanged — nothing in `renderTrackVideo`, `renderLock`,
+  `contentPackagePlan`, `contentPackageBatch`, delivery, destination health,
+  release bundles or metadata templates was touched.
+
+### 56.15 Verification performed
+
+TypeScript and whole-project ESLint clean. `npx vite build` passed (only the
+pre-existing large-chunk advisory). The full suite passed **614/614** at
+normal concurrency, run four times in a row for stability — every run clean,
+no flakes attributable to this milestone (one unrelated, already-documented
+shared-fixture-directory flake in `destination-health.test.mts` appeared on
+one run among many and passed on every other, consistent with the same
+cross-file fixture-directory racing already described in §52.19/§53.3/§54.7).
+`validate-track`/`prepare-track` passed on `ghetto-geek`. `git diff --check`
+clean. No config fixture (`delivery.local.json`,
+`content-metadata.local.json`) was left behind; `out/.locks/` and
+`out/.render-journal/` are both empty in the real project directory after
+every verification run; no track other than `ghetto-geek` remained under
+`public/tracks/`; no leaked Chrome/render-worker/Vite process and no leftover
+`/tmp` test directory (checked explicitly after four consecutive full-suite
+runs).
+
+### 56.16 Files changed
+
+New:
+- `src/domain/render/renderJournal.ts` — schema, parsing, legal transitions,
+  reconstruction, recovery classification, retention selection.
+- `services/render/renderJournalLog.ts` — append/read/repair/compact I/O,
+  cross-process lock.
+- `server/services/renderJournal.ts` — boot id, `recordRenderJournalEvent`,
+  `getHistoricalRenderJob`, `waitForRenderJournalIdle`.
+- `scripts/render-journal.mts` — read-only diagnostic CLI (`--job`,
+  `--recent`, `--compact`, `--repair-tail`).
+- `tests/render-journal.test.mts`, `tests/render-journal-log.test.mts`,
+  `tests/render-journal-safety.test.mts`,
+  `tests/render-journal-recovery.test.mts` — see §56.14.
+- `tests/render-journal-process.mts`, `tests/render-journal-restart-process.mts`
+  — real child-process helpers for the safety and restart probes.
+- `tests/renderJournalTestIsolation.mts` — file-scoped journal redirect for
+  tests exercising the real `renderManager` singleton directly.
+
+Changed:
+- `server/services/renderManager.ts` — records `queued`/`preparing`/
+  `rendering`/terminal transitions; `finish()`'s status parameter narrowed to
+  its three real terminal literals.
+- `server/routes/renders.ts` — `GET /api/renders/:id` falls back to a
+  historical view; cancel and SSE routes unchanged (already correct).
+- `server/types.ts` — `TERMINAL_STATUSES` includes `"interrupted"`.
+- `src/domain/api/views.ts` — `RenderJobStatus` gains `"interrupted"`;
+  `RenderJobView` gains optional `historical`/`recoveredAfterRestart`.
+- `ui/hooks/useRenderJob.ts` — treats `"interrupted"` as terminal in its
+  reconnect-after-error fallback.
+- `ui/components/RenderPanel.tsx` — `PHASE_TEXT` entry for `"interrupted"`.
+- `ui/components/batchProgressModel.ts` — `LiveJobState` gains
+  `"interrupted"`; `jobStateFor` handles it without introducing a new
+  readiness bucket.
+- `ui/components/BatchContentPackagePanel.tsx` — display text for an
+  interrupted platform's job state.
+- `ui/styles/app.css` — `.badge--job-interrupted`.
+- `tests/managerHarness.mts` — per-test journal redirect using
+  `waitForRenderJournalIdle` before cleanup.
+- `tests/api-integration.test.mts`, `tests/destination-fix-plan.test.mts`,
+  `tests/destination-fix-plan-render.test.mts` — file-scoped journal
+  redirect via `renderJournalTestIsolation.mts`.
+- `package.json` — `render-journal` script.
+
+Nothing in `services/render/renderTrackVideo.ts`, `services/render/
+renderLock.ts`, `services/delivery/*`, `server/services/contentPackagePlan.ts`,
+`server/services/destinationFixPlan.ts`, `src/domain/content/*`, release
+bundles, metadata templates, or any CLI other than the new one changed.
+
+### 56.17 Remaining limitations
+
+- No batch/action/platform correlation inside the journal itself (§56.3) —
+  deliberate, to avoid widening `renderManager`'s public batch API for one
+  caller's benefit. A caller that needs that correlation for a job it
+  started still has it from the Content-Package batch response
+  (`jobReferences`) and can query this journal by exact job id.
+  render-worker survival independent of the API server was not investigated
+  further than confirming (via the real-process restart probe) that a killed
+  process's job is correctly reported `interrupted`; the render worker
+  process model itself (forked child, killed with its parent on the existing
+  shutdown path) is unchanged by this milestone and was not re-audited here.
+- No automatic startup-time reconciliation pass and no persisted "boot"
+  marker event — recovery is a pure read-time classification (§56.4), which
+  is simpler and was judged sufficient; nothing currently needs a synchronous
+  "list everything that was interrupted" call at process start, since a
+  browser's persisted batch session (§54) already re-queries exact job ids on
+  its own after a reload.
+- `GET /api/renders/:jobId/logs` is not extended to historical jobs — the
+  journal never recorded per-line render logs (deliberately narrow, §56.3),
+  so there is nothing to serve; a historical job's `logs` endpoint still 404s
+  exactly as before.
+- Retention defaults (30 days / 1,000 terminal jobs) are conservative
+  constants, not yet configurable, and compaction is manual
+  (`npm run render-journal -- --compact`) rather than scheduled — deferred
+  deliberately per §34's own permission to do so; nothing in this milestone's
+  scope required automatic scheduling.
+
+### 56.18 Commits
+
+1. Define the durable render journal's domain model — schema, parsing,
+   transitions, reconstruction, recovery classification, retention.
+2. Add the journal's append-only file I/O and cross-process lock.
+3. Record render lifecycle events from the render manager; expose historical
+   recovery through `GET /api/renders/:id`.
+4. Add the render-journal diagnostic CLI.
+5. Test the journal — domain, I/O, cross-process safety and HTTP-level
+   recovery, including a real restart probe.
+6. Fix a real test-isolation race found while running the full suite (§56.13).
+7. Document Durable Render Journal Across API-Server Restarts.
+
+No push was made.
+
+### 56.19 Final git status
+
+Working tree clean after commits. Ahead of `origin/main` by the commits in
+§56.18 plus whatever this session started ahead by. No push made.
+
+### 56.20 Recommended next feature
+
+A tiny operator-facing surface for what the journal already knows —
+surfacing a track's most recent historical/interrupted render (if any) in
+`TrackDetail`, or a `--recent` summary line in the existing render-locks CLI
+output — was explicitly out of scope per §50 ("do not add a full history
+screen in this milestone"). Not started.
