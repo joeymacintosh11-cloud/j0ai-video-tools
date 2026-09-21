@@ -7086,3 +7086,239 @@ cross-tab UI update.
 Recommended next feature: a batch-panel Cancel action that reuses the existing
 render-batch cancellation API and current exact IDs, with no new queue or
 session model. It was not started.
+
+## 55. Current State — Batch-Panel Cancellation (2026-09-21)
+
+The persisted Batch Content Package panel can now stop its own visible active
+render work. No cancellation protocol, queue, worker message, watcher or
+durable cancellation state was added. The feature is a narrow UI adapter over
+the render service that already owns cancellation.
+
+### 55.1 Authority and exact scope
+
+The panel reuses the existing `POST /api/renders/:jobId/cancel` endpoint and
+`renderManager.cancelRender(jobId)`. The existing
+`POST /api/render-batches/:batchId/cancel` remains unchanged and is still used
+by QueueDrawer, but is deliberately not used here: one content-package session
+can contain jobs queued by its latest Apply plus adopted exact jobs from other
+batches, and the persisted session does not claim that one batch ID owns all
+of them. Cancelling that one batch would miss adopted work; cancelling a wider
+batch could reach jobs the visible panel does not represent.
+
+`ui/batchCancellation.ts` therefore selects only references that satisfy all
+of these at click time:
+
+- the track is in the panel's current authoritative inspect response;
+- the platform is selected in that current response (hidden mode/platform
+  targets are excluded);
+- the exact server-issued `jobId`, `slug` and `presetId` all agree;
+- the fresh job is `queued`, `preparing` or `rendering`;
+- a shared job ID is requested at most once.
+
+There is no fallback to title, latest render, slug alone, inferred preset or
+array position. Unknown, mismatched and terminal references are never sent a
+speculative cancel. Selection and mode changes cannot remap an old job: hidden
+work may still be followed by its existing SSE connection, but the visible
+Cancel action cannot reach it. Re-selecting the original target exposes the
+same exact identity again. Track deletion drops the target from the visible
+scope; direct exact-ID cancellation remains safe at the API level.
+
+### 55.2 UI and confirmation
+
+The minimum viable panel action is one keyboard-accessible button beside the
+existing plan actions: `Cancel N active render(s)`. It is disabled when no
+currently visible job is cancellable. One job follows the existing immediate
+cancel convention. Two or more jobs use the browser's lightweight confirmation
+and name every target as `slug · platform`, for example
+`Cancel 2 active renders?`; there is no modal workflow or per-row duplicate.
+
+Immediately after confirmation, every requested target gets a local
+`Cancelling` overlay and batch/track totals move it out of queued/preparing/
+rendering into a distinct cancelling bucket. This is request state, never
+server or package truth: it is not persisted, it does not mark a job cancelled,
+and it cannot make a package ready. The UI now also distinguishes the real
+`Preparing` phase from `Rendering`, in addition to queued, cancelling,
+cancelled, completed and failed.
+
+The exact-job POST uses Fetch `keepalive`, so confirming and immediately
+navigating/reloading does not intentionally abandon the tiny bodyless request.
+Double-clicks are blocked in the component. Independently, the manager now
+returns its current snapshot when `cancelRequested` is already true, so a
+second tab/retry sends no second worker command and creates no second kill
+timer.
+
+### 55.3 Accepted, terminal, unknown and failed results
+
+`cancelBatchTargets` issues one existing API call per exact job concurrently
+and returns a small per-target discriminated result: accepted-active,
+authoritative-terminal, unknown or failed. This is a browser adapter, not a
+server process model.
+
+- queued cancellation removes the ID from the manager queue and returns
+  terminal `cancelled` synchronously; no worker starts;
+- preparing/rendering cancellation returns the current active snapshot after
+  sending the existing worker `cancel` command, and the existing per-job SSE
+  remains mounted until terminal state;
+- a rejected cancel is followed by one authoritative exact-job GET;
+- terminal GET (`completed`, `failed` or `cancelled`) wins and triggers the
+  normal targeted package refresh;
+- authoritative 404 is shown as unknown, never cancelled, and uses the normal
+  unknown-job refresh/prune path;
+- an active GET after a failed request leaves the job tracked, clears the local
+  cancelling overlay, shows `Could not cancel`, keeps SSE alive and permits a
+  retry;
+- a transport failure of both cancel and re-read also keeps the reference and
+  reports the request failure rather than inventing a lifecycle result.
+
+Every target settles independently. One failure or completion does not turn
+the containing batch into a binary result. A terminal job snapshot is
+monotonic in the panel: a slower active cancel response cannot overwrite a
+terminal SSE snapshot already observed.
+
+### 55.4 Completion, publication and delivery boundaries
+
+The render manager already makes the important race truthful. If a worker's
+`done` event wins after cancellation was requested, the job finishes
+`completed`; later exit/cancel events cannot reopen or overwrite it. If the
+cancel endpoint sees an already-terminal job it returns
+`RENDER_NOT_CANCELLABLE`, after which the panel's exact GET displays the real
+terminal state. A completion winner shows `Render already completed; its
+output remains valid.` and receives the same targeted package refresh.
+
+Cancellation is checked before rendering, after `renderMedia`, before manifest
+creation and synchronously inside the locked publication commit. The producer
+renders into `.render-*` staging and the existing atomic/rollback publication
+keeps the previous video+manifest pair until the new pair commits. Therefore a
+cancel before successful publication writes no new canonical output, deletes
+no previous output and cleans staging/lock state.
+
+`deliverAfterRender` runs only after `renderTrackVideo` has returned from a
+successful publication and released the render lock. A cancelled-before-
+completion render never reaches auto-delivery and cannot trigger its optional
+release-bundle update. Once publication has succeeded, completion is the
+truth; render cancellation does not promise to stop an already-started
+delivery. Delivery's own identity checks, atomic copy, receipt/history and
+bundle rules remain authoritative. Destination health continues to derive
+from real files/manifests/receipts, never from cancellation status.
+
+### 55.5 Persistence, reload, SSE and refresh
+
+Only the existing exact job references are persisted. `Cancelling` is not.
+Reload/close/reopen repeats §54's authoritative inspect, exact job GET and
+active-only SSE recovery:
+
+- still active: reconnect the existing `useRenderJob` EventSource;
+- cancelled/failed/completed: show the real terminal state and refresh;
+- forgotten after server restart: show unknown, refresh and prune, with no
+  fabricated cancellation or permanent spinner.
+
+The existing SSE route still replays current state and re-checks the terminal
+boundary after subscribing; `useRenderJob` still GETs on stream error. No batch
+SSE, poll loop or watcher was added. When terminal state arrives,
+`BatchContentPackagePanel` reuses its 50 ms coalescer and refreshes only the
+affected slug with `GET /api/content-package`. The exact reference is pruned
+from localStorage only after that refresh succeeds. Reload cannot resurrect a
+cancelled job as active, and closing/reopening loses only the local cancelling
+overlay, never server truth.
+
+After refresh, cancelled/failed work exposes the underlying durable package
+readiness (usually missing or stale). `cancelled` remains job history, not a
+new `PlatformReadiness`. Ready increases only when a genuine completed export
+is current. Metadata, export intent, content-copy templates and destination
+changes are all re-derived through the ordinary current resolver; none changes
+which exact job ID was requested.
+
+### 55.6 Tests and probes
+
+Sixteen tests were added (baseline **551**, now **567**) across
+`batch-cancellation`, live progress, manager/batches and HTTP integration.
+They cover exact visible scope; no guessed/hidden/unrelated target; one and
+multiple jobs; queued, preparing and rendering display/behavior; cancelling
+totals; immediate queued settlement; partial cancellation; failed request with
+active recovery; unknown job; already terminal/completion race; stale-response
+monotonicity; idempotent duplicate cancellation; exact route 200/409/404
+semantics; no worker for a cancelled queued job; unrelated-job survival; and
+the navigation-safe `keepalive` request. Existing persistence, SSE, publication,
+delivery, release-bundle, lock, CLI and QueueDrawer tests remain in the full
+suite. The 56-test focused cancellation/progress/manager/session set passed ten
+additional concurrent repetitions.
+
+A real Chrome/UI probe created three isolated synthetic tracks and nine
+platform targets (Ghetto Geek remained visible and unselected). The panel
+inspected `0 ready / 9 missing`, planned and applied nine real renders, and
+showed one real active job plus eight queued. A second long-input pass clicked
+`Cancel 9 active renders`; before any terminal claim the UI showed exactly
+`9 cancelling`. The deliberately late confirmation/reload produced the valid
+mixed result **5 cancelled / 4 completed**. Reload recovered the remaining
+exact active jobs, never retained a cancelling ghost, and a full browser-tab
+reopen converged to current package truth with the Cancel button disabled.
+Cancelled targets exposed stale readiness while completion winners remained
+valid/current. A separate active worker was cancelled at 35% through the
+existing batch cleanup path; the prior published pair remained and no staged
+render survived.
+
+Failure injection is deterministic in the adapter tests: cancel 500 plus an
+active GET remains retryable; cancel rejection plus completed GET converges to
+completed; cancel/GET 404 converges to unknown; and a stale active response
+cannot overwrite an observed terminal result. Existing SSE disconnect and
+GET/replay boundary tests exercise the unchanged lost-event recovery path.
+The real probe covered nine simultaneous references; the existing 12-target
+aggregation test and 100-track/300-reference persistence bounds provide the
+practical stress coverage. A prolonged 10+-real-render soak was not run because
+the manager deliberately renders one at a time and it would add minutes without
+exercising a different cancellation path.
+
+### 55.7 Performance, compatibility and cleanup
+
+Cost is linear only in visible cancellable jobs: one small POST per unique exact
+ID, followed by no poll. Rejected calls add at most one exact GET. Existing one-
+per-active-job SSE connections remain; terminal work generates at most one
+coalesced package refresh per affected slug, never a catalogue refresh. There
+is no idle work or meaningful new hot path.
+
+TypeScript and whole-project ESLint pass. The normal-concurrency full suite is
+**567/567**. The Remotion/Vite production bundle passes. `validate-track` and
+`prepare-track` pass for Ghetto Geek with analysis already current, and
+`git diff --check` is clean. The real probe left no `.render-*` directory,
+render lock, delivery/content-metadata local config or delivery/release-bundle
+artifact. Its tracks, outputs, browser tabs and local servers were removed;
+Ghetto Geek was not modified.
+
+Unchanged: Batch Session Persistence, Live Batch Progress, batch/single-track
+Content Package Generation, QueueDrawer UI and batch-cancel API, single-track
+rendering, worker protocol, CLI, delivery, destination health, release bundles
+and metadata templates.
+
+### 55.8 Files, commits, limitations and next feature
+
+New:
+- `ui/batchCancellation.ts` — exact visible target selection, confirmation copy,
+  per-target cancel/re-read reconciliation and terminal monotonicity.
+- `tests/batch-cancellation.test.mts` — focused adapter/scope/race/error tests.
+
+Changed:
+- `ui/components/BatchContentPackagePanel.tsx` — action, confirmation,
+  cancelling/error states and authoritative result handling.
+- `ui/components/batchProgressModel.ts` — distinct preparing/cancelling overlays
+  and totals.
+- `ui/api/client.ts` — navigation-safe exact cancel POST.
+- `server/services/renderManager.ts` — idempotent already-requested cancellation.
+- manager, batch, progress and API integration tests; this handoff document.
+
+Logical commits:
+1. `e561e47` — exact panel cancellation, UI state, manager hardening and tests.
+2. Follow-up commit — navigation-safe cancellation plus documentation.
+
+Known limitations remain explicit. Job/cancel history is in-memory and a server
+restart cannot resume or prove the fate of the vanished process; package/filesystem
+truth is all that survives. Cross-tab UI has no browser broadcast channel, so
+the other tab converges through server/SSE rather than sharing local transient
+state. The panel intentionally has one all-visible-active action, not per-row
+selection. A confirmed request that genuinely never reaches the server cannot
+cancel work, but recovery shows it as active and permits retry rather than
+claiming success.
+
+Recommended next feature: a small durable render/batch journal that survives
+API-server restarts and can answer what happened to an exact job without
+turning browser localStorage into authority. It should preserve the current
+queue/worker/cancellation state machine rather than replacing it. Not started.

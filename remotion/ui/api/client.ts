@@ -245,10 +245,14 @@ export const getRenderLogs = (jobId: string): Promise<RenderLogsView> =>
   request<RenderLogsView>(`/api/renders/${encodeURIComponent(jobId)}/logs`);
 
 export const cancelRender = (jobId: string): Promise<RenderJobView> =>
-  jsonRequest<RenderJobView>(
-    `/api/renders/${encodeURIComponent(jobId)}/cancel`,
-    "POST",
-  );
+  request<RenderJobView>(`/api/renders/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+    // Cancellation is intentionally safe to finish if the user reloads or
+    // closes the panel immediately after confirming it. The terminal result
+    // still comes from the server on recovery; this only keeps the tiny POST
+    // from being abandoned by navigation.
+    keepalive: true,
+  });
 
 /** SSE endpoint for a job's live progress; consumed with EventSource. */
 export const renderEventsUrl = (jobId: string): string =>

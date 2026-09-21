@@ -3,7 +3,7 @@ import test from "node:test";
 import { deriveContentPackage, type ContentPackageView } from "../src/domain/content/contentPackage.ts";
 import { deriveBatchContentPackage } from "../src/domain/content/contentPackageBatch.ts";
 import type { RenderJobView } from "../src/domain/api/views.ts";
-import { ApiRequestError } from "../ui/api/client.ts";
+import { ApiRequestError, cancelRender } from "../ui/api/client.ts";
 import {
   cancelBatchTargets,
   cancellationConfirmation,
@@ -206,4 +206,21 @@ test("an observed terminal snapshot cannot be overwritten by a stale cancel resp
   const stale = job("job-alpha", "alpha", "youtube-16x9", "rendering");
   assert.equal(preferTerminalSnapshot(completed, stale), completed);
   assert.equal(preferTerminalSnapshot(stale, completed), completed);
+});
+
+test("the exact-job cancellation POST survives an immediate browser navigation", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let seen: RequestInit | undefined;
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    seen = init;
+    return new Response(JSON.stringify({
+      ok: true,
+      data: job("job-alpha", "alpha", "youtube-16x9", "cancelled"),
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  await cancelRender("job-alpha");
+  assert.equal(seen?.method, "POST");
+  assert.equal(seen?.keepalive, true);
 });
