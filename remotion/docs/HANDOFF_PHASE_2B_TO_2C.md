@@ -8348,3 +8348,458 @@ Two independent, similarly small candidates, neither started:
   format was itself `interrupted` — context that could change what an
   operator decides to do about a finding, sourced from the same read model
   added here rather than a new one.
+
+## 58. Destination Health + Render Journal Context (2026-09-21)
+
+Delivers exactly §57.21's first recommendation: destination-health findings
+that concern one exact render target now carry optional, explanatory-only
+context from the durable journal — "most recent render attempt was
+interrupted by a server restart," "...failed: `<safe message>`," or
+"...was cancelled" — when that context could genuinely help explain a
+current `delivered_file_missing`/`delivered_file_changed` finding.
+
+### 58.1 Architecture boundary
+
+Unchanged from §56/§57, restated because this milestone is the one most at
+risk of quietly violating it: destination health answers "what is wrong
+with the destination right now?"; the render journal answers "what happened
+to prior render jobs?". `scanDestinationHealth`
+(`server/services/destinationHealth.ts`) was **not touched** — every one of
+its existing tests passes unmodified, and it still knows nothing about the
+journal. `server/services/destinationFixPlan.ts` was also **not touched**
+and calls `scanDestinationHealth` directly, never the new enrichment
+function — which is what makes "the fix planner is unaffected by render
+context" a structural fact (the field never reaches it at all) rather than
+a convention someone could break later. A dedicated test proves this by
+constructing the identical drift scenario both ways and diffing the
+planner's own findings against the enriched scan's, field for field except
+`renderContext` (`tests/destination-health-render-context.test.mts`, "the
+remediation plan is identical whether or not render context exists").
+
+Composition happens in one new module,
+`server/services/destinationHealthRenderContext.ts`, called from exactly
+two places *after* a scan has already run: `handleGetDestinationHealth`
+(the read-only health API) and `scripts/destination-health.mts` (the CLI).
+Neither `handlePlanDestinationFix` nor `handleApplyDestinationFix` calls it.
+
+### 58.2 Which findings are enriched, and why
+
+`RENDER_CONTEXT_ELIGIBLE_CODES`
+(`src/domain/delivery/destinationHealth.ts`) narrows this to exactly two of
+`DestinationFindingCode`'s eleven values: `delivered_file_missing` and
+`delivered_file_changed`. Decided from what each code actually means
+(§4/§5 of the milestone brief: "inspect actual finding codes first"), not
+from the brief's own illustrative examples ("missing current export",
+"stale current export"), which do not correspond to any real
+`DestinationFindingCode` — those describe a different concept
+(`ExportFreshness`/`RenderOutputView`, a track's own local export state,
+never something `scanDestinationHealth` reports on at all).
+
+Every other code was excluded on inspection, not by guessing from the
+brief's own exclusion list:
+
+- `destination_root_identity_changed`, `destination_folder_unreadable` —
+  root-level, no slug at all.
+- `track_folder_missing`, `unexpected_export_file`,
+  `unexpected_track_folder`, every `release_bundle_*` code — each carries a
+  slug but `presetId: null` always (confirmed by reading
+  `server/services/destinationHealth.ts`'s own call sites): a whole folder,
+  an unaccounted-for file, an orphan, or a bundle are never about one
+  specific render, so there is no exact target to match against.
+- `destination_file_unreadable` — has both slug and presetId, but is a
+  permissions/read problem at the destination, unrelated to whether a
+  render ever succeeded.
+
+### 58.3 Shared read model
+
+Two additions to `src/domain/render/renderJournal.ts`, the same module
+§57's `recentRenderJobsForSlug`/`classifyRecoveredJob` already live in —
+"one authoritative interpretation of completed/failed/cancelled/
+interrupted" (§6 of the brief) means literally reusing that module, not
+re-deriving the vocabulary:
+
+- `targetKey(slug, presetId)` — a stable `"${slug}::${presetId}"` join,
+  exported so every caller agrees on it rather than re-joining the two
+  strings its own way.
+- `buildMostRecentJobIndex(reconstruction, currentBootId, excludeJobIds?)`
+  — the single most recent job for **every** exact target the journal has
+  ever seen, built in one pass over `reconstruction.jobs.values()`
+  (`O(jobs)`, not `O(jobs × targets)`). Deliberately not built from
+  `recentRenderJobsForSlug`: that function's own `limit` bounds how many of
+  a *track's* most recent jobs it considers across every preset that track
+  has, so a preset that renders less often than its siblings could have its
+  true most-recent job fall outside that bound — tested directly
+  (`tests/render-journal.test.mts`, "a busy sibling preset never displaces
+  another's true answer").
+
+### 58.4 Finding model
+
+```ts
+// src/domain/delivery/destinationHealth.ts
+type DestinationFindingRenderContext = {
+  jobId: string;
+  state: "failed" | "cancelled" | "interrupted"; // no "completed" — see §58.6
+  recordedAt: string;
+  presetId: RenderPresetId;
+  note: string;
+};
+
+type DestinationFinding = {
+  // ...unchanged fields...
+  renderContext?: DestinationFindingRenderContext;
+};
+```
+
+Additive and optional, so `DestinationHealthView` (the API wire type)
+needed **no change at all** — it already reuses `DestinationFinding`
+directly rather than re-declaring its shape, so the new field flows through
+automatically. An existing client that never looks at `renderContext` sees
+no change.
+
+### 58.5 Enrichment: `enrichDestinationHealthWithRenderContext`
+
+`server/services/destinationHealthRenderContext.ts`. Given an already-
+complete `DestinationHealthResult`:
+
+1. **Skip entirely if nothing is eligible.** No finding with an eligible
+   code and both `slug`/`presetId` set means no journal read at all — the
+   ordinary "healthy" or root-only-finding scan never touches the journal
+   (§16 of the brief).
+2. **Read and reconstruct once.** `readRenderJournal()` +
+   `reconstructRenderJournal()`, exactly like every other journal consumer.
+3. **Live always wins, at the target level.** `renderManager.listJobs()`
+   supplies both a `liveJobIds` set (so a live job can never become anyone's
+   "most recent" answer) and a `liveTargetKeys` set. A finding whose exact
+   target is currently live gets **no context at all**, even when an older,
+   genuinely dead job exists for that same target — showing that older
+   job's outcome while a fresh attempt is actively under way would read as
+   the current story when it is not, and destination health has no live-
+   state field of its own to show instead (§9/§40 of the brief: "use
+   existing live state if health already knows it, otherwise omit
+   context"). Tested explicitly, including the harder case where an older
+   dead job *does* exist for the same exact target.
+4. **Look up, classify, attach.** For each eligible finding,
+   `buildMostRecentJobIndex`'s answer for its exact target is attached as
+   `renderContext` — unless there is none, or its status is `"completed"`
+   (§58.6).
+5. **Never fail the scan.** The whole read-reconstruct-index sequence is
+   wrapped in a `try`/`catch`; any journal read failure beyond an ordinary
+   missing file returns the **unenriched** result unchanged (§17 of the
+   brief). A missing journal, a `recovered_tail`, an `unsupported` schema
+   line, or a quarantined/corrupt job all degrade the same way *within*
+   this pipeline already — `readRenderJournal`/`reconstructRenderJournal`
+   never throw for those, they simply produce less (or honestly
+   `"interrupted"`, never fabricated) data — so the `try`/`catch` exists
+   specifically for the one case those two functions do not already handle:
+   a genuine filesystem error (permissions, mid-write I/O failure) reading
+   the file at all.
+
+### 58.6 The completed-context policy — decided, not left ambiguous
+
+`"completed"` is not in `DestinationFindingRenderContext["state"]`'s type
+at all, which makes "never show it" a compile-time guarantee rather than a
+runtime judgment call someone could get wrong later. The reasoning (§14 of
+the brief asks this to be decided and documented, not left to taste): a
+completed render has no explanatory value for *why* the **destination**
+copy this finding is about is currently missing or wrong — rendering and
+delivering are two different steps, and a successful render says nothing
+about what happened to the destination afterward. Showing it risked reading
+as "but it worked, so this should be fine" — exactly the false reassurance
+§14/§39 warn against — for zero explanatory gain. Omitting it entirely is
+simpler and strictly safer than the alternative the brief offered
+("wording makes the historical/current distinction explicit"), and was
+chosen over it. Verified directly (`tests/destination-health-render-context.test.mts`,
+"missing target + completed exact target" and "completed then made stale").
+
+### 58.7 Causality wording
+
+`describeRenderContext` (`src/domain/delivery/destinationHealth.ts`) states
+chronology only: "most recent render attempt was interrupted/cancelled/
+failed[: `<message>`]." Never "this file is missing because..." — the scan
+detects state, the journal adds when something last happened to a render,
+never proof of what caused the destination's current contents.
+
+### 58.8 Exact-target matching, ordering, live exclusion
+
+All grouped under §58.3/§58.5 above: `buildMostRecentJobIndex` keys are
+exact `(slug, presetId)` pairs, never "most recent for the track"; ordering
+is by the journal's own file position (the same field §57 introduced),
+never `recordedAt`; a live job — or any older job for a currently-live
+target — is never eligible. Ten dedicated tests
+(`tests/destination-health-render-context.test.mts`) exercise exact-preset
+matching, other-track exclusion, several-presets-one-track (§41 of the
+brief), and the newest-of-several-jobs-for-one-target case.
+
+### 58.9 Failed-context safety
+
+The journal's `error` field has always been `{code, message}` only — no
+`details`, no path, no stack, by schema (§56.3). `describeRenderContext`
+reads only `.message`. `enrichDestinationHealthWithRenderContext` builds
+that argument explicitly as `{ message: job.error.message }` rather than
+passing the error object through, so even a hypothetical future schema
+change that widened the journal's own error shape could not smuggle
+anything extra into a finding's `note` through this path without a second,
+separate change here too.
+
+### 58.10 A real leak found and fixed while auditing this boundary (§58's own §31/§12)
+
+Auditing "what could a failed job's message actually contain" surfaced a
+genuine gap, unrelated to this milestone's own new code but directly
+relevant to its sanitization requirement: `renderManager.finish()`
+(`server/services/renderManager.ts`) was passing `job.error` straight
+through to `recordRenderJournalEvent`. A live job's error can carry a
+`details` field — the raw `Error#stack` from a spawn/IPC failure, set in
+the worker's `onError` handler — that `RenderJournalEvent`'s own schema has
+no field for. Because `job.error` is a variable, not an object literal,
+TypeScript's excess-property check never caught the mismatch, and
+`JSON.stringify` serializes whatever fields exist at runtime regardless of
+the declared type: a spawn/IPC failure could have written a stack trace
+into durable, restart-surviving storage, readable by both `GET
+/api/render-history` (§57) and this milestone's own `describeRenderContext`
+had it not been fixed first.
+
+Fixed at the one call site that feeds the journal: `error: job.error ?
+{ code: job.error.code, message: job.error.message } : null`. The live
+view (`toView()`, which legitimately carries `details` for on-screen
+debugging in `RenderPanel`) is untouched. Regression-tested directly
+(`tests/render-manager.test.mts`, "a spawn/IPC error's stack trace reaches
+the live view but never the durable journal") — the live view is asserted
+to have `details`, and the journal's own copy of the same error is asserted
+to have *exactly* `{code, message}` as its key set, not merely "no visible
+stack."
+
+### 58.11 API, CLI, UI
+
+- **API** — no new endpoint. `GET /api/destination-health`'s existing
+  response gains the optional field via the unmodified `DestinationFinding`
+  type (§58.4); `handleGetDestinationHealth` calls
+  `scanDestinationHealth()` then `enrichDestinationHealthWithRenderContext()`
+  before building the response.
+- **CLI** (`scripts/destination-health.mts`) — an indented "Recent render:
+  `<note>` (`<formatted timestamp>`)" line under a finding that has one, in
+  human-readable output; `--json` needed no code change at all, since it
+  already dumps the (now-enriched) result verbatim.
+- **UI** (`DestinationHealthPanel.tsx`) — the same context as a small,
+  visually subdued line (`.health__rendercontext`, `--text-faint`, 11px)
+  beneath the finding it belongs to — deliberately weaker styling than the
+  finding's own message, so it can never compete with what is actually
+  wrong. No second fetch, no loading state of its own: the server returns
+  health and context together in the one response the panel already
+  fetches (§20/§21 of the brief).
+
+### 58.12 Journal-unavailable and corruption behavior
+
+Covered in depth by §58.5's step 5 and by four dedicated tests: journal
+missing (empty state, no crash), journal genuinely unreadable (a real
+`EACCES` via `chmodSync(file, 0o000)` on the journal file itself, inside a
+throwaway per-test root — the same permission-based technique
+`tests/destination-health.test.mts` already uses for its own destination-
+folder tests), a quarantined/illegally-transitioned job (left at its last
+legal, non-terminal state — reported honestly as `"interrupted"`, never a
+fabricated "corrupt" status, per §18's own instruction to "use safe usable
+history where the journal reader already supports it"), and an unsupported
+future schema version on one target's only event (dropped by the parser,
+leaving that one target unenriched while every other target in the same
+scan keeps its own correct context). None of the four ever changes
+`status`, `counts`, or any finding's `code`/`severity`/`message` — asserted
+directly, not merely implied by the absence of a thrown error.
+
+### 58.13 Performance
+
+`tests/destination-health-render-context.test.mts`'s benchmark: a 10,000-
+event journal (50 real targets with full lifecycles, the rest filler across
+many unrelated tracks) and 100 synthetic findings across those 50 targets.
+Read + reconstruct + build the index + enrich every finding: **~26ms**,
+asserted well under a 200ms bound — consistent with §57.11's own
+10,000-event reconstruction benchmark, since the dominant cost
+(`reconstructRenderJournal`) is identical; `buildMostRecentJobIndex` and
+the findings-mapping loop add negligible overhead on top of it. No N×
+journal-rescan: exactly one read and one reconstruction per scan,
+regardless of how many findings are eligible.
+
+Built via one direct file write to a private `mkdtemp` root (then read with
+`readRenderJournal(root)`, which accepts an explicit root) rather than
+10,000 individually locked `appendRenderJournalEvent` calls — the first
+draft of this benchmark did exactly that and took **27 seconds**, entirely
+dominated by per-call lock acquisition and fsync overhead having nothing to
+do with this milestone's own code. Every *correctness* test in this file
+still uses the real locked append path against this file's one shared,
+file-scoped journal root, exactly as `tests/render-history.test.mts`
+already established.
+
+### 58.14 Tests (26 added, 669 total)
+
+- `tests/render-journal.test.mts` (+4) — `buildMostRecentJobIndex`: keys by
+  exact target, newer-by-file-position wins, a caller-supplied live job id
+  is excluded, and a busy sibling preset never displaces another target's
+  answer.
+- `tests/render-manager.test.mts` (+1) — the journal sanitization
+  regression test (§58.10).
+- `tests/destination-health-render-context.test.mts` (new, 21) — every
+  historical outcome against both eligible finding codes; exact-target
+  matching (preset and track exclusion, several presets on one track,
+  newest-of-several); live-target omission, including the harder
+  older-dead-job-same-target case; journal missing/unreadable/corrupt/
+  unsupported degradation; finding-identity invariance (code, severity,
+  message, counts, status all asserted unchanged); fix-planner invariance;
+  no path/bootId/journal-path leakage; the completed-context policy in both
+  a fresh-missing and a completed-then-drifted scenario; the performance
+  benchmark; and a real forked-second-process restart E2E (reusing
+  `render-journal-restart-process.mts` from §56.10/§57.14 unmodified)
+  proving the whole pipeline — real destination, real drift, a real OS
+  process dying mid-render, a real health scan, a real fix plan — end to
+  end.
+- Every existing destination-health, destination-fix-plan, render-journal,
+  render-history and render-manager test passes unchanged, confirmed at
+  normal concurrency across six full-suite runs (§58.16).
+
+### 58.15 CLI and UI test strategy (§35 of the brief)
+
+This codebase has no component-rendering or CLI-subprocess-output test
+infrastructure for scenario content — confirmed by inspection (no jsdom/
+React Testing Library anywhere; the existing `destination-health.test.mts`
+CLI tests only ever exercise `--help`/argument validation/the no-destination
+path, never full scan output, and explicitly avoid writing to the project's
+real `delivery.local.json`, which has no test-only override the way the
+render journal's `TOSHI_RENDER_JOURNAL_DIR` does). Rather than introduce a
+new framework or touch real machine configuration for one milestone, this
+follows the same policy §57.15 already set: the **service-level**
+composition (`enrichDestinationHealthWithRenderContext` plus
+`scanDestinationHealth`) is tested exhaustively, including the exact JSON
+shape `--json` output dumps verbatim and the exact string `printFinding`'s
+one new line interpolates — the CLI/UI code themselves are a handful of
+lines of direct field access with no independent logic of their own to
+diverge from what the tests already verify.
+
+### 58.16 Real E2E results
+
+One genuine forked-second-process restart, run through the **whole**
+pipeline rather than the journal alone (§57.14 already proved the
+underlying journal recovery mechanism exhaustively): a real destination
+directory, a real published-and-delivered export, the destination copy
+actually deleted, a real child process starting a render through the real
+`renderManager` singleton and dying mid-`"rendering"` without ever
+finishing (reusing `render-journal-restart-process.mts` unmodified), a real
+`scanDestinationHealth` scan reporting the real `delivered_file_missing`
+finding, `enrichDestinationHealthWithRenderContext` attaching
+`state: "interrupted"` to it, and a real `planDestinationFix` call on the
+same scenario producing a non-empty action list with none of its findings
+carrying `renderContext`. Failed/cancelled/completed-context scenarios and
+the multi-preset case (§41) are exercised as same-process journal-event
+construction — still real file I/O through the real locked append path,
+the same methodology §57.14 used and justified for the terminal-state
+cases there (only a non-terminal record's interpretation genuinely depends
+on a real OS process boundary; a terminal state's meaning does not).
+
+### 58.17 Verification performed
+
+TypeScript and whole-project ESLint (`npm run lint`) clean throughout.
+`npx vite build` passed (only the pre-existing large-chunk advisory).
+`validate-track`/`prepare-track` passed on `ghetto-geek`, read-only — no
+render performed, nothing under `public/tracks/ghetto-geek/` touched.
+`git diff --check` clean.
+
+Full suite: **669/669**, run six times at normal concurrency. Three runs
+were completely clean; three showed one failure each — always the same
+pre-existing, already-documented shared-fixture-directory race
+(§52.19/§53.3/§54.7/§57.15), striking a different file each time
+(`destination-health.test.mts`, `destination-fix-plan.test.mts`, and once
+this milestone's own new file) with the identical `ENOENT` on a
+`regression-*` fixture's `metadata.json` signature. Every new/changed file
+in this milestone was additionally run three times fully isolated from the
+rest of the suite (no cross-file fixture racing possible) — 75/75, clean,
+every time. Not investigated further, per the same judgment §57.15 already
+made about this flake class.
+
+No config fixture was left behind. `out/.render-journal/` does not exist
+in the real project directory (every test redirects it) and `out/.locks/`
+is empty. Only `ghetto-geek` remained under `public/tracks/` after the
+suite. No leftover `/tmp` test-isolation directory. No leaked Chromium,
+render-worker, or Vite process.
+
+### 58.18 Backward compatibility
+
+Confirmed unchanged: destination-health finding logic (every existing test
+in `tests/destination-health.test.mts` passes unmodified),
+`destinationFixPlan`/`applyDestinationFixPlan`, `renderManager`'s job
+lifecycle and queue behavior, the render journal's write path (only its
+error payload was narrowed — see §58.10 — never its schema, its retention,
+or when it writes), §57's own `GET /api/render-history`/`TrackDetail`
+surface, render queue, batch cancellation, batch persistence, live batch
+progress, content package generation, delivery, release bundles, delivery
+history, metadata templates, and every CLI script's exit-code semantics.
+
+### 58.19 Cleanup
+
+Every synthetic track this milestone's tests create is a `fixture()`-
+generated `regression-*` slug, auto-removed via `t.after` exactly like
+`tests/destination-health.test.mts`'s own tests. Every destination root is
+a throwaway `mkdtemp` directory, removed the same way. The one `chmodSync`
+permission test restores the journal file's mode in `t.after` before
+cleanup runs. `ghetto-geek` was never rendered, modified, or touched by
+anything other than the two read-only CLI checks in §58.17.
+
+### 58.20 Files changed
+
+New:
+- `server/services/destinationHealthRenderContext.ts` —
+  `enrichDestinationHealthWithRenderContext`.
+- `tests/destination-health-render-context.test.mts`.
+
+Changed:
+- `src/domain/render/renderJournal.ts` — `targetKey`,
+  `buildMostRecentJobIndex`.
+- `src/domain/delivery/destinationHealth.ts` —
+  `DestinationFindingRenderContext`, `DestinationFinding.renderContext`,
+  `RENDER_CONTEXT_ELIGIBLE_CODES`, `describeRenderContext`.
+- `server/routes/destinationHealth.ts` — calls the enrichment function
+  before building the API response.
+- `scripts/destination-health.mts` — calls the enrichment function; prints
+  the context line.
+- `ui/components/DestinationHealthPanel.tsx` — renders the context line.
+- `ui/styles/app.css` — `.health__rendercontext`.
+- `server/services/renderManager.ts` — the journal sanitization fix
+  (§58.10).
+- `tests/render-journal.test.mts`, `tests/render-manager.test.mts` — see
+  §58.14.
+
+Nothing in `server/services/destinationHealth.ts`,
+`server/services/destinationFixPlan.ts`, `server/services/renderJournal.ts`
+(the boot-id/`getHistoricalRenderJob`/`getRecentRenderHistory` module
+itself — only its sibling `renderManager.ts` changed), `src/domain/render/
+renderJournal.ts`'s existing exports, `server/routes/renderHistory.ts`,
+`ui/components/RecentRenderHistory.tsx`/`TrackDetail.tsx`, release bundles,
+metadata templates, delivery, delivery history, or any CLI other than
+`destination-health.mts` changed.
+
+### 58.21 Commits
+
+1. Strip stack traces before they reach the durable render journal.
+2. Add render context to the destination-health read model.
+3. Enrich the destination-health scan with render context.
+4. Show render context in the destination-health CLI and UI.
+5. Test destination-health render context, and a real restart E2E.
+6. Document Destination Health + Render Journal Context.
+
+No push was made.
+
+### 58.22 Final git status
+
+Working tree clean after commits. Ahead of `origin/main` by the commits in
+§58.21. No push made.
+
+### 58.23 Recommended next feature
+
+A `--recent` summary flag on `render-locks` (already proposed in §57.21 and
+still not started) remains the smallest next step. A second, now more
+concrete candidate this milestone's own work surfaces: `planDestinationFix`
+already classifies `delivered_file_missing`/`delivered_file_changed` into a
+`rerender_and_deliver`/`redeliver` action — an operator acting on a finding
+whose render context says "interrupted"/"failed" is, in effect, about to
+retry exactly the render that had trouble. Surfacing that connection
+explicitly (not changing the action itself, per §22/§23's own instruction
+that remediation must not change automatically) — e.g. a plan action's own
+`reason` text mentioning the render context when one exists for its exact
+target — would close the loop between "why is this wrong" and "here is
+what fixing it will do" without touching either authority's own decision
+logic.
