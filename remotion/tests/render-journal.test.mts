@@ -3,9 +3,11 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import {
   classifyRecoveredJob,
+  formatRecentRenderTimestamp,
   isSeriousJournalDamage,
   parseRenderJournal,
   parseRenderJournalLine,
+  recentRenderJobsForSlug,
   reconstructRenderJournal,
   RENDER_JOURNAL_SCHEMA_VERSION,
   selectRetainedEvents,
@@ -300,4 +302,207 @@ test("retention never keeps a rejected/quarantined terminal event over the accep
   );
   assert.equal(retained.length, 1);
   assert.equal(retained[0].eventId, completed.eventId);
+});
+
+/* ------------------------------------------------------------------ *
+ * Operator-facing recent history (one track, grouped by job)
+ * ------------------------------------------------------------------ */
+
+test("recentRenderJobsForSlug groups a job's whole lifecycle into one entry, not one per event", () => {
+  const events = lifecycle("job-1", ["queued", "preparing", "rendering", "completed"]);
+  const { jobs, order } = reconstructRenderJournal(events);
+  const recent = recentRenderJobsForSlug({ jobs, order, quarantined: [] }, "probe", BOOT_A, 10);
+  assert.equal(recent.length, 1);
+  assert.equal(recent[0].status, "completed");
+});
+
+test("recentRenderJobsForSlug excludes every other track's jobs", () => {
+  const mine = lifecycle("job-1", ["queued", "preparing", "completed"]);
+  const theirs = lifecycle("job-2", ["queued", "preparing", "completed"]).map((e) => ({ ...e, slug: "other-track" }));
+  const reconstruction = reconstructRenderJournal([...mine, ...theirs]);
+  const recent = recentRenderJobsForSlug(reconstruction, "probe", BOOT_A, 10);
+  assert.equal(recent.length, 1);
+  assert.equal(recent[0].jobId, "job-1");
+});
+
+test("recentRenderJobsForSlug orders by file position, not by recordedAt — file order is the true order across boots with skewed clocks", () => {
+  // job-2 is genuinely later in the file (a second process, boot B, appended
+  // after job-1 settled) but carries an *earlier* wall-clock timestamp than
+  // job-1's own final event — exactly the clock-skew scenario file order
+  // exists to be immune to.
+  const jobOne = lifecycle("job-1", ["queued", "preparing", "completed"], BOOT_A).map((e) => ({
+    ...e,
+    recordedAt: "2026-09-21T12:00:00.000Z",
+  }));
+  const jobTwo = lifecycle("job-2", ["queued", "preparing", "completed"], BOOT_B).map((e) => ({
+    ...e,
+    recordedAt: "2026-09-21T11:00:00.000Z", // earlier clock time, later in file
+  }));
+  const reconstruction = reconstructRenderJournal([...jobOne, ...jobTwo]);
+  const recent = recentRenderJobsForSlug(reconstruction, "probe", BOOT_B, 10);
+  assert.deepEqual(
+    recent.map((job) => job.jobId),
+    ["job-2", "job-1"],
+  );
+});
+
+test("recentRenderJobsForSlug exposes several presets for one track, each as its own entry", () => {
+  const landscape = lifecycle("job-1", ["queued", "preparing", "completed"]).map((e) => ({
+    ...e,
+    presetId: "youtube-16x9",
+  }));
+  const vertical = lifecycle("job-2", ["queued", "failed"]).map((e) => ({
+    ...e,
+    presetId: "vertical-9x16",
+  }));
+  const reconstruction = reconstructRenderJournal([...landscape, ...vertical]);
+  const recent = recentRenderJobsForSlug(reconstruction, "probe", BOOT_A, 10);
+  assert.equal(recent.length, 2);
+  assert.deepEqual(
+    new Set(recent.map((job) => job.presetId)),
+    new Set(["youtube-16x9", "vertical-9x16"]),
+  );
+});
+
+test("recentRenderJobsForSlug bounds the result to the requested limit, newest first", () => {
+  const events = Array.from({ length: 5 }, (_, i) =>
+    lifecycle(`job-${i}`, ["queued", "preparing", "completed"]).map((e) => ({
+      ...e,
+      recordedAt: new Date(Date.UTC(2026, 8, 21, i)).toISOString(),
+    })),
+  ).flat();
+  const reconstruction = reconstructRenderJournal(events);
+  const recent = recentRenderJobsForSlug(reconstruction, "probe", BOOT_A, 2);
+  assert.equal(recent.length, 2);
+  assert.deepEqual(
+    recent.map((job) => job.jobId),
+    ["job-4", "job-3"],
+  );
+});
+
+test("recentRenderJobsForSlug excludes a job currently live elsewhere, without shrinking the page below limit", () => {
+  const events = Array.from({ length: 4 }, (_, i) =>
+    lifecycle(`job-${i}`, ["queued", "preparing", "completed"]).map((e) => ({
+      ...e,
+      recordedAt: new Date(Date.UTC(2026, 8, 21, i)).toISOString(),
+    })),
+  ).flat();
+  const reconstruction = reconstructRenderJournal(events);
+  // job-3 is the newest but is currently live — it must never appear here,
+  // and the two next-newest jobs fill the page instead.
+  const recent = recentRenderJobsForSlug(reconstruction, "probe", BOOT_A, 2, new Set(["job-3"]));
+  assert.deepEqual(
+    recent.map((job) => job.jobId),
+    ["job-2", "job-1"],
+  );
+});
+
+test("recentRenderJobsForSlug reports a same-boot non-terminal record as interrupted, never as live", () => {
+  const events = lifecycle("job-1", ["queued", "preparing"]);
+  const reconstruction = reconstructRenderJournal(events);
+  const recent = recentRenderJobsForSlug(reconstruction, "probe", BOOT_A, 10);
+  assert.equal(recent.length, 1);
+  assert.equal(recent[0].status, "interrupted");
+});
+
+test("recentRenderJobsForSlug reports a cross-boot non-terminal record as interrupted, with recoveredAfterRestart true", () => {
+  const events = lifecycle("job-1", ["queued", "preparing", "rendering"], BOOT_A);
+  const reconstruction = reconstructRenderJournal(events);
+  const recent = recentRenderJobsForSlug(reconstruction, "probe", BOOT_B, 10);
+  assert.equal(recent.length, 1);
+  assert.equal(recent[0].status, "interrupted");
+  assert.equal(recent[0].recoveredAfterRestart, true);
+});
+
+test("recentRenderJobsForSlug survives a malformed journal tail, keeping the jobs read before it", () => {
+  const events = lifecycle("job-1", ["queued", "preparing", "completed"]);
+  const finalLine = JSON.stringify(events[2]);
+  const text = `${line(events[0])}${line(events[1])}${finalLine.slice(0, finalLine.length - 10)}`;
+  const read = parseRenderJournal(text);
+  assert.equal(read.status, "recovered_tail");
+
+  const reconstruction = reconstructRenderJournal(read.events);
+  const recent = recentRenderJobsForSlug(reconstruction, "probe", BOOT_A, 10);
+  // The truncated final line was itself job-1's "completed" transition, so
+  // only "queued"/"preparing" survived the crash — an honest partial answer
+  // (reported "interrupted", the honest read of a non-terminal record with
+  // no live owner), never a fabricated "completed".
+  assert.equal(recent.length, 1);
+  assert.notEqual(recent[0].status, "completed");
+});
+
+test("recentRenderJobsForSlug survives an unsupported future schema version elsewhere in the file", () => {
+  const olderJob = lifecycle("job-1", ["queued", "preparing", "completed"]);
+  const newerJob = lifecycle("job-2", ["queued", "preparing"]).map((e) => ({
+    ...e,
+    schemaVersion: e.state === "preparing" ? 99 : e.schemaVersion,
+  }));
+  const text = [...olderJob, ...newerJob].map(line).join("");
+  const read = parseRenderJournal(text);
+  assert.equal(read.status, "unsupported");
+
+  const reconstruction = reconstructRenderJournal(read.events);
+  const recent = recentRenderJobsForSlug(reconstruction, "probe", BOOT_A, 10);
+  // job-1's whole lifecycle read fine; job-2's unsupported "preparing" event
+  // was dropped by the parser, leaving only its "queued" event — reported
+  // as interrupted, never fabricated as completed or hidden outright.
+  assert.equal(recent.length, 2);
+  const byId = new Map(recent.map((job) => [job.jobId, job]));
+  assert.equal(byId.get("job-1")?.status, "completed");
+  assert.equal(byId.get("job-2")?.status, "interrupted");
+});
+
+test("recentRenderJobsForSlug clamps an over-large limit to the documented maximum", () => {
+  const events = Array.from({ length: 15 }, (_, i) =>
+    lifecycle(`job-${i}`, ["queued", "preparing", "completed"]).map((e) => ({
+      ...e,
+      recordedAt: new Date(Date.UTC(2026, 8, 21, i)).toISOString(),
+    })),
+  ).flat();
+  const reconstruction = reconstructRenderJournal(events);
+  const recent = recentRenderJobsForSlug(reconstruction, "probe", BOOT_A, 10_000);
+  assert.ok(recent.length <= 10);
+});
+
+/* ------------------------------------------------------------------ *
+ * Timestamp formatting
+ * ------------------------------------------------------------------ */
+
+test("formatRecentRenderTimestamp reads Today/Yesterday/an older date, using the day boundary of the given `now`", () => {
+  const now = new Date("2026-09-21T18:00:00.000Z");
+  assert.equal(formatRecentRenderTimestamp("2026-09-21T14:32:00.000Z", now), `Today, ${new Date("2026-09-21T14:32:00.000Z").getHours().toString().padStart(2, "0")}:32`);
+  assert.equal(formatRecentRenderTimestamp("2026-09-20T18:04:00.000Z", now).startsWith("Yesterday, "), true);
+  assert.equal(formatRecentRenderTimestamp("2026-09-01T13:10:00.000Z", now).startsWith("1 Sep, "), true);
+});
+
+test("formatRecentRenderTimestamp falls back to the raw value for an unparseable timestamp", () => {
+  assert.equal(formatRecentRenderTimestamp("not-a-date"), "not-a-date");
+});
+
+/* ------------------------------------------------------------------ *
+ * Performance (§42 of the milestone this implements)
+ * ------------------------------------------------------------------ */
+
+test("recentRenderJobsForSlug stays fast at a journal near its retention bound (10,000 events)", () => {
+  const events: RenderJournalEvent[] = [];
+  for (let i = 0; i < 2_500; i++) {
+    events.push(
+      ...lifecycle(`job-${i}`, ["queued", "preparing", "rendering", "completed"]).map((e) => ({
+        ...e,
+        slug: i % 50 === 0 ? "probe" : `other-track-${i % 200}`,
+      })),
+    );
+  }
+  assert.equal(events.length, 10_000);
+
+  const start = performance.now();
+  const reconstruction = reconstructRenderJournal(events);
+  const recent = recentRenderJobsForSlug(reconstruction, "probe", BOOT_A, 3);
+  const elapsedMs = performance.now() - start;
+
+  assert.equal(recent.length, 3);
+  assert.ok(
+    elapsedMs < 200,
+    `parse + reconstruct + select for 10,000 events took ${elapsedMs}ms, expected well under 200ms`,
+  );
 });
