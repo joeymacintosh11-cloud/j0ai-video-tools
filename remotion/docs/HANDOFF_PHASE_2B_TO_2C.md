@@ -7904,3 +7904,447 @@ surfacing a track's most recent historical/interrupted render (if any) in
 `TrackDetail`, or a `--recent` summary line in the existing render-locks CLI
 output — was explicitly out of scope per §50 ("do not add a full history
 screen in this milestone"). Not started.
+
+## 57. Operator-Facing Render Journal Surface (2026-09-21)
+
+Delivers exactly §56.20's recommendation: a small, read-only "Recent
+render" section in `TrackDetail`, answering "what happened to this track's
+most recent renders?" from the durable journal added in §56. Not a history
+page, not a job dashboard, not a second readiness/queue/cancellation
+authority — the brief this implements is explicit that it must stay small,
+and every design choice below is in service of that.
+
+### 57.1 Architecture boundary (unchanged, re-confirmed)
+
+Nothing about §56.1's three layers changed: `renderManager` is still the
+only live queue/worker/cancellation authority, the journal is still
+append-only historical evidence, package inspection is still the only
+readiness authority, and `interrupted` is still a pure read-time
+classification that is never persisted. This milestone adds exactly one new
+read path over that same journal — grouped by job, scoped to one track — and
+touches nothing else in the render/delivery/package/CLI stack.
+
+One real gap surfaced and was closed while building this: a job currently
+**live** in `renderManager` is also written to the journal at
+queued/preparing/rendering (§56.6). A naive track-scoped journal read would
+therefore reconstruct that job as a non-terminal record with no live owner
+*the journal itself can see*, and misclassify it `"interrupted"` — actively
+wrong, not merely imprecise, since the job is rendering right now. The fix
+mirrors `getJobOrHistorical` in `server/routes/renders.ts` (§56.1's "live
+authority always wins") applied at the list level: `server/routes/
+renderHistory.ts` asks `renderManager.listJobs()` for this track's live job
+ids and passes them to the read model as `excludeJobIds`, applied *before*
+the limit slice so an excluded live job never silently shrinks the page
+(tests: "a job currently live in the render manager is excluded from
+history" and the real cross-process "an interrupted job from a dead process
+and a new live job... are never conflated", §57.14).
+
+### 57.2 Domain read model: grouping and ordering
+
+`src/domain/render/renderJournal.ts` gains `recentRenderJobsForSlug` — a
+track's most recent renders, newest first, **one entry per job** (its final
+reconstructed state), never one entry per lifecycle event. Grouping is
+free: `reconstructRenderJournal` already folds a job's whole event history
+down to one record.
+
+Ordering is the one genuinely new piece of reasoning.
+`reconstructRenderJournal` now also returns `order`, a
+`ReadonlyMap<jobId, number>` — the file-position index of the event that
+most recently produced each job's current record, tracked in the same loop
+that already accepts or quarantines each event. `recentRenderJobsForSlug`
+sorts by this, not by `recordedAt`: wall-clock time is not guaranteed
+monotonic across two processes' boot ids (the exact reasoning
+`parseRenderJournal`'s own comment already gives for using file order as
+event order), and a track's history spans exactly the kind of two-boot
+scenario where that matters. A dedicated test constructs this directly — a
+job genuinely later in the file carries an *earlier* timestamp than the job
+before it — and confirms file order wins (`tests/render-journal.test.mts`,
+"orders by file position, not by recordedAt").
+
+`recentRenderJobsForSlug` reuses `classifyRecoveredJob` and its wire shape,
+`RecoveredRenderJob`, exactly as `getHistoricalRenderJob` already does —
+no new classification logic, no new "what does interrupted mean" decision.
+
+### 57.3 Source of truth
+
+Server/domain only. The browser never reads a journal file, never
+reconstructs history from `localStorage`, and never guesses from package
+readiness or filenames — `ui/components/RecentRenderHistory.tsx` calls one
+endpoint and renders exactly what it returns. `server/services/
+renderJournal.ts`'s new `getRecentRenderHistory(slug, limit, excludeJobIds)`
+is the one place that reads the file, reconstructs it, and applies the
+live-exclusion — a thin, three-line composition of `readRenderJournal` +
+`reconstructRenderJournal` + `recentRenderJobsForSlug`, run fresh on every
+call (no cache), for the same reason §56.6 gives: appends are low-frequency,
+the journal stays small under retention, and a full parse is cheap (§57.11).
+
+### 57.4 API: `GET /api/render-history?track=<slug>&limit=<n>`
+
+Chosen over a job-id-shaped endpoint (that already exists: `GET
+/api/renders/:id`) or folding onto the track-detail view, because a
+track-oriented question deserves a track-oriented answer and this mirrors
+an already-proven precedent almost exactly: `GET /api/delivery-history`
+(`server/routes/deliveryHistory.ts`) is track-scoped, limit-bounded, and
+reports a `status`/`statusNote` pair for a damaged log rather than failing
+outright. `server/routes/renderHistory.ts` copies that shape:
+
+- `track` (required) — validated with `assertValidSlug`, the same guard
+  every other track-scoped endpoint uses; an invalid slug is rejected with
+  `INVALID_SLUG` before it ever reaches the journal.
+- `limit` (optional, default 3, max 10) — out-of-range values are
+  **rejected** (`INVALID_REQUEST`), not silently clamped or ignored, the
+  same choice `GET /api/delivery-history` already made for its own limit.
+- Response: `{ slug, status, statusNote, jobs, limit }`. `status`/
+  `statusNote` are the journal's own read status
+  (`RENDER_JOURNAL_STATUS_NOTES`, a new constant mirroring
+  `DELIVERY_LOG_STATUS_NOTES`'s vocabulary) — a damaged or newer-schema
+  journal still returns whatever history could be read, with a note saying
+  so, exactly like delivery history's own split.
+
+Read-only in every sense: no delete, repair, compact, retry, or
+cancellation is reachable from this endpoint, and it never mutates the
+journal file.
+
+### 57.5 Wire shape (`RenderHistoryJobView`)
+
+```ts
+type RenderHistoryJobView = {
+  jobId: string;
+  slug: string;
+  presetId: RenderPresetId;
+  status: "completed" | "failed" | "cancelled" | "interrupted";
+  recordedAt: string;
+  historical: true;
+  recoveredAfterRestart: boolean;
+  error: RenderJobError | null;
+};
+```
+
+Deliberately narrower than the brief's own suggested shape and than
+`RenderJobView` itself: no `batchId` (an internal correlation this surface
+has no use for), no progress/output-path/timing fields (the journal never
+recorded them, §56.3), and `status` is typed to the four terminal-or-
+interrupted literals `classifyRecoveredJob` can actually produce — never
+queued/preparing/rendering, which would look like a still-live job. A
+dedicated test asserts the response object's key set is *exactly* this
+shape and that its serialized JSON never contains a raw filesystem path or
+the process's raw boot id (§57.14, "no raw internals leaked").
+
+### 57.6 TrackDetail UI
+
+`ui/components/RecentRenderHistory.tsx` (`TrackRecentRenderHistory`),
+mounted in a new "Recent render" section directly below the existing
+"Render" section in `TrackDetail.tsx` — deliberately adjacent rather than
+merged: "Render" is the live state `RenderPanel`/`useRenderJob` already
+own; this is history, and the two are never allowed to look like the same
+thing (§57.7).
+
+- The most recent job is shown prominently; up to two earlier ones follow
+  under a small "Earlier" label — §57's own preference ("show the most
+  recent render prominently and optionally allow expanding to the latest
+  3"), with no pagination and no expand/collapse state to manage.
+- Badges reuse the existing `badge badge--job-*` CSS classes verbatim —
+  `RenderPanel`'s own live badges already define `--completed`, `--failed`,
+  `--cancelled` and `--interrupted` (the last one added in §56 for exactly
+  this vocabulary), so a historical badge looks visually identical to the
+  live terminal badge it represents, with no new color decisions made here.
+- Platform/format labels reuse `RENDER_PRESETS[presetId].label`
+  (`src/domain/video/renderPresets.ts`) rather than a new mapping — no
+  journal schema change, per §10's own instruction.
+- Timestamps use a new `formatRecentRenderTimestamp` (same file as the read
+  model, pure and dependency-free like `formatBundleTimestamp` in
+  `src/domain/delivery/releaseBundle.ts`): "Today, 14:32" / "Yesterday,
+  18:04" / "20 Sep, 13:10", with the exact ISO value kept as a `title`
+  tooltip.
+- A fixed note — "Historical render result — current export and package
+  readiness are shown separately above." — appears whenever there is any
+  history to show, so a completed badge is never read as "currently ready."
+
+No SSE subscription, no cancel button, no retry button: none of the three
+exist in this component's code at all, not merely hidden by a flag.
+
+### 57.7 Live vs. historical
+
+`GET /api/render-history` never shadows a live job (§57.1's exclusion fix),
+and the reverse already held before this milestone: `GET /api/renders/:id`,
+its cancel route and its SSE route all already refuse a historical job
+outright (§56.7), unchanged here. The two real end-to-end tests in §57.14
+exercise both directions together — a live job is answered live from
+`/api/renders/:id` with `historical` absent, while the *same-track*
+history list shows only the older, genuinely dead job, with the two exact
+job ids never conflated.
+
+### 57.8 State semantics
+
+- **Completed** means the job historically reached `completed` — never that
+  the current export still exists, that metadata still matches, or that the
+  package is ready. The fixed note in §57.6 says this in the UI; nothing
+  here reads or touches package readiness to make that claim.
+- **Interrupted** is shown as "Interrupted by server restart" (a `title`
+  tooltip on the badge explains further: "The server restarted before a
+  terminal render result was recorded."), reusing `RenderPanel`'s own
+  established copy for the same status rather than inventing new wording.
+- **Failed** shows the journal's own `error.code`/`error.message` — already
+  as narrow as the journal schema itself, which only ever stores
+  `{ code, message }` (§56.3): there is no path, no stack trace, and no
+  `details` field for this surface to accidentally leak, by construction of
+  the schema it reads from, not by any sanitization step added here.
+- **Cancelled** is shown as a plain terminal badge — no cancel button (there
+  is nothing left to cancel) and, per the brief's own instruction, no retry
+  button was added either; retrying is `RenderPanel`'s existing "Render"
+  button, reused as-is.
+
+### 57.9 Track filtering, grouping and ordering — tested directly
+
+- Filtering: `recentRenderJobsForSlug` filters by exact `slug` equality
+  before anything else; the route additionally validates the slug's shape
+  first, so nothing resembling a path ever reaches the journal.
+- Grouping: a job with four lifecycle events (queued → preparing →
+  rendering → completed) reduces to exactly one entry — tested explicitly
+  ("groups a job's whole lifecycle into one entry, not one per event", and
+  at the API level "several jobs for one track... one entry per job — not
+  per lifecycle event").
+- Ordering: newest-first by file position (§57.2), tested against a
+  deliberately clock-skewed two-boot scenario.
+
+### 57.10 Errors, corruption and unsupported schema
+
+`RENDER_JOURNAL_STATUS_NOTES` (new, mirrors `DELIVERY_LOG_STATUS_NOTES`)
+supplies a `statusNote` for every non-`missing`/`complete` journal status.
+A `recovered_tail` or `corrupt` journal still returns whatever history
+parsed successfully before the damage, with the note saying history may be
+incomplete; an `unsupported` future schema version drops only the
+individual lines it cannot read, keeping every earlier readable job intact
+— none of this is new behavior (`parseRenderJournal` already worked this
+way for §56), only newly exercised through this track-scoped path. A
+`missing` journal (no file yet) is the ordinary empty state, not an error:
+the UI shows "No render history yet." A genuine fetch failure (the API
+unreachable, a non-200 response) is shown as "Render history unavailable,"
+distinct from the empty state, without breaking the rest of `TrackDetail`.
+
+Deliberately not tested through the shared per-file HTTP journal root
+(`tests/render-history.test.mts`): that root is shared by every
+concurrently-running test in the file (Node's test runner runs a file's
+top-level tests concurrently by default), and a raw, lock-bypassing write
+of a truncated or malformed line there was found, in practice, to race
+other tests' legitimate locked appends to the very same file — corrupting
+their events too (§57.13 has the story). Both corruption scenarios are
+instead tested as pure in-memory functions in `tests/render-journal.test.mts`
+(`parseRenderJournal` on a constructed string, exactly like every other
+corruption test in that file already does), which is both safer and more
+precise.
+
+### 57.11 Performance
+
+`recentRenderJobsForSlug` reuses the exact same
+`readRenderJournal`/`reconstructRenderJournal` path `getHistoricalRenderJob`
+already benchmarked in §56.10 at single-digit milliseconds for 10,000
+events. A dedicated benchmark for this milestone's own read model
+(`tests/render-journal.test.mts`, "stays fast at a journal near its
+retention bound") constructs 10,000 events across 2,500 jobs (50 belonging
+to the queried track, interleaved with 200 other tracks) and measures
+parse + reconstruct + select together: **consistently under 12ms**,
+asserted well under a 200ms bound. No index or cache was added — the same
+judgment §56.6 already made (a query this rare, against a journal this
+small, is not worth the invalidation complexity).
+
+### 57.12 Tests (29 added, 643 total)
+
+- `tests/render-journal.test.mts` (+14) — grouping, file-position ordering
+  under clock skew, track/preset filtering, limit bounding (including
+  clamping an absurdly large limit to the documented maximum), excluding a
+  caller-supplied live job id without shrinking the page, same-boot and
+  cross-boot interrupted classification, survival of a malformed tail and
+  an unsupported schema version (pure, in-memory), timestamp formatting
+  (Today/Yesterday/older date, and a malformed-input fallback), and the
+  10,000-event benchmark.
+- `tests/render-history.test.mts` (+15) — one test per terminal state
+  (completed/failed/cancelled/interrupted) over the real HTTP route, no
+  history for an unused track, several jobs and several presets for one
+  track, cross-track exclusion, invalid-slug and out-of-range-limit
+  rejection (both directions), the default limit, no leaked internals in
+  the response shape, live-job exclusion via the real `renderManager`
+  singleton (mocked worker), and two tests that fork a real second OS
+  process (reusing `render-journal-restart-process.mts` from §56.10
+  unmodified): a genuine restart reported as `interrupted` through this
+  endpoint, and a historical job from that dead process never conflated
+  with a fresh live job for the same track started afterward in the
+  "restarted" process.
+- Every existing test file passes unchanged — confirmed at normal
+  concurrency across five consecutive full-suite runs (§57.15).
+
+### 57.13 A real test-design bug, found and fixed while building this
+
+The first draft of the two corruption tests (§57.10) wrote a raw truncated
+line and a raw unsupported-schema line directly into the shared per-file
+journal root via `appendFile`, then queried the shared HTTP server — the
+same technique `tests/render-journal-log.test.mts` uses, but that file
+gives *each test* its own `mkdtemp` root, while this file's root is shared
+by the whole file per `isolateRenderJournalForThisFile`'s own comment.
+Node's test runner runs a file's top-level tests concurrently by default;
+a raw write with no trailing newline, racing another concurrently-running
+test's legitimate *locked* append, could land between two real events and
+fuse them into one unparseable line neither test wrote — observed directly
+as unrelated tests suddenly reporting `"interrupted"` where they expected
+`"completed"`. The fix was not a synchronization primitive but a design
+change: corruption is tested as a pure string transformation
+(`parseRenderJournal(text)`) with no file and no shared state at all,
+exactly like every other corruption test in `tests/render-journal.test.mts`
+already does — removed from `tests/render-history.test.mts` entirely.
+
+A second, smaller bug surfaced during the same pass: several fixture
+lifecycles in both test files went `queued` → `completed` directly, which
+`LEGAL_SUCCESSORS` (§56.5) does not permit (`completed` is only a legal
+successor of `preparing`/`rendering`) — the completed event was silently
+quarantined, leaving the job's reconstructed state at `queued` (non-
+terminal) and misclassified `"interrupted"`. Fixed by inserting the
+missing `preparing` transition throughout; `queued` → `failed` and
+`queued` → `cancelled` remain legal and were left as direct transitions.
+
+### 57.14 Real E2E results
+
+- **Completed / failed / cancelled before a restart** — exercised as
+  same-process journal events with an explicit, different `bootId` (the
+  same technique §56's own recovery tests use for the terminal cases,
+  since only a *non-terminal* record's interpretation depends on boot-id
+  comparison at all): each terminal state round-trips through `GET
+  /api/render-history` exactly as recorded, with `recoveredAfterRestart`
+  reflecting the boot mismatch.
+- **Interrupted, across a real OS process boundary** — a genuinely forked
+  child process starts a render through the real `renderManager` singleton
+  (mocked worker), reaches `"rendering"`, and simply exits without ever
+  finishing, reusing `render-journal-restart-process.mts` from §56.10
+  unmodified. The parent process — a different Node process, therefore a
+  different `RENDER_MANAGER_BOOT_ID` by construction — queries `GET
+  /api/render-history` for that exact track through a real HTTP server and
+  confirms: one entry, `status: "interrupted"`, `recoveredAfterRestart:
+  true`. No SSE and no cancel were separately re-proven here since §56.9/
+  §56.10 already cover that surface exhaustively for the same journal
+  entries this endpoint reads.
+- **Live job alongside a historical one, same track** — the scenario this
+  milestone's own live-exclusion fix (§57.1) exists for: after the dead
+  process's job is durably `interrupted`, the *same test process* (a third,
+  genuinely different boot id) starts a fresh render for the identical
+  track directly through the real `renderManager` singleton. `GET
+  /api/renders/:id` answers the new job live (`status: "rendering"`,
+  `historical` absent); `GET /api/render-history` for the same track
+  answers with exactly one entry — the old, dead-process job, `interrupted`
+  — and the live job's id never appears there.
+
+### 57.15 Verification performed
+
+TypeScript (`tsc --noEmit`) and whole-project ESLint (`npm run lint`)
+clean. `npx vite build` passed (only the pre-existing large-chunk
+advisory, unchanged from §56.15). `validate-track`/`prepare-track` passed
+on `ghetto-geek`, read-only — no render performed, no file under
+`public/tracks/ghetto-geek/` touched. `git diff --check` clean.
+
+Full suite: **643/643**, run five times at normal concurrency. Three runs
+were completely clean; two showed one failure each, both the same
+pre-existing, already-documented shared-fixture-directory race named
+explicitly in §52.19/§53.3/§54.7/§56.15 (`destination-health.test.mts` and,
+once, `export-missing.test.mts` — an `ENOENT` on a `regression-*` fixture's
+`metadata.json`, racing against another concurrently-running test file's
+own fixture cleanup under `public/tracks/`). Neither failure touched
+anything added in this milestone; every render-history/render-journal test
+passed on all five runs. This flake class is unrelated to the render
+journal or this milestone's code and was not investigated further, per the
+same judgment §56.15 already made about it.
+
+No config fixture was left behind. `out/.render-journal/` does not exist
+in the real project directory (every test redirects it via
+`TOSHI_RENDER_JOURNAL_DIR`) and `out/.locks/` is empty. No `regression-*`
+track directory remained under `public/tracks/` after the suite — only
+`ghetto-geek`, untouched throughout. No leftover `/tmp` test-isolation
+directory. No leaked Chromium, render-worker or Vite process.
+
+### 57.16 Backward compatibility
+
+Confirmed unchanged: `renderManager`, render journal writes, the render
+queue, workers, locks, single-track render, Batch Content Package
+Generation, Live Batch Progress, Batch Session Persistence, Batch Panel
+Cancellation, package readiness, delivery, destination health, release
+bundles, delivery history, metadata templates, and every CLI script other
+than the new read-only additions below. `GET /api/renders/:id`'s own
+behavior (§56) is untouched; this milestone adds a new endpoint beside it,
+never modifies it.
+
+### 57.17 Files changed
+
+New:
+- `server/routes/renderHistory.ts` — `GET /api/render-history`, composing
+  the journal-only read model with `renderManager.listJobs()` for live
+  exclusion.
+- `ui/components/RecentRenderHistory.tsx` — `TrackRecentRenderHistory`, the
+  "Recent render" section.
+- `tests/render-history.test.mts` — API-level and real-restart E2E tests.
+
+Changed:
+- `src/domain/render/renderJournal.ts` — `reconstructRenderJournal` now
+  also returns `order` (file-position index per job); adds
+  `recentRenderJobsForSlug`, `RENDER_JOURNAL_STATUS_NOTES`,
+  `RENDER_HISTORY_DEFAULT_LIMIT`/`RENDER_HISTORY_MAX_LIMIT`, and
+  `formatRecentRenderTimestamp`.
+- `server/services/renderJournal.ts` — adds `getRecentRenderHistory`.
+- `src/domain/api/views.ts` — adds `RenderHistoryJobView`,
+  `RenderHistoryQuery`, `RenderHistoryView`; re-exports
+  `RenderJournalStatus`.
+- `server/app.ts` — routes `GET /api/render-history`.
+- `ui/api/client.ts` — adds `getRenderHistory`.
+- `ui/components/TrackDetail.tsx` — mounts the new "Recent render" section
+  below "Render".
+- `ui/styles/app.css` — `.recenthistory*` classes; no new badge colors
+  (reuses `.badge--job-*` from §56).
+- `tests/render-journal.test.mts` — the additions in §57.12, plus two
+  pre-existing `lifecycle(...)` fixtures corrected to go through
+  `preparing` before `rendering` (§57.13's second bug), which changed no
+  assertions.
+
+Nothing in `renderManager.ts`, `renderLock.ts`, `services/delivery/*`,
+`contentPackagePlan.ts`, `destinationFixPlan.ts`, `src/domain/content/*`,
+release bundles, metadata templates, or any existing CLI script changed.
+
+### 57.18 Remaining limitations
+
+- No batch/action/platform correlation is shown (the journal never
+  recorded it, by §56.3's own deliberate choice — unchanged here).
+- The "Earlier" list is capped at 3 total (1 prominent + 2 more) with no
+  way to see further back from `TrackDetail`; the API itself supports up to
+  10 via `limit`, so a future CLI `--recent` summary or a dedicated
+  history view (should one ever be wanted) has room without an API change.
+- No targeted refresh when a live render on the same page completes —
+  `TrackRecentRenderHistory` fetches once per track slug and otherwise
+  updates on normal `TrackDetail` re-navigation, per the brief's own
+  explicit preference not to add event plumbing for this.
+- The pre-existing shared-fixture-directory test flake (§57.15) remains
+  unaddressed, as it was in §56.15 — out of scope for this milestone.
+
+### 57.19 Commits
+
+1. Add a track-scoped render-history read model and service.
+2. Expose a read-only `GET /api/render-history` endpoint.
+3. Show recent render history in `TrackDetail`.
+4. Test the render-history read model, API and a real restart.
+5. Document Operator-Facing Render Journal Surface.
+
+No push was made.
+
+### 57.20 Final git status
+
+Working tree clean after commits. Ahead of `origin/main` by the commits in
+§57.19 (following on from §56's own commits, per §56.19's note that those
+were also not yet pushed at the time). No push made.
+
+### 57.21 Recommended next feature
+
+Two independent, similarly small candidates, neither started:
+
+- A `--recent` summary flag on the existing `render-locks` CLI
+  (`scripts/render-locks.mts`), reusing `getRecentRenderHistory` directly —
+  an operator working from the terminal gets the same answer this
+  milestone gave the browser, with no new server surface.
+- Extending the destination-health/fix-plan surface to note, for a track
+  it already flags, whether the most recent render of the stale/missing
+  format was itself `interrupted` — context that could change what an
+  operator decides to do about a finding, sourced from the same read model
+  added here rather than a new one.
