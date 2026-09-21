@@ -18,7 +18,7 @@ in §23a rather than silently corrected.
 
 ## 0. Read this first
 
-**§53 (Live Batch Progress & Auto-Refresh) is the newest state.**
+**§54 (Batch Session Persistence Across Browser Reloads) is the newest state.**
 Sections 1–34 describe the project as it stood at the end of Phase 2B.
 §35–48 cover formats, batching, export-missing, per-track intent,
 stale/re-export detection, cross-process render locks, local delivery,
@@ -34,7 +34,9 @@ once — inspect, plan and apply several Content Packages together — entirely
 on top of §49's single-track resolver and the existing render queue (§37);
 it defines no new readiness rule and no second queue. §53 follows the exact
 render jobs returned by Apply in the batch panel and refreshes only affected
-track packages after terminal events. All of §35–49 landed,
+track packages after terminal events. §54 persists only resumable browser UI
+intent and exact job references, then reconstructs everything authoritative
+after reload. All of §35–49 landed,
 all verified, all still true. Where an older section disagrees with the
 code, the code wins.
 
@@ -6840,9 +6842,8 @@ Changed:
 
 ### 53.9 Final git status
 
-All changes committed. Working tree clean. 6 commits ahead of `origin/main`
-(from Batch Content Package Generation §52 + Live Batch Progress §53),
-0 behind. No push made.
+All changes committed, pushed and synced. Working tree clean. `main` and
+`origin/main` were both at `226b65e` (0 ahead, 0 behind) before §54 began.
 
 ### 53.10 Scope and next feature
 
@@ -6850,3 +6851,238 @@ The batch panel still exposes no dedicated batch-wide cancel. Delivery
 readiness is not folded into render progress. A later feature could persist
 or reconstruct a batch session across browser reloads, allowing users to
 resume an inspected batch after a browser reload; it was not started.
+
+## 54. Batch Session Persistence Across Browser Reloads (2026-09-21)
+
+This section supersedes §53.2/§53.10's browser-reload limitation. The browser
+can now reconstruct the meaningful Batch Content Package workflow after a
+reload or browser restart. This remains a UI-only, machine-local convenience:
+no database, cookie, account, server session, durable job registry, polling,
+new queue, new render transport or new API route was added.
+
+### 54.1 Storage choice, schema and expiry
+
+`ui/batchSession.ts` owns one namespaced `localStorage` entry:
+`toshi.visualizer.batch-content-package.v1`. `localStorage` was chosen over
+`sessionStorage` because the product requirement includes closing and
+reopening the browser, not only reloading one tab. The entry is last-writer
+wins across tabs; there is deliberately no cross-tab collaboration or
+`storage`-event synchronization.
+
+The version-1 schema is intentionally narrow:
+
+```ts
+{
+  schemaVersion: 1,
+  savedAt: string,                 // ISO timestamp
+  selectedSlugs: string[],
+  mode: "intent" | "full" | "platforms",
+  platforms: PlatformId[],         // used only by explicit-platform mode
+  jobReferences: Array<{
+    actionId: string,
+    slug: string,
+    platformId: PlatformId,
+    presetId: RenderPresetId,
+    jobId: string,
+  }>,
+  panelOpen: boolean,
+}
+```
+
+Sessions expire after 24 hours of inactivity. A meaningful session write
+(selection, mode/platform, panel-open state, returned job reference or terminal
+prune) updates `savedAt`; an untouched entry older than 24 hours is removed.
+The storage payload is bounded to 100 selected tracks, 300 exact job
+references, a tiny platform list and 100 KB of raw JSON.
+
+Not persisted: package/readiness snapshots, aggregate totals, render progress,
+job health, errors, plans, delivery state, destination assumptions, track
+metadata, captions/descriptions, export freshness or any path/operation. Those
+values are always re-read or re-derived from current server/filesystem state.
+
+### 54.2 Trust and validation model
+
+Browser storage is treated as untrusted input. Loading requires the supported
+schema version, a finite non-future ISO timestamp inside the 24-hour window,
+bounded arrays, valid canonical slugs and current platform definitions. Track
+slugs are intersected with the freshly loaded catalogue before selection is
+shown. Duplicates are removed; deleted/malformed tracks and unknown platforms
+are dropped. If no track survives, the entry is cleared and the ordinary empty
+selection UI is shown. Explicit-platform mode with no surviving platform falls
+back to intent mode and never mutates track export intent.
+
+A job reference is accepted only when its platform is current, its preset is
+exactly that platform's current preset, its `actionId` exactly equals
+`slug::platform::preset`, and its bounded job ID contains only safe identifier
+characters. Neither file paths, routes, shell arguments nor operation names
+can come from storage. Duplicate action references collapse to one; a new
+server-returned exact reference replaces the older reference for that action.
+
+### 54.3 Rehydration sequence and truthful UI
+
+On app start, the entry is parsed first but not displayed as truth. The UI says
+`Restoring batch…` while the catalogue loads, intersects the selected slugs,
+restores mode/platform and panel-open intent, then mounts the normal batch
+panel. The panel performs the existing batch inspect against current state.
+Only after that authoritative inspect succeeds does job recovery begin, which
+prevents an old readiness snapshot or false empty panel from flashing.
+
+Every persisted job ID is queried through the existing
+`GET /api/renders/:jobId`. Returned job ID, slug and preset must all match the
+persisted target exactly; there is no title/track/latest-render/timestamp
+guessing and no job adoption by inference.
+
+- `queued`/`preparing`/`rendering`: retain the fresh status and mount exactly
+  one existing per-job SSE follower per unique ID.
+- `completed`/`failed`/`cancelled`: show the truthful terminal result while a
+  targeted current-package read runs; never requeue.
+- authoritative 404, including an in-memory server restart/eviction: treat the
+  job as unknown, perform the same targeted package read, fabricate no result,
+  and leave no permanent spinner.
+- transient job-status transport failure: show a recovery warning, display the
+  freshly inspected package state, and keep the exact reference for a later
+  panel reopen/reload rather than misclassifying the job as missing.
+
+Terminal/unknown references are removed from browser storage only after the
+affected track's authoritative package refresh succeeds. Failed/cancelled job
+detail may remain in current in-memory UI state, but it is no longer a fake
+active or durable job. Several terminal jobs still use §53's 50 ms per-slug
+coalescing and targeted `GET /api/content-package`; no catalogue reload or
+batch-level polling was introduced.
+
+### 54.4 Races, SSE and user-intent safety
+
+The existing lost-event-safe sequence remains authoritative: recovery GETs the
+current job before subscribing; the per-job SSE route replays current state;
+it re-checks after listener registration; and `useRenderJob` re-GETs after a
+stream error. A job completing before reload, between GET and subscribe, or
+during reconnect therefore becomes terminal and triggers package refresh
+rather than leaving a spinner. Unique job IDs prevent duplicate EventSources
+and target identity prevents cross-talk across simultaneous jobs.
+
+Reload never resumes Apply, planning, rendering, delivery or a fix plan. It
+only restores selection/context and observes exact server-issued jobs already
+started. Apply after restore still calls the unchanged endpoint, which
+re-inspects/re-plans and lets `renderManager.startBatch` remain final dedupe
+authority. There is no client path that turns a persisted reference into a new
+render request, so persistence cannot duplicate work or bypass planner safety.
+
+Title/rendered-metadata edits, copy-only template edits, export-intent changes,
+destination changes and delivery changes made while the browser is away all
+flow through the ordinary fresh package resolver. Copy-only changes still do
+not affect render freshness; rendered metadata still can make an export stale;
+mode restoration never writes export intent; delivery/destination state is
+never persisted.
+
+### 54.5 UI behavior and compatibility
+
+The panel now exposes the already-supported explicit platform request as a
+third mode beside Intent and Full. Its platform buttons use the current shared
+platform registry, keep at least one selected, and persist only IDs. Clear
+selection is also the deterministic `Clear batch` operation: it synchronously
+removes local storage, selection, retained Apply state and job references.
+Closing the panel preserves session context and live job references; reopening
+keeps §53's behavior. A page reload restores an open panel if it was open. A
+full Chrome-process close/reopen with the same profile was tested and restored
+selection plus panel-open intent.
+
+The single-track Content Package panel, QueueDrawer, render queue, per-job and
+batch SSE APIs, delivery, destination health, release bundles, metadata
+templates and every CLI remain unchanged. No API/server/domain persistence
+shape was added. The server's history limits also remain unchanged: 200
+unclaimed settled jobs and 50 settled batches in memory, with active jobs never
+trimmed; a restart forgets all of them and browser recovery falls back to
+package inspection.
+
+### 54.6 Tests and real browser probes
+
+`tests/batch-session.test.mts` adds 15 focused pure tests covering persisted
+selection/mode/platforms/job references, valid recovery, malformed JSON,
+unsupported version, duplicate/unknown/deleted tracks, unknown platforms,
+expiry, future timestamps, huge arrays/raw payloads, wrong field types, exact
+job identity, duplicate job references, active queued/preparing/rendering
+classification, completed/failed/cancelled classification, terminal pruning,
+storage access failure and immediate clear. They passed 21 consecutive runs.
+Existing progress tests continue to cover target aggregation, failure,
+cancellation, completed-but-stale truthfulness, selection/mode changes, shared
+job IDs and 12 targets. The normal-concurrency full suite passes **551/551**.
+
+A real isolated headless Chrome/CDP probe created three 4-second synthetic
+tracks and nine platform targets. It prepared the exact initial shape **7
+ready / 1 missing / 1 stale**, selected all three in the UI, created a plan and
+applied exactly two actions. It reloaded with two persisted exact job IDs while
+work was live, restored all three tracks and Intent mode, issued exactly two
+authoritative job GETs, reconnected live state, and reached **9 ready** without
+manual refresh. The probe recorded one Apply request, four SSE connections
+(two before and two after reload), two targeted package refreshes, zero
+duplicate renders, terminal references pruned to zero, a second settled reload
+with no ghost jobs, and successful Clear + reload with no storage entry.
+
+A separate server-restart probe retained a real server-issued job ID in browser
+storage, restarted the API (thereby losing the in-memory job registry), and
+reloaded. The exact ID became authoritative 404, selection remained useful,
+current package inspection showed Ready, the unknown reference was pruned, and
+no spinner or fabricated success/failure remained. A separate isolated Chrome
+profile was fully closed and reopened to verify persistence across browser
+process lifetime, not only page reload.
+
+The focused one-target probe additionally recorded one Apply, one recovery job
+GET, two SSE connections around reload and one targeted refresh. No browser
+exception was observed. Stress is bounded analytically and by tests (100 tracks,
+300 job references, 12 live targets); repeated page reload accumulation was not
+run as a long-duration soak.
+
+### 54.7 Verification, performance and cleanup
+
+TypeScript/ESLint, full tests, Vite/Remotion bundle, `validate-track`,
+`prepare-track` and `git diff --check` passed. The initial sandboxed full-suite
+attempt failed only because HTTP tests could not bind `127.0.0.1`; the granted
+normal-concurrency rerun passed. A deliberately parallel build/test attempt
+made the bundler observe a test fixture during its removal; the sequential
+bundle passed, confirming an external fixture-copy race rather than a product
+failure.
+
+Restore cost is one existing batch inspect, one job GET per unique persisted
+reference and one SSE connection per server-confirmed active unique ID.
+Terminal refresh remains per affected slug with 50 ms coalescing. Storage is a
+few hundred bytes for ordinary batches and never receives progress frames, so
+render events cause no storage-write churn.
+
+All synthetic tracks, exports/manifests, Chrome profiles, CDP scripts, bundle
+artifacts and local servers were removed. Ghetto Geek was not modified;
+`prepare-track` and `validate-track` confirmed its analysis and metadata remain
+current. No local delivery/content-metadata config, render lock, worker, test
+server or synthetic track remains.
+
+### 54.8 Files and commits
+
+New:
+- `ui/batchSession.ts` — versioned schema, bounded parser, catalogue reconcile,
+  safe storage adapter, exact-reference merge/prune and job classification.
+- `tests/batch-session.test.mts` — persistence/trust/recovery regression tests.
+
+Changed:
+- `ui/App.tsx` — catalogue-gated restore, lifted batch mode/platform/reference
+  state, meaningful writes, immediate clear and panel restoration.
+- `ui/components/BatchContentPackagePanel.tsx` — explicit-platform UI,
+  authoritative job recovery, active-only SSE reconnect, terminal/unknown
+  targeted refresh and persistence pruning.
+- `docs/HANDOFF_PHASE_2B_TO_2C.md` — this section and corrected §53.9 sync state.
+
+Logical commits:
+1. `bf83340` Define persisted batch session model.
+2. `7b1b5fc` Restore batch context and exact render jobs.
+3. Documentation commit containing this section.
+
+### 54.9 Remaining limitations and next feature
+
+Persistence is intentionally per browser profile and machine, unauthenticated,
+last-writer-wins across tabs, and capped at 24 hours. A server restart cannot
+resume the old render process or recover its progress; only filesystem/package
+truth survives. Transient recovery failures require a panel reopen/reload to
+retry the exact job GET. There is no durable batch history and no automatic
+cross-tab UI update.
+
+Recommended next feature: a batch-panel Cancel action that reuses the existing
+render-batch cancellation API and current exact IDs, with no new queue or
+session model. It was not started.
