@@ -21,6 +21,12 @@ import {
   planContentPackageBatch,
 } from "../api/client.ts";
 import {
+  cancelBatchTargets,
+  cancellationConfirmation,
+  preferTerminalSnapshot,
+  selectBatchCancellationTargets,
+} from "../batchCancellation.ts";
+import {
   classifyRecoveredJob,
   type BatchSessionJobReference,
   type BatchSessionMode,
@@ -92,6 +98,7 @@ export const BatchContentPackagePanel: React.FC<{
   const [inspecting, setInspecting] = useState(false);
   const [inspectError, setInspectError] = useState<ApiRequestError | null>(null);
   const [inspectView, setInspectView] = useState<BatchContentPackageView | null>(null);
+  const [inspectedScope, setInspectedScope] = useState<string | null>(null);
 
   const [planning, setPlanning] = useState(false);
   const [planError, setPlanError] = useState<ApiRequestError | null>(null);
@@ -108,6 +115,10 @@ export const BatchContentPackagePanel: React.FC<{
   const [recoveryErrors, setRecoveryErrors] = useState<Readonly<Record<string, string>>>({});
   const [refreshingSlugs, setRefreshingSlugs] = useState<ReadonlySet<string>>(new Set());
   const [refreshErrors, setRefreshErrors] = useState<Readonly<Record<string, string>>>({});
+  const [cancellingJobIds, setCancellingJobIds] = useState<ReadonlySet<string>>(new Set());
+  const [cancelRequestPending, setCancelRequestPending] = useState(false);
+  const [cancelErrors, setCancelErrors] = useState<Readonly<Record<string, string>>>({});
+  const [cancelNote, setCancelNote] = useState<string | null>(null);
 
   const requestId = useRef(0);
   const requestMode: "intent" | "full" = mode === "full" ? "full" : "intent";
@@ -134,6 +145,7 @@ export const BatchContentPackagePanel: React.FC<{
     .filter((job) => ["queued", "preparing", "rendering"].includes(job.status))
     .map((job) => job.id)));
   const mounted = useRef(true);
+  const cancelRequestInFlight = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -143,15 +155,29 @@ export const BatchContentPackagePanel: React.FC<{
     };
   }, []);
 
-  const onSnapshot = useCallback((jobId: string, job: RenderJobView | null, missing: boolean) => {
-    if (job) {
-      jobsRef.current = { ...jobsRef.current, [jobId]: job };
-      setJobs((previous) => previous[jobId] === job ? previous : { ...previous, [jobId]: job });
-    }
-    if (missing) setMissingJobs((previous) => previous.has(jobId) ? previous : new Set([...previous, jobId]));
+  const recordJob = useCallback((job: RenderJobView): RenderJobView => {
+    const selected = preferTerminalSnapshot(jobsRef.current[job.id], job);
+    jobsRef.current = { ...jobsRef.current, [job.id]: selected };
+    setJobs((previous) => previous[job.id] === selected
+      ? previous
+      : { ...previous, [job.id]: selected });
+    return selected;
   }, []);
 
+  const onSnapshot = useCallback((jobId: string, job: RenderJobView | null, missing: boolean) => {
+    if (job) {
+      recordJob(job);
+    }
+    if (missing) setMissingJobs((previous) => previous.has(jobId) ? previous : new Set([...previous, jobId]));
+  }, [recordJob]);
+
   const onTerminal = useCallback((jobId: string) => {
+    setCancellingJobIds((previous) => {
+      if (!previous.has(jobId)) return previous;
+      const next = new Set(previous);
+      next.delete(jobId);
+      return next;
+    });
     if (notified.current.has(jobId)) return;
     notified.current.add(jobId);
     const slugs = new Set(jobReferencesRef.current
@@ -236,8 +262,24 @@ export const BatchContentPackagePanel: React.FC<{
     return [...merged.values()];
   }, [jobReferences, terminalReferences]);
   const live = useMemo(() => inspectView
-    ? deriveLiveBatchProgress(inspectView, displayedReferences.map((reference) => ({ ...reference, outcome: "adopted" as const })), jobs, refreshingSlugs)
-    : null, [displayedReferences, inspectView, jobs, refreshingSlugs]);
+    ? deriveLiveBatchProgress(
+        inspectView,
+        displayedReferences.map((reference) => ({ ...reference, outcome: "adopted" as const })),
+        jobs,
+        refreshingSlugs,
+        cancellingJobIds,
+      )
+    : null, [cancellingJobIds, displayedReferences, inspectView, jobs, refreshingSlugs]);
+
+  const cancellationTargets = useMemo(
+    () => inspectView && inspectedScope === scope
+      ? selectBatchCancellationTargets(inspectView, jobReferences, jobs)
+      : [],
+    [inspectView, inspectedScope, jobReferences, jobs, scope],
+  );
+  const availableCancellationTargets = cancellationTargets.filter(
+    (target) => !cancellingJobIds.has(target.jobId),
+  );
 
   useEffect(() => {
     const id = ++requestId.current;
@@ -253,7 +295,10 @@ export const BatchContentPackagePanel: React.FC<{
     setPlanning(false);
     setApplying(false);
     setInspectView(null);
+    setInspectedScope(null);
     setInspectError(null);
+    setCancelErrors({});
+    setCancelNote(null);
 
     if (tracks.length === 0) {
       setInspecting(false);
@@ -265,6 +310,7 @@ export const BatchContentPackagePanel: React.FC<{
       .then((view) => {
         if (requestId.current !== id) return;
         setInspectView(view);
+        setInspectedScope(scope);
       })
       .catch((cause: unknown) => {
         if (requestId.current === id) setInspectError(asApiError(cause));
@@ -298,8 +344,7 @@ export const BatchContentPackagePanel: React.FC<{
           onTerminal(reference.jobId);
           return;
         }
-        jobsRef.current = { ...jobsRef.current, [job.id]: job };
-        setJobs((previous) => ({ ...previous, [job.id]: job }));
+        recordJob(job);
         setRecoveryErrors((previous) => {
           if (!(job.id in previous)) return previous;
           const next = { ...previous };
@@ -323,7 +368,7 @@ export const BatchContentPackagePanel: React.FC<{
       if (!cancelled) setRestoringJobs(false);
     });
     return () => { cancelled = true; };
-  }, [inspectView, jobReferences, onTerminal]);
+  }, [inspectView, jobReferences, onTerminal, recordJob]);
 
   const refreshInspect = () => {
     const id = ++requestId.current;
@@ -333,6 +378,7 @@ export const BatchContentPackagePanel: React.FC<{
       .then((view) => {
         if (requestId.current !== id) return;
         setInspectView(view);
+        setInspectedScope(scope);
       })
       .catch((cause: unknown) => {
         if (requestId.current === id) setInspectError(asApiError(cause));
@@ -392,6 +438,65 @@ export const BatchContentPackagePanel: React.FC<{
       if (scopeRef.current === requestScope) setApplyError(asApiError(cause));
     } finally {
       if (scopeRef.current === requestScope) setApplying(false);
+    }
+  };
+
+  const cancelActive = async () => {
+    if (cancelRequestInFlight.current || availableCancellationTargets.length === 0) return;
+    const targets = availableCancellationTargets;
+    const confirmation = cancellationConfirmation(targets);
+    if (confirmation !== null && !window.confirm(confirmation)) return;
+
+    cancelRequestInFlight.current = true;
+    setCancelRequestPending(true);
+    setCancelNote(null);
+    const requestedIds = new Set(targets.map((target) => target.jobId));
+    setCancellingJobIds((previous) => new Set([...previous, ...requestedIds]));
+    setCancelErrors((previous) => Object.fromEntries(
+      Object.entries(previous).filter(([jobId]) => !requestedIds.has(jobId)),
+    ));
+
+    try {
+      const results = await cancelBatchTargets(targets);
+      if (!mounted.current) return;
+      const errors: Record<string, string> = {};
+      let completionWon = false;
+
+      for (const result of results) {
+        if (result.kind === "unknown") {
+          setMissingJobs((previous) => new Set([...previous, result.target.jobId]));
+          onTerminal(result.target.jobId);
+          continue;
+        }
+
+        const current = result.job ? recordJob(result.job) : null;
+        if (current && (result.kind === "terminal" ||
+          current.status === "completed" || current.status === "failed" || current.status === "cancelled")) {
+          if (current.status === "completed") completionWon = true;
+          onTerminal(result.target.jobId);
+          continue;
+        }
+
+        if (result.kind === "failed") {
+          errors[result.target.jobId] =
+            `${result.target.slug} · ${result.target.platformLabel}: ${result.error.message}`;
+          setCancellingJobIds((previous) => {
+            const next = new Set(previous);
+            next.delete(result.target.jobId);
+            return next;
+          });
+        }
+        // Accepted active jobs remain "Cancelling" and keep their existing
+        // SSE followers until the server emits an authoritative terminal job.
+      }
+
+      if (Object.keys(errors).length > 0) {
+        setCancelErrors((previous) => ({ ...previous, ...errors }));
+      }
+      if (completionWon) setCancelNote("Render already completed; its output remains valid.");
+    } finally {
+      cancelRequestInFlight.current = false;
+      if (mounted.current) setCancelRequestPending(false);
     }
   };
 
@@ -482,7 +587,9 @@ export const BatchContentPackagePanel: React.FC<{
             {live.totals.ready} ready · {live.totals.missing} missing ·{" "}
             {live.totals.stale} stale
             {live.totals.queued > 0 ? ` · ${live.totals.queued} queued` : ""}
+            {live.totals.preparing > 0 ? ` · ${live.totals.preparing} preparing` : ""}
             {live.totals.rendering > 0 ? ` · ${live.totals.rendering} rendering` : ""}
+            {live.totals.cancelling > 0 ? ` · ${live.totals.cancelling} cancelling` : ""}
             {live.totals.checking > 0 ? ` · ${live.totals.checking} checking` : ""}
           </p>
           <p className="batchpackage__totals muted">
@@ -498,7 +605,9 @@ export const BatchContentPackagePanel: React.FC<{
                 <span className="exportmissing__counts">
                   {track.ready}/{track.total} ready
                   {track.queued > 0 ? ` · ${track.queued} queued` : ""}
+                  {track.preparing > 0 ? ` · ${track.preparing} preparing` : ""}
                   {track.rendering > 0 ? ` · ${track.rendering} rendering` : ""}
+                  {track.cancelling > 0 ? ` · ${track.cancelling} cancelling` : ""}
                 </span>
                 <ul className="batchpackage__platforms">
                   {track.platforms.map(({ platform, state, jobState, progressPercent, error, jobId }) => (
@@ -507,7 +616,9 @@ export const BatchContentPackagePanel: React.FC<{
                       <span className="muted">
                         {jobState === "render_failed" ? "Render failed"
                           : jobState === "cancelled" ? "Cancelled"
+                            : jobState === "cancelling" ? "Cancelling"
                             : state === "checking" ? "Checking package state"
+                              : state === "preparing" ? "Preparing"
                               : state === "rendering" && jobState === "rendering" ? "Rendering"
                                 : state === "queued" ? "Queued"
                                   : state === "ready" ? "Ready"
@@ -522,6 +633,7 @@ export const BatchContentPackagePanel: React.FC<{
                         </span>
                       ) : null}
                       {error ? <span className="batchpackage__joberror">{error}</span> : null}
+                      {jobId && cancelErrors[jobId] ? <span className="batchpackage__joberror">Could not cancel: {cancelErrors[jobId]}</span> : null}
                       {jobId && missingJobs.has(jobId) ? <span className="batchpackage__joberror">Render job no longer known to server; inspect again.</span> : null}
                     </li>
                   ))}
@@ -559,6 +671,19 @@ export const BatchContentPackagePanel: React.FC<{
           {planning ? "Planning…" : "Create plan"}
         </button>
 
+        <button
+          type="button"
+          className="button button--quiet"
+          disabled={availableCancellationTargets.length === 0 || cancelRequestPending}
+          onClick={() => void cancelActive()}
+        >
+          {cancelRequestPending || (cancellingJobIds.size > 0 && availableCancellationTargets.length === 0)
+            ? "Cancelling…"
+            : availableCancellationTargets.length > 0
+              ? `Cancel ${availableCancellationTargets.length} active render${availableCancellationTargets.length === 1 ? "" : "s"}`
+              : "Cancel active renders"}
+        </button>
+
         {plan ? (
           <>
             <button
@@ -590,6 +715,7 @@ export const BatchContentPackagePanel: React.FC<{
       {planError ? <ErrorBanner error={planError} title="Could not plan batch" /> : null}
       {applyError ? <ErrorBanner error={applyError} title="Could not apply batch" /> : null}
       {applyNote ? <p className="batchpackage__note">{applyNote}</p> : null}
+      {cancelNote ? <p className="batchpackage__note" role="status">{cancelNote}</p> : null}
 
       {plan ? (
         <div className="batchpackage__plan">

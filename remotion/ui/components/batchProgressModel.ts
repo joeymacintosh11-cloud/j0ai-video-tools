@@ -6,8 +6,8 @@ import type {
 import type { ContentPackagePlatformEntry } from "../../src/domain/content/contentPackage.ts";
 
 export type LiveTargetState =
-  | "ready" | "missing" | "stale" | "blocked" | "queued" | "rendering" | "checking";
-export type LiveJobState = "queued" | "rendering" | "completed" | "render_failed" | "cancelled";
+  | "ready" | "missing" | "stale" | "blocked" | "queued" | "preparing" | "rendering" | "cancelling" | "checking";
+export type LiveJobState = "queued" | "preparing" | "rendering" | "cancelling" | "completed" | "render_failed" | "cancelled";
 
 export type LivePlatformEntry = {
   readonly platform: ContentPackagePlatformEntry;
@@ -26,7 +26,9 @@ export type LiveTrackEntry = {
   readonly ready: number;
   readonly total: number;
   readonly queued: number;
+  readonly preparing: number;
   readonly rendering: number;
+  readonly cancelling: number;
 };
 
 export type LiveBatchView = {
@@ -34,11 +36,18 @@ export type LiveBatchView = {
   readonly totals: Readonly<Record<LiveTargetState, number>> & { readonly total: number };
 };
 
-const jobStateFor = (job: RenderJobView | undefined): LiveJobState | null => {
+const jobStateFor = (
+  job: RenderJobView | undefined,
+  cancellingJobIds: ReadonlySet<string>,
+): LiveJobState | null => {
   if (!job) return null;
+  if (cancellingJobIds.has(job.id) &&
+    (job.status === "queued" || job.status === "preparing" || job.status === "rendering")) {
+    return "cancelling";
+  }
   switch (job.status) {
     case "queued": return "queued";
-    case "preparing":
+    case "preparing": return "preparing";
     case "rendering": return "rendering";
     case "completed": return "completed";
     case "failed": return "render_failed";
@@ -63,21 +72,24 @@ export const deriveLiveBatchProgress = (
   references: readonly ContentPackageBatchJobReferenceView[],
   jobs: Readonly<Record<string, RenderJobView>>,
   refreshingSlugs: ReadonlySet<string> = new Set(),
+  cancellingJobIds: ReadonlySet<string> = new Set(),
 ): LiveBatchView => {
   const refs = new Map(references.map((ref) => [`${ref.slug}::${ref.platformId}`, ref]));
   const totals: Record<LiveTargetState, number> & { total: number } = {
-    ready: 0, missing: 0, stale: 0, blocked: 0, queued: 0, rendering: 0, checking: 0, total: 0,
+    ready: 0, missing: 0, stale: 0, blocked: 0, queued: 0, preparing: 0, rendering: 0, cancelling: 0, checking: 0, total: 0,
   };
 
   const tracks = view.tracks.map((track): LiveTrackEntry => {
     const platforms = track.platforms.filter((platform) => platform.selected).map((platform): LivePlatformEntry => {
       const ref = refs.get(`${track.slug}::${platform.platformId}`);
       const job = ref?.jobId ? jobs[ref.jobId] : undefined;
-      const jobState = jobStateFor(job);
+      const jobState = jobStateFor(job, cancellingJobIds);
       const awaitingRefresh = refreshingSlugs.has(track.slug);
       let state = readinessState(platform);
       if (jobState === "queued") state = "queued";
+      else if (jobState === "preparing") state = "preparing";
       else if (jobState === "rendering") state = "rendering";
+      else if (jobState === "cancelling") state = "cancelling";
       else if (jobState !== null && (awaitingRefresh || platform.readiness === "rendering")) state = "checking";
       totals[state]++;
       totals.total++;
@@ -100,7 +112,9 @@ export const deriveLiveBatchProgress = (
       ready: platforms.filter((entry) => entry.state === "ready").length,
       total: platforms.length,
       queued: platforms.filter((entry) => entry.state === "queued").length,
+      preparing: platforms.filter((entry) => entry.state === "preparing").length,
       rendering: platforms.filter((entry) => entry.state === "rendering").length,
+      cancelling: platforms.filter((entry) => entry.state === "cancelling").length,
     };
   });
 

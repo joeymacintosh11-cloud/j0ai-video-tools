@@ -16,7 +16,8 @@ export class Worker extends EventEmitter {
   stdout = new PassThrough();
   stderr = new PassThrough();
   pid: number | undefined;
-  send() {
+  send(_message?: unknown) {
+    void _message;
     return true;
   }
   kill() {

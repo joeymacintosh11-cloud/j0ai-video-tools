@@ -144,3 +144,47 @@ test("cancelled workers release the slot once without affecting the next worker"
   await tick();
   workers[1].emit("close", 1, null);
 });
+
+test("repeated cancellation while a worker stops is idempotent", async (t) => {
+  class CountingWorker extends Worker {
+    cancelMessages = 0;
+    override send(message?: unknown) {
+      if ((message as { type?: string })?.type === "cancel") this.cancelMessages++;
+      return true;
+    }
+  }
+  const worker = new CountingWorker();
+  worker.pid = 100;
+  const m = await manager(t, () => worker);
+  const running = m.startRender("first");
+
+  assert.equal(m.cancelRender(running.id).status, "preparing");
+  assert.equal(m.cancelRender(running.id).status, "preparing");
+  assert.equal(worker.cancelMessages, 1, "only one worker cancellation command is sent");
+
+  worker.emit("message", { type: "cancelled" });
+  worker.emit("exit", 0, null);
+  await tick();
+  assert.equal(m.getJob(running.id).status, "cancelled");
+});
+
+test("completion remains authoritative when it wins after cancellation was requested", async (t) => {
+  const worker = new Worker();
+  worker.pid = 100;
+  const m = await manager(t, () => worker);
+  const running = m.startRender("first");
+
+  m.cancelRender(running.id);
+  worker.emit("message", {
+    type: "done",
+    outputPath: "/unused",
+    outputLabel: "out/first.mp4",
+  });
+  worker.emit("exit", 0, null);
+  await tick();
+
+  assert.equal(m.getJob(running.id).status, "completed");
+  assert.throws(() => m.cancelRender(running.id), {
+    code: "RENDER_NOT_CANCELLABLE",
+  });
+});

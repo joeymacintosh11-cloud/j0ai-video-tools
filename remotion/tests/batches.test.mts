@@ -135,6 +135,27 @@ test("a cancelled job does not stop the batch either", async (t) => {
   assert.equal(after.jobs[1].status, "preparing");
 });
 
+test("an exact queued job can be cancelled without starting its worker or its siblings", async (t) => {
+  const { manager, workers } = await managerWithWorkers(t);
+  const outsider = manager.startRender("outside", "youtube-16x9");
+  const { batch } = manager.startBatch([
+    { slug: "alpha", preset: "youtube-16x9" },
+    { slug: "bravo", preset: "vertical-9x16" },
+  ]);
+
+  assert.equal(batch.jobs[0]!.status, "queued");
+  assert.equal(batch.jobs[1]!.status, "queued");
+  assert.equal(manager.cancelRender(batch.jobs[1]!.id).status, "cancelled");
+  assert.equal(manager.getJob(outsider.id).status, "preparing");
+  assert.equal(manager.getJob(batch.jobs[0]!.id).status, "queued");
+  assert.equal(workers.length, 1, "no worker was created for the cancelled queued job");
+
+  manager.cancelRender(batch.jobs[0]!.id);
+  manager.cancelRender(outsider.id);
+  workers[0]!.emit("message", { type: "cancelled" });
+  await settle(workers[0]!);
+});
+
 test("cancelling a batch stops all of its unsettled jobs and nothing else", async (t) => {
   const { manager, workers } = await managerWithWorkers(t);
 

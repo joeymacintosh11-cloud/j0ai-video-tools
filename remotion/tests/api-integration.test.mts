@@ -636,6 +636,58 @@ test("a render refused for a locked target answers 409, not a queued job", async
   );
 });
 
+test("the existing exact-job cancel route is idempotent while active and rejects terminal or unknown jobs", async (t) => {
+  const childProcess = (await import("node:child_process")).default;
+  const { Worker } = await import("./managerHarness.mts");
+  class CountingWorker extends Worker {
+    cancelMessages = 0;
+    override send(message?: unknown) {
+      if ((message as { type?: string })?.type === "cancel") this.cancelMessages++;
+      return true;
+    }
+  }
+  const worker = new CountingWorker();
+  worker.pid = 67890;
+  t.mock.method(childProcess, "fork", () => worker);
+  syncBuiltinESMExports();
+  t.after(() => {
+    worker.emit("message", { type: "cancelled" });
+    worker.emit("exit", 0, null);
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+
+  const f = await fixture(t);
+  await fs.writeFile(f.cover, "cover");
+  await fs.writeFile(f.beat, "audio");
+  const { base } = await api(t);
+  const started = await fetch(`${base}/api/tracks/${f.slug}/render`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ preset: "square-1x1" }),
+  });
+  assert.equal(started.status, 200);
+  const jobId = (await started.json()).data.jobId as string;
+  const cancel = () => fetch(`${base}/api/renders/${jobId}/cancel`, { method: "POST" });
+
+  assert.equal((await cancel()).status, 200);
+  assert.equal((await cancel()).status, 200);
+  assert.equal(worker.cancelMessages, 1);
+
+  worker.emit("message", { type: "cancelled" });
+  worker.emit("exit", 0, null);
+  const terminal = await (await fetch(`${base}/api/renders/${jobId}`)).json();
+  assert.equal(terminal.data.status, "cancelled");
+
+  const tooLate = await cancel();
+  assert.equal(tooLate.status, 409);
+  assert.equal((await tooLate.json()).error.code, "RENDER_NOT_CANCELLABLE");
+
+  const unknown = await fetch(`${base}/api/renders/not-a-job/cancel`, { method: "POST" });
+  assert.equal(unknown.status, 404);
+  assert.equal((await unknown.json()).error.code, "RENDER_JOB_NOT_FOUND");
+});
+
 /* -------------------------------------------------------------------- *
  * Content package
  * -------------------------------------------------------------------- */

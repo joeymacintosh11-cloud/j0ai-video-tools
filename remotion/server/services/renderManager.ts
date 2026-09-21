@@ -425,6 +425,13 @@ class RenderManager {
       );
     }
 
+    // Cancellation is idempotent while the worker is winding down. A second
+    // tab (or an impatient double-click) must not send another worker command
+    // or replace the one kill timer already guarding the graceful request.
+    if (job.cancelRequested) {
+      return this.toView(job);
+    }
+
     job.cancelRequested = true;
 
     if (job.status === "queued") {

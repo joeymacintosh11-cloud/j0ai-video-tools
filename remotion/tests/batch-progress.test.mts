@@ -36,7 +36,7 @@ test("live totals overlay two exact jobs without counting missing/stale twice", 
     one: job("one", "b", "vertical-9x16", "rendering", 0.54),
     two: job("two", "c", "square-1x1", "queued"),
   });
-  assert.deepEqual(live.totals, { total: 9, ready: 7, missing: 0, stale: 0, blocked: 0, queued: 1, rendering: 1, checking: 0 });
+  assert.deepEqual(live.totals, { total: 9, ready: 7, missing: 0, stale: 0, blocked: 0, queued: 1, preparing: 0, rendering: 1, cancelling: 0, checking: 0 });
   assert.equal(live.tracks[1]!.platforms[1]!.progressPercent, 54);
   assert.equal(live.tracks[1]!.ready, 2);
 });
@@ -71,6 +71,36 @@ test("failure and cancellation remain target-specific while sibling readiness su
   assert.equal(live.tracks[0]!.platforms[2]!.jobState, "cancelled");
 });
 
+test("cancelling is a transient job overlay, never durable package readiness", () => {
+  const view = deriveBatchContentPackage([pkg("b", ["current", "missing", "current"])]);
+  const refs = [ref("b", "reels", "vertical-9x16", "one")];
+  const rendering = job("one", "b", "vertical-9x16", "rendering", 0.54);
+  const pending = deriveLiveBatchProgress(view, refs, { one: rendering }, new Set(), new Set(["one"]));
+  assert.equal(pending.totals.cancelling, 1);
+  assert.equal(pending.totals.rendering, 0);
+  assert.equal(pending.tracks[0]!.cancelling, 1);
+  assert.equal(pending.tracks[0]!.platforms[1]!.jobState, "cancelling");
+
+  const cancelled = deriveLiveBatchProgress(view, refs, {
+    one: job("one", "b", "vertical-9x16", "cancelled"),
+  });
+  assert.equal(cancelled.totals.cancelling, 0);
+  assert.equal(cancelled.totals.missing, 1, "underlying package readiness reappears");
+  assert.equal(cancelled.tracks[0]!.platforms[1]!.jobState, "cancelled");
+});
+
+test("preparing remains distinct from rendering in target and batch totals", () => {
+  const view = deriveBatchContentPackage([pkg("b", ["current", "missing", "current"])]);
+  const refs = [ref("b", "reels", "vertical-9x16", "one")];
+  const live = deriveLiveBatchProgress(view, refs, {
+    one: job("one", "b", "vertical-9x16", "preparing"),
+  });
+  assert.equal(live.totals.preparing, 1);
+  assert.equal(live.totals.rendering, 0);
+  assert.equal(live.tracks[0]!.preparing, 1);
+  assert.equal(live.tracks[0]!.platforms[1]!.jobState, "preparing");
+});
+
 test("job references stay attached to exact platform targets across mode and selection changes", () => {
   const refs = [ref("b", "reels", "vertical-9x16", "one"), ref("c", "instagram-square", "square-1x1", "two")];
   const jobs = { one: job("one", "b", "vertical-9x16", "rendering", 0.2), two: job("two", "c", "square-1x1", "queued") };
@@ -93,6 +123,6 @@ test("twelve tracked targets and a shared adopted job keep one bucket per target
   const live = deriveLiveBatchProgress(view, refs, jobs);
   assert.equal(new Set(refs.map((item) => item.jobId)).size, 11);
   assert.deepEqual(live.totals, {
-    total: 36, ready: 24, missing: 0, stale: 0, blocked: 0, queued: 5, rendering: 7, checking: 0,
+    total: 36, ready: 24, missing: 0, stale: 0, blocked: 0, queued: 5, preparing: 0, rendering: 7, cancelling: 0, checking: 0,
   });
 });
