@@ -23,6 +23,7 @@ import { ExportStatus } from "./ExportStatus.tsx";
 import { AssetDropZone } from "./AssetDropZone.tsx";
 import { MetadataForm } from "./MetadataForm.tsx";
 import { PrepareActions } from "./PrepareActions.tsx";
+import { TrackRecentRenderHistory } from "./RecentRenderHistory.tsx";
 import { RenderPanel } from "./RenderPanel.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
 import { TrackPreview } from "./TrackPreview.tsx";
@@ -261,6 +262,16 @@ export const TrackDetail: React.FC<{
           onChanged={onChanged}
           onBatchStarted={onBatchStarted}
         />
+      </section>
+
+      {/* What the durable render journal remembers about this track, kept
+          separate from the live state above: that section is what is
+          rendering right now; this one is history and survives a server
+          restart. Neither is derived from the other, and neither is derived
+          from — or implies anything about — current package readiness. */}
+      <section className="section">
+        <h3 className="section__title">Recent render</h3>
+        <TrackRecentRenderHistory slug={track.slug} />
       </section>
 
       <section className="section">
