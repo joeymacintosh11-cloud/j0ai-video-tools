@@ -9,6 +9,7 @@ import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
 import { readDeliverySettings } from "../../services/delivery/deliverySettings.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
 import { scanDestinationHealth } from "../services/destinationHealth.ts";
+import { enrichDestinationHealthWithRenderContext } from "../services/destinationHealthRenderContext.ts";
 import {
   applyDestinationFixPlan,
   planDestinationFix,
@@ -35,10 +36,15 @@ export const handleGetDestinationHealth = async (
   const slugs =
     named.length === 0 ? undefined : named.map((slug) => assertValidSlug(slug));
 
-  const result = await scanDestinationHealth({
+  const scanned = await scanDestinationHealth({
     slugs,
     settings: await readDeliverySettings(),
   });
+  // Explanatory-only: composed after the scan has already decided every
+  // finding, never before. Not applied to the fix planner (see
+  // server/services/destinationHealthRenderContext.ts's own comment) — only
+  // this read-only endpoint enriches its response.
+  const result = enrichDestinationHealthWithRenderContext(scanned);
 
   const payload: DestinationHealthView = {
     status: result.status,
