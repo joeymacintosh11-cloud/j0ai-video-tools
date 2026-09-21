@@ -335,6 +335,16 @@ export type RenderJournalReconstruction = {
   readonly jobs: ReadonlyMap<string, RenderJournalJobRecord>;
   /** Events that could not be applied: duplicates and illegal transitions. */
   readonly quarantined: readonly { readonly event: RenderJournalEvent; readonly reason: string }[];
+  /**
+   * File-order index of the event that most recently produced each job's
+   * current record. Not `recordedAt`: wall-clock time is not guaranteed
+   * monotonic across two processes' boot ids, but file order already is the
+   * true global order events happened in (the same reasoning
+   * `parseRenderJournal`'s own comment gives for using it as event order in
+   * the first place). This is what lets a caller sort several jobs of one
+   * track "most recently active first" without trusting timestamps alone.
+   */
+  readonly order: ReadonlyMap<string, number>;
 };
 
 /**
@@ -352,11 +362,12 @@ export const reconstructRenderJournal = (
   events: readonly RenderJournalEvent[],
 ): RenderJournalReconstruction => {
   const jobs = new Map<string, RenderJournalJobRecord>();
+  const order = new Map<string, number>();
   const seenEventIds = new Set<string>();
   const quarantined: { readonly event: RenderJournalEvent; readonly reason: string }[] = [];
 
-  for (const event of events) {
-    if (seenEventIds.has(event.eventId)) continue;
+  events.forEach((event, index) => {
+    if (seenEventIds.has(event.eventId)) return;
     seenEventIds.add(event.eventId);
 
     const existing = jobs.get(event.jobId);
@@ -372,7 +383,8 @@ export const reconstructRenderJournal = (
         bootId: event.bootId,
         error: event.error,
       });
-      continue;
+      order.set(event.jobId, index);
+      return;
     }
 
     if (event.state === existing.state) {
@@ -385,7 +397,8 @@ export const reconstructRenderJournal = (
         bootId: event.bootId,
         error: event.error ?? existing.error,
       });
-      continue;
+      order.set(event.jobId, index);
+      return;
     }
 
     if (!LEGAL_SUCCESSORS[existing.state].has(event.state)) {
@@ -393,7 +406,7 @@ export const reconstructRenderJournal = (
         event,
         reason: `job ${event.jobId} cannot move from "${existing.state}" to "${event.state}"`,
       });
-      continue;
+      return;
     }
 
     jobs.set(event.jobId, {
@@ -406,9 +419,10 @@ export const reconstructRenderJournal = (
       bootId: event.bootId,
       error: event.error,
     });
-  }
+    order.set(event.jobId, index);
+  });
 
-  return { jobs, quarantined };
+  return { jobs, quarantined, order };
 };
 
 /* ------------------------------------------------------------------ *
@@ -534,4 +548,112 @@ export const selectRetainedEvents = (
     if (finalState === undefined || !isTerminalJournalState(finalState)) return true;
     return keptEventIdByJob.get(event.jobId) === event.eventId;
   });
+};
+
+/* ------------------------------------------------------------------ *
+ * Operator-facing recent history (one track, grouped by job)
+ * ------------------------------------------------------------------ */
+
+/** A note for the user about a journal read status, when there is anything to say. Mirrors DELIVERY_LOG_STATUS_NOTES's own vocabulary and tone. */
+export const RENDER_JOURNAL_STATUS_NOTES: Record<RenderJournalStatus, string | null> = {
+  missing: null,
+  complete: null,
+  duplicated:
+    "The render journal contains an event more than once. Nothing this tool " +
+    "does produces a repeat, so the file has been edited or appended to by " +
+    "something else. Every event was read and nothing has been changed.",
+  recovered_tail:
+    "The last line of the render journal is incomplete, which is what an " +
+    "interrupted append leaves behind. Every event before it was read.",
+  unsupported:
+    "Part of the render journal was written by a newer version of this " +
+    "tool and could not be read. Earlier history is still shown.",
+  corrupt:
+    "The render journal is damaged, so some history may be missing. What " +
+    "could be read is still shown.",
+};
+
+export const RENDER_HISTORY_DEFAULT_LIMIT = 3;
+export const RENDER_HISTORY_MAX_LIMIT = 10;
+
+/**
+ * The most recent renders of one track, newest first — one entry per job (its
+ * final reconstructed state), never one entry per lifecycle event (§8/§9 of
+ * the milestone this implements: an operator asks "what happened to this
+ * track's renders", not "show me every transition").
+ *
+ * Ordered by `reconstruction.order` (file position), not `recordedAt` — see
+ * that field's own comment for why. `currentBootId` is threaded through to
+ * `classifyRecoveredJob` exactly as `getHistoricalRenderJob` already does, so
+ * a job whose last recorded activity belongs to this same process's boot
+ * (aged out of renderManager's bounded in-memory history) reads the same way
+ * here as it does from `GET /api/renders/:id`.
+ *
+ * `excludeJobIds` exists for exactly one reason: a job that is currently
+ * live in `renderManager` is also written to this journal (at queued/
+ * preparing/rendering), and this function has no way to know that on its
+ * own — it only ever reads the journal. Left unfiltered, a track's genuinely
+ * in-flight render would be reconstructed as a non-terminal record with no
+ * live owner and misclassified `"interrupted"`, which would be actively
+ * wrong, not just imprecise. The caller (server/routes/renderHistory.ts)
+ * supplies the live job ids `renderManager` currently holds for this slug —
+ * "live always wins" applied at the list level, the same boundary
+ * `getJobOrHistorical` in server/routes/renders.ts already enforces for one
+ * job id. Applied before the limit slice, so an excluded live job never
+ * silently shrinks the page below `limit`.
+ */
+export const recentRenderJobsForSlug = (
+  reconstruction: RenderJournalReconstruction,
+  slug: string,
+  currentBootId: string,
+  limit: number = RENDER_HISTORY_DEFAULT_LIMIT,
+  excludeJobIds: ReadonlySet<string> = new Set(),
+): readonly RecoveredRenderJob[] => {
+  const bounded = Math.max(0, Math.min(limit, RENDER_HISTORY_MAX_LIMIT));
+
+  return [...reconstruction.jobs.values()]
+    .filter((job) => job.slug === slug && !excludeJobIds.has(job.jobId))
+    .sort(
+      (a, b) =>
+        (reconstruction.order.get(b.jobId) ?? -1) -
+        (reconstruction.order.get(a.jobId) ?? -1),
+    )
+    .slice(0, bounded)
+    .map((job) => classifyRecoveredJob(job, currentBootId));
+};
+
+/**
+ * A short, human-friendly rendering of a recorded timestamp — "Today,
+ * 14:32", "Yesterday, 18:04", "20 Sep, 13:10" — for operator scanning. Pure
+ * and dependency-free like `formatBundleTimestamp`
+ * (src/domain/delivery/releaseBundle.ts): `now` is a parameter rather than
+ * `new Date()` so the day boundary is deterministic in tests. The caller is
+ * expected to also keep the exact ISO value available (e.g. as a `title`
+ * attribute) — this is a display convenience, never the value compared or
+ * sorted on.
+ */
+export const formatRecentRenderTimestamp = (
+  iso: string,
+  now: Date = new Date(),
+): string => {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return iso;
+
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const time = `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+
+  const startOfDay = (date: Date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.round(
+    (startOfDay(now) - startOfDay(parsed)) / (24 * 60 * 60 * 1000),
+  );
+
+  if (dayDiff === 0) return `Today, ${time}`;
+  if (dayDiff === 1) return `Yesterday, ${time}`;
+
+  const MONTHS = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+  return `${parsed.getDate()} ${MONTHS[parsed.getMonth()]}, ${time}`;
 };

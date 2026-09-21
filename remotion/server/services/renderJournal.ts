@@ -6,9 +6,12 @@ import {
 import {
   classifyRecoveredJob,
   reconstructRenderJournal,
+  recentRenderJobsForSlug,
+  RENDER_HISTORY_DEFAULT_LIMIT,
   RENDER_JOURNAL_SCHEMA_VERSION,
   type RecoveredRenderJob,
   type RenderJournalLifecycleState,
+  type RenderJournalStatus,
 } from "../../src/domain/render/renderJournal.ts";
 
 /**
@@ -120,4 +123,43 @@ export const getHistoricalRenderJob = (jobId: string): RecoveredRenderJob | null
   const record = jobs.get(jobId);
 
   return record ? classifyRecoveredJob(record, RENDER_MANAGER_BOOT_ID) : null;
+};
+
+export type RecentRenderHistoryResult = {
+  readonly status: RenderJournalStatus;
+  readonly jobs: readonly RecoveredRenderJob[];
+};
+
+/**
+ * The most recent renders of one track, newest first, grouped by job — the
+ * server-side half of the operator-facing render-history surface
+ * (`GET /api/render-history`, `server/routes/renderHistory.ts`).
+ *
+ * Reads and reconstructs the whole journal on every call, exactly like
+ * `getHistoricalRenderJob` above and for the same reason: appends are
+ * low-frequency and the journal is kept small by retention, so this is cheap
+ * (see tests/render-journal.test.mts's benchmark, which this milestone's own
+ * benchmark test extends to this function). `status` is returned alongside
+ * the jobs — a track's history can still be reported even when the journal is
+ * damaged elsewhere, exactly like the delivery log's own `status`/`events`
+ * split (src/domain/delivery/deliveryHistory.ts).
+ */
+export const getRecentRenderHistory = (
+  slug: string,
+  limit: number = RENDER_HISTORY_DEFAULT_LIMIT,
+  excludeJobIds: ReadonlySet<string> = new Set(),
+): RecentRenderHistoryResult => {
+  const read = readRenderJournal();
+  const reconstruction = reconstructRenderJournal(read.events);
+
+  return {
+    status: read.status,
+    jobs: recentRenderJobsForSlug(
+      reconstruction,
+      slug,
+      RENDER_MANAGER_BOOT_ID,
+      limit,
+      excludeJobIds,
+    ),
+  };
 };
