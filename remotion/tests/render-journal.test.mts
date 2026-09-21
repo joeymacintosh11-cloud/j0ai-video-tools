@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import {
+  buildMostRecentJobIndex,
   classifyRecoveredJob,
   formatRecentRenderTimestamp,
   isSeriousJournalDamage,
@@ -11,6 +12,7 @@ import {
   reconstructRenderJournal,
   RENDER_JOURNAL_SCHEMA_VERSION,
   selectRetainedEvents,
+  targetKey,
   type RenderJournalEvent,
   type RenderJournalLifecycleState,
 } from "../src/domain/render/renderJournal.ts";
@@ -477,6 +479,59 @@ test("formatRecentRenderTimestamp reads Today/Yesterday/an older date, using the
 
 test("formatRecentRenderTimestamp falls back to the raw value for an unparseable timestamp", () => {
   assert.equal(formatRecentRenderTimestamp("not-a-date"), "not-a-date");
+});
+
+/* ------------------------------------------------------------------ *
+ * buildMostRecentJobIndex (Destination Health + Render Journal Context)
+ * ------------------------------------------------------------------ */
+
+test("buildMostRecentJobIndex keys by exact (slug, presetId), one entry per target", () => {
+  const events = [
+    ...lifecycle("job-a", ["queued", "preparing", "completed"]),
+    ...lifecycle("job-b", ["queued", "preparing", "failed"]).map((e) => ({
+      ...e,
+      presetId: "vertical-9x16",
+    })),
+  ];
+  const reconstruction = reconstructRenderJournal(events);
+  const index = buildMostRecentJobIndex(reconstruction, BOOT_A);
+
+  assert.equal(index.size, 2);
+  assert.equal(index.get(targetKey("probe", "youtube-16x9"))?.status, "completed");
+  assert.equal(index.get(targetKey("probe", "vertical-9x16"))?.status, "failed");
+});
+
+test("buildMostRecentJobIndex picks the newer of two jobs for the same exact target, by file position", () => {
+  const older = lifecycle("job-a", ["queued", "preparing", "failed"]);
+  const newer = lifecycle("job-b", ["queued", "preparing", "cancelled"]);
+  const reconstruction = reconstructRenderJournal([...older, ...newer]);
+  const index = buildMostRecentJobIndex(reconstruction, BOOT_A);
+
+  assert.equal(index.get(targetKey("probe", "youtube-16x9"))?.status, "cancelled");
+});
+
+test("buildMostRecentJobIndex excludes a caller-supplied live job id from becoming anyone's answer", () => {
+  const events = lifecycle("job-a", ["queued", "preparing", "failed"]);
+  const reconstruction = reconstructRenderJournal(events);
+  const index = buildMostRecentJobIndex(reconstruction, BOOT_A, new Set(["job-a"]));
+
+  assert.equal(index.has(targetKey("probe", "youtube-16x9")), false);
+});
+
+test("buildMostRecentJobIndex is independent per target: a busy sibling preset never displaces another's true answer", () => {
+  // youtube-16x9 has one old job; vertical-9x16 gets many more afterward.
+  const youtube = lifecycle("job-yt", ["queued", "preparing", "failed"]);
+  const vertical = Array.from({ length: 10 }, (_, i) =>
+    lifecycle(`job-v-${i}`, ["queued", "preparing", "completed"]).map((e) => ({
+      ...e,
+      presetId: "vertical-9x16",
+    })),
+  ).flat();
+  const reconstruction = reconstructRenderJournal([...youtube, ...vertical]);
+  const index = buildMostRecentJobIndex(reconstruction, BOOT_A);
+
+  assert.equal(index.get(targetKey("probe", "youtube-16x9"))?.status, "failed");
+  assert.equal(index.get(targetKey("probe", "vertical-9x16"))?.status, "completed");
 });
 
 /* ------------------------------------------------------------------ *

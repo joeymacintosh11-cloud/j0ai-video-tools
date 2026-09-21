@@ -188,3 +188,35 @@ test("completion remains authoritative when it wins after cancellation was reque
     code: "RENDER_NOT_CANCELLABLE",
   });
 });
+
+test("a spawn/IPC error's stack trace reaches the live view but never the durable journal", async (t) => {
+  const worker = new Worker();
+  const m = await manager(t, () => worker);
+  const job = m.startRender("probe");
+
+  worker.emit("error", new Error("spawn failed catastrophically"));
+  worker.emit("close", -2, null);
+  worker.emit("exit", -2, null);
+  await tick();
+
+  const live = m.getJob(job.id);
+  assert.equal(live.status, "failed");
+  // The live view is allowed to carry a stack for on-screen debugging —
+  // this is the one surface RenderJobError's own `details` field exists for.
+  assert.ok(live.error?.details);
+
+  const { waitForRenderJournalIdle } = await import("../server/services/renderJournal.ts");
+  await waitForRenderJournalIdle();
+  const { readRenderJournal } = await import("../services/render/renderJournalLog.ts");
+  const read = readRenderJournal();
+  const failedEvent = read.events.find((event) => event.jobId === job.id && event.state === "failed");
+
+  assert.ok(failedEvent);
+  // Not "no details visible" — genuinely absent from the object, which is
+  // what a reconstruction from {code, message} guarantees and a partial
+  // redaction would not.
+  assert.deepEqual(
+    failedEvent.error && new Set(Object.keys(failedEvent.error)),
+    new Set(["code", "message"]),
+  );
+});
