@@ -80,7 +80,7 @@ const packageHeadline = (
   if (attention === 0 && counts.rendering > 0) {
     return `Rendering ${counts.rendering} of ${counts.selected}`;
   }
-  return `${attention} item${attention === 1 ? "" : "s"} need attention`;
+  return `${attention} item${attention === 1 ? " needs" : "s need"} attention`;
 };
 
 const PublishStatusBanner: React.FC<{
@@ -197,8 +197,14 @@ const PlatformCard: React.FC<{
   const { platform, state } = entry;
   const mark = STATE_MARK[state];
   const copyText = formatPlatformCopyForClipboard(platform);
-  const hasVideo = platform.renderStatus !== null && platform.renderStatus !== "missing";
-  const videoCurrent = platform.readiness === "ready" || platform.readiness === "stale";
+  // "queued"/"rendering"/"invalid" are not a file on disk yet — only
+  // "current" and "stale" mean a real, revealable export already exists.
+  const hasVideo = platform.renderStatus === "current" || platform.renderStatus === "stale";
+  // Strictly "current", not merely "some file exists": a stale export is a
+  // real file on disk (hasVideo, above) but must never read as "ready" here
+  // — that would contradict the card's own "Metadata changed"/stale note
+  // right next to it.
+  const videoCurrent = platform.readiness === "ready";
 
   const reveal = async () => {
     try {
