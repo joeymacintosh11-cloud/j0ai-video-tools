@@ -1,5 +1,5 @@
 import type { ExportFreshness, StaleReason } from "../video/exportFreshness.ts";
-import type { DeliveryStatus } from "../delivery/deliveryPaths.ts";
+import type { DeliveryReason, DeliveryStatus } from "../delivery/deliveryPaths.ts";
 import type { RenderPresetId } from "../video/renderPresets.ts";
 import {
   buildPlatformMetadata,
@@ -48,6 +48,17 @@ export type PackageExportEntry = {
   readonly intended: boolean;
   readonly delivery: {
     readonly status: DeliveryStatus;
+    /**
+     * Optional: every real caller (server/routes/contentPackage.ts) passes a
+     * TrackDetailView's own RenderOutputView[] straight through as this
+     * type, and that view's own `delivery` already carries `reason` and
+     * `deliveredAt` (src/domain/api/views.ts's DeliveryTargetStateView) — this
+     * was simply never declared here before there was a reason to read it.
+     * Optional rather than required so a caller that only ever had the
+     * narrower shape (a hand-built test fixture, say) still type-checks.
+     */
+    readonly reason?: DeliveryReason | null;
+    readonly deliveredAt?: string | null;
     readonly destinationRelativePath: string | null;
   };
 };
@@ -98,6 +109,10 @@ export type ContentPackagePlatformEntry = {
   /** Descriptive alias, e.g. "ghetto-geek-youtube.mp4" — never a real path. */
   readonly outputFilename: string;
   readonly deliveryStatus: DeliveryStatus;
+  /** Why deliveryStatus is not "delivered", when it isn't. Null once delivered, or when delivery is off. */
+  readonly deliveryReason: DeliveryReason | null;
+  /** When the currently-delivered copy went out, if it ever has. */
+  readonly deliveredAt: string | null;
   readonly destinationRelativePath: string | null;
   /** YouTube only; null for caption-only platforms or a blocked track. */
   readonly title: string | null;
@@ -286,6 +301,8 @@ export const deriveContentPackage = (
         staleReasons: exportEntry?.staleReasons ?? [],
         outputFilename: platformFilename(input.slug, profile.id),
         deliveryStatus: exportEntry?.delivery.status ?? "not_configured",
+        deliveryReason: exportEntry?.delivery.reason ?? null,
+        deliveredAt: exportEntry?.delivery.deliveredAt ?? null,
         destinationRelativePath:
           exportEntry?.delivery.destinationRelativePath ?? null,
         title: metadata?.title ?? null,
