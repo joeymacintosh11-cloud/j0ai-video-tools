@@ -3,6 +3,8 @@ import {
   deriveContentPackage,
   formatPackageCopyForClipboard,
   formatPlatformCopyForClipboard,
+  type ContentPackageInput,
+  type ContentPackageMode,
   type ContentPackageStatus,
 } from "../../src/domain/content/contentPackage.ts";
 import {
@@ -10,6 +12,8 @@ import {
   type PublishPackageStatus,
   type PublishPlatformEntry,
 } from "../../src/domain/content/publishReadiness.ts";
+import { initialCustomPlatforms } from "../../src/domain/content/packageScope.ts";
+import { PLATFORM_LIST, type PlatformId } from "../../src/domain/content/platformProfiles.ts";
 import { STALE_REASON_LABELS } from "../../src/domain/video/exportFreshness.ts";
 import { canonicalPresetOrder } from "../../src/domain/video/renderPresets.ts";
 import type {
@@ -20,6 +24,9 @@ import { copyToClipboard } from "../api/clipboard.ts";
 import { revealTrackOutput } from "../api/client.ts";
 import { DeliverPanel } from "./DeliverPanel.tsx";
 import { ExportMissingPanel } from "./ExportMissingPanel.tsx";
+import { PlatformPicker } from "./PlatformPicker.tsx";
+
+const ALL_PLATFORM_IDS: readonly PlatformId[] = PLATFORM_LIST.map((platform) => platform.id);
 
 /**
  * "For this beat: which platform assets are ready, which need attention, and
@@ -325,26 +332,66 @@ export const ContentPackagePanel: React.FC<{
   readonly onChanged: () => void;
   readonly onBatchStarted: (batchId: string) => void;
 }> = ({ track, globalTemplates, templatesProblem, onChanged, onBatchStarted }) => {
-  const [mode, setMode] = useState<"intent" | "full">("intent");
+  // "mode" is view/workflow scope only — which platforms the Content Package
+  // below inspects right now. It never writes the track's own persisted
+  // export intent (that only ever changes through the metadata form's own
+  // "save intent" path); switching Intent → Full → Custom is pure client
+  // state, so it can never render, deliver, or mutate anything by itself.
+  const [uiMode, setUiMode] = useState<ContentPackageMode>("intent");
+  // null = Custom has not been touched this session yet, so its first
+  // checked set is still owed an initialization (see switchToCustom below).
+  // Once set, it survives switching to Intent/Full and back, so a selection
+  // already made is never silently discarded.
+  const [customPlatforms, setCustomPlatforms] = useState<readonly PlatformId[] | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
+
+  const packageInput: ContentPackageInput = useMemo(
+    () => ({
+      slug: track.slug,
+      title: track.title,
+      validationOk: track.validation.ok,
+      metadata: track.metadata,
+      contentMetadataOverrides: track.metadata?.contentMetadataOverrides,
+      exports: track.exports,
+    }),
+    [track],
+  );
+
+  // Read via the real "intent" derivation rather than re-reading
+  // track.exports' own `intended` flags here, so Custom's Intent-seeded
+  // selection can never drift from what Intent mode itself would show —
+  // one selection rule, not two.
+  const intentPlatformIds = useMemo(
+    () =>
+      deriveContentPackage(packageInput, { mode: "intent", globalTemplates, templatesProblem })
+        .platforms.filter((platform) => platform.selected)
+        .map((platform) => platform.platformId),
+    [packageInput, globalTemplates, templatesProblem],
+  );
+
+  const effectiveCustomPlatforms = customPlatforms ?? intentPlatformIds;
 
   const pkg = useMemo(
     () =>
       deriveContentPackage(
-        {
-          slug: track.slug,
-          title: track.title,
-          validationOk: track.validation.ok,
-          metadata: track.metadata,
-          contentMetadataOverrides: track.metadata?.contentMetadataOverrides,
-          exports: track.exports,
-        },
-        { mode, globalTemplates, templatesProblem },
+        packageInput,
+        uiMode === "custom"
+          ? { platforms: effectiveCustomPlatforms, globalTemplates, templatesProblem }
+          : { mode: uiMode, globalTemplates, templatesProblem },
       ),
-    [track, mode, globalTemplates, templatesProblem],
+    [packageInput, uiMode, effectiveCustomPlatforms, globalTemplates, templatesProblem],
   );
 
   const readiness = useMemo(() => derivePublishReadiness(pkg), [pkg]);
+
+  const switchToCustom = () => {
+    if (customPlatforms === null) {
+      setCustomPlatforms(
+        initialCustomPlatforms(uiMode === "full" ? "full" : "intent", intentPlatformIds, ALL_PLATFORM_IDS),
+      );
+    }
+    setUiMode("custom");
+  };
 
   const selectedPresetIds = useMemo(
     () =>
@@ -390,23 +437,42 @@ export const ContentPackagePanel: React.FC<{
           {readiness.counts.needsDelivery > 0 ? ` · ${readiness.counts.needsDelivery} needs delivery` : ""}
         </span>
 
-        <div className="contentpackage__modes">
+        <div className="contentpackage__modes" role="group" aria-label="Package scope">
           <button
             type="button"
-            className={`button button--quiet${mode === "intent" ? " button--active" : ""}`}
-            onClick={() => setMode("intent")}
+            className={`button button--quiet${uiMode === "intent" ? " button--active" : ""}`}
+            aria-pressed={uiMode === "intent"}
+            onClick={() => setUiMode("intent")}
           >
             Intended formats
           </button>
           <button
             type="button"
-            className={`button button--quiet${mode === "full" ? " button--active" : ""}`}
-            onClick={() => setMode("full")}
+            className={`button button--quiet${uiMode === "full" ? " button--active" : ""}`}
+            aria-pressed={uiMode === "full"}
+            onClick={() => setUiMode("full")}
           >
-            Full package (3)
+            Full package ({ALL_PLATFORM_IDS.length})
+          </button>
+          <button
+            type="button"
+            className={`button button--quiet${uiMode === "custom" ? " button--active" : ""}`}
+            aria-pressed={uiMode === "custom"}
+            onClick={switchToCustom}
+          >
+            Custom
           </button>
         </div>
       </div>
+
+      {uiMode === "custom" ? (
+        <PlatformPicker
+          selected={effectiveCustomPlatforms}
+          onChange={setCustomPlatforms}
+          label="Custom platforms"
+          className="contentpackage__platformpicker"
+        />
+      ) : null}
 
       <ul className="publishcard__list">
         {readiness.platforms.map((entry) => (
