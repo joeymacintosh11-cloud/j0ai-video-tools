@@ -57,14 +57,23 @@ body {
 .app {
   position: relative;
   display: grid;
-  /* header · toolbar · body. A queue drawer adds a fourth row when present. */
-  grid-template-rows: auto auto 1fr;
+  /* header · toolbar · selection toolbar · body. Both toolbar rows are
+     always in the DOM (the selection one just shows little when nothing is
+     ticked) — four explicit tracks for four children, so body always gets
+     the 1fr track. Three tracks for four children (the previous rule) left
+     the selection toolbar landing on the 1fr track instead by grid
+     auto-placement, which only stayed invisible while body's own content
+     happened to be tall enough to look full anyway; a shorter body (the
+     Batch Content Package panel) exposed it as a large empty gap between
+     the toolbars and the actual content. A queue drawer adds a fifth row
+     when present. */
+  grid-template-rows: auto auto auto 1fr;
   height: 100vh;
   isolation: isolate;
 }
 
 .app--queue {
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr auto;
 }
 
 /* A faint vignette wash (olive top-left, deep red bottom-right) so the app
