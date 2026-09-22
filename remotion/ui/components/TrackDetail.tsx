@@ -104,7 +104,7 @@ export const TrackDetail: React.FC<{
         </div>
       </header>
 
-      <section className="section">
+      <section className="section" id="track-info">
         <h3 className="section__title">Track info</h3>
         <MetadataForm
           track={track}
@@ -146,31 +146,12 @@ export const TrackDetail: React.FC<{
         />
       </section>
 
+      {/* The primary workflow: "is this track ready to publish, and what do
+          I do next?" Everything below Render is technical detail this
+          section's own copy/actions/links already reach when needed —
+          moved into Advanced rather than duplicated inline. */}
       <section className="section">
-        <h3 className="section__title">Exports</h3>
-        <p className="exports__intent">
-          <span className="exports__intentlabel">Intended</span>
-          {intendedLabels === "" ? "—" : intendedLabels}
-          {track.exportPresets === null ? (
-            <span className="muted">
-              {" "}
-              — not declared, so every format is assumed
-            </span>
-          ) : null}
-        </p>
-        <ExportStatus exports={track.exports} />
-        <ExportMissingPanel
-          label="Export missing"
-          tracks={[track.slug]}
-          formats={null}
-          disabled={!track.validation.ok}
-          onQueued={onBatchStarted}
-          onChanged={onChanged}
-        />
-      </section>
-
-      <section className="section">
-        <h3 className="section__title">Content package</h3>
+        <h3 className="section__title">Content Package</h3>
         <ContentPackagePanel
           track={track}
           globalTemplates={contentMetadataSettings?.templates ?? null}
@@ -179,80 +160,6 @@ export const TrackDetail: React.FC<{
           onBatchStarted={onBatchStarted}
         />
       </section>
-
-      {/* Delivery is its own section, below exports: a copy at the
-          destination is downstream of a finished export, never a substitute
-          for one. */}
-      {configuredDestination ? (
-        <section className="section">
-          <h3 className="section__title">Delivery</h3>
-          <p className="exports__intent">
-            <span className="exports__intentlabel">Folder</span>
-            {deliveryFolderFor(track.slug, track.deliveryFolder)}
-            {track.deliveryFolder === null ? (
-              <span className="muted"> — from the slug; set one in Track info</span>
-            ) : null}
-          </p>
-          <DeliveryStatus exports={track.exports} />
-
-          {/* What the folder says about itself, which is downstream of the
-              deliveries above and can lag behind them. */}
-          <p className="exports__intent">
-            <span className="exports__intentlabel">Release bundle</span>
-            <ReleaseBundleBadge status={track.releaseBundle} />
-            <span className="muted">
-              {track.releaseBundle.freshness === "not_configured"
-                ? ""
-                : `${track.releaseBundle.delivered} delivered · ` +
-                  `${track.releaseBundle.outdated} outdated · ` +
-                  `${track.releaseBundle.missing} missing`}
-            </span>
-          </p>
-
-          {/* When this last went out, which the marks above cannot say: they
-              describe the destination's current contents, not its past. */}
-          <TrackDeliveryHistory slug={track.slug} />
-
-          {/* Whether the destination still holds what these records say it
-              should — a filesystem fact the marks above never check, since
-              they describe recorded state, not what a sweep actually finds. */}
-          <p className="exports__intent">
-            <span className="exports__intentlabel">Destination health</span>
-          </p>
-          <DestinationHealthPanel label="Check this track" tracks={[track.slug]} />
-          <DestinationFixPlanPanel tracks={[track.slug]} onApplied={onChanged} />
-
-          <div className="form__actions">
-            <DeliverPanel
-              label="Deliver current exports"
-              tracks={[track.slug]}
-              disabled={!track.validation.ok}
-              onChanged={onChanged}
-            />
-            <ReleaseBundlePanel
-              label={
-                track.releaseBundle.freshness === "missing"
-                  ? "Generate release bundle"
-                  : "Update release bundle"
-              }
-              tracks={[track.slug]}
-              disabled={!track.validation.ok}
-              onChanged={onChanged}
-            />
-            <button
-              className="button button--quiet"
-              type="button"
-              onClick={() =>
-                void revealDelivery(track.slug, formats[0]).catch(
-                  () => undefined,
-                )
-              }
-            >
-              Reveal destination
-            </button>
-          </div>
-        </section>
-      ) : null}
 
       <section className="section">
         <h3 className="section__title">Render</h3>
@@ -264,20 +171,129 @@ export const TrackDetail: React.FC<{
         />
       </section>
 
-      {/* What the durable render journal remembers about this track, kept
-          separate from the live state above: that section is what is
-          rendering right now; this one is history and survives a server
-          restart. Neither is derived from the other, and neither is derived
-          from — or implies anything about — current package readiness. */}
-      <section className="section">
-        <h3 className="section__title">Recent render</h3>
-        <TrackRecentRenderHistory slug={track.slug} />
-      </section>
+      {/* Everything below is technical detail the Content Package workflow
+          above already surfaces the operator-relevant parts of (readiness,
+          delivery attention, primary actions) — kept here, not removed, for
+          whoever wants the full per-format table, the destination's raw
+          health scan, or the durable journal's own history. Native
+          <details>, exactly like ContentMetadataOverridesEditor's own
+          advanced section, so this needs no extra script for keyboard or
+          screen-reader support. */}
+      <details className="section section--advanced">
+        <summary className="section__title">Advanced / diagnostics</summary>
 
-      <section className="section">
-        <h3 className="section__title">Validation</h3>
-        <ValidationNotes validation={track.validation} />
-      </section>
+        <section className="section">
+          <h3 className="section__title">Exports</h3>
+          <p className="exports__intent">
+            <span className="exports__intentlabel">Intended</span>
+            {intendedLabels === "" ? "—" : intendedLabels}
+            {track.exportPresets === null ? (
+              <span className="muted">
+                {" "}
+                — not declared, so every format is assumed
+              </span>
+            ) : null}
+          </p>
+          <ExportStatus exports={track.exports} />
+          <ExportMissingPanel
+            label="Export missing"
+            tracks={[track.slug]}
+            formats={null}
+            disabled={!track.validation.ok}
+            onQueued={onBatchStarted}
+            onChanged={onChanged}
+          />
+        </section>
+
+        {/* Delivery is its own section, below exports: a copy at the
+            destination is downstream of a finished export, never a
+            substitute for one. */}
+        {configuredDestination ? (
+          <section className="section">
+            <h3 className="section__title">Delivery</h3>
+            <p className="exports__intent">
+              <span className="exports__intentlabel">Folder</span>
+              {deliveryFolderFor(track.slug, track.deliveryFolder)}
+              {track.deliveryFolder === null ? (
+                <span className="muted"> — from the slug; set one in Track info</span>
+              ) : null}
+            </p>
+            <DeliveryStatus exports={track.exports} />
+
+            {/* What the folder says about itself, which is downstream of the
+                deliveries above and can lag behind them. */}
+            <p className="exports__intent">
+              <span className="exports__intentlabel">Release bundle</span>
+              <ReleaseBundleBadge status={track.releaseBundle} />
+              <span className="muted">
+                {track.releaseBundle.freshness === "not_configured"
+                  ? ""
+                  : `${track.releaseBundle.delivered} delivered · ` +
+                    `${track.releaseBundle.outdated} outdated · ` +
+                    `${track.releaseBundle.missing} missing`}
+              </span>
+            </p>
+
+            {/* When this last went out, which the marks above cannot say: they
+                describe the destination's current contents, not its past. */}
+            <TrackDeliveryHistory slug={track.slug} />
+
+            {/* Whether the destination still holds what these records say it
+                should — a filesystem fact the marks above never check, since
+                they describe recorded state, not what a sweep actually finds. */}
+            <p className="exports__intent">
+              <span className="exports__intentlabel">Destination health</span>
+            </p>
+            <DestinationHealthPanel label="Check this track" tracks={[track.slug]} />
+            <DestinationFixPlanPanel tracks={[track.slug]} onApplied={onChanged} />
+
+            <div className="form__actions">
+              <DeliverPanel
+                label="Deliver current exports"
+                tracks={[track.slug]}
+                disabled={!track.validation.ok}
+                onChanged={onChanged}
+              />
+              <ReleaseBundlePanel
+                label={
+                  track.releaseBundle.freshness === "missing"
+                    ? "Generate release bundle"
+                    : "Update release bundle"
+                }
+                tracks={[track.slug]}
+                disabled={!track.validation.ok}
+                onChanged={onChanged}
+              />
+              <button
+                className="button button--quiet"
+                type="button"
+                onClick={() =>
+                  void revealDelivery(track.slug, formats[0]).catch(
+                    () => undefined,
+                  )
+                }
+              >
+                Reveal destination
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        {/* What the durable render journal remembers about this track, kept
+            separate from live/current state: this is history and survives a
+            server restart. Neither is derived from the other, and neither
+            is derived from — or implies anything about — current package
+            readiness. */}
+        <section className="section">
+          <h3 className="section__title">Recent render</h3>
+          <TrackRecentRenderHistory slug={track.slug} />
+        </section>
+
+        <section className="section">
+          <h3 className="section__title">Validation</h3>
+          <ValidationNotes validation={track.validation} />
+        </section>
+      </details>
     </article>
   );
 };

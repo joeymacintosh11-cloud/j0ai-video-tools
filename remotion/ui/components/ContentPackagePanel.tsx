@@ -1,31 +1,44 @@
 import { useMemo, useState } from "react";
 import {
   deriveContentPackage,
-  type ContentPackagePlatformEntry,
+  formatPackageCopyForClipboard,
+  formatPlatformCopyForClipboard,
   type ContentPackageStatus,
 } from "../../src/domain/content/contentPackage.ts";
+import {
+  derivePublishReadiness,
+  type PublishPackageStatus,
+  type PublishPlatformEntry,
+} from "../../src/domain/content/publishReadiness.ts";
 import { STALE_REASON_LABELS } from "../../src/domain/video/exportFreshness.ts";
 import { canonicalPresetOrder } from "../../src/domain/video/renderPresets.ts";
 import type {
   PartialMetadataTemplates,
   TrackDetailView,
 } from "../../src/domain/api/views.ts";
+import { copyToClipboard } from "../api/clipboard.ts";
+import { revealTrackOutput } from "../api/client.ts";
 import { DeliverPanel } from "./DeliverPanel.tsx";
 import { ExportMissingPanel } from "./ExportMissingPanel.tsx";
 
 /**
- * "For this beat, what content do I need for YouTube, Reels/TikTok and
- * Instagram, what is ready, what is stale or missing, and how do I generate
- * the complete package?"
+ * "For this beat: which platform assets are ready, which need attention, and
+ * what should I do next?" — the Ready-to-Publish workflow.
  *
- * Entirely a view: `deriveContentPackage` is pure and takes exactly the
- * `exports` this track's detail view already carries (coverage, freshness,
- * queue state and delivery state), so this panel needs no fetch of its own
- * and can never disagree with the Exports/Delivery sections above it — it is
- * the same facts, read differently. Building and delivering are not
- * reimplemented here: they hand off to the same ExportMissingPanel and
- * DeliverPanel the Exports/Delivery sections already use, scoped to this
- * package's own platforms.
+ * Entirely a view over state the app already computes: `deriveContentPackage`
+ * (export coverage, freshness, queue state, delivery state) and
+ * `derivePublishReadiness` (whether a current render, plus delivery when a
+ * destination is configured, means a platform is actually done) are both
+ * pure functions of this track's own detail view — no extra fetch, no new
+ * readiness authority. Building and delivering are not reimplemented here:
+ * "Package actions" below hands off to the same ExportMissingPanel and
+ * DeliverPanel the rest of the app already uses, scoped to this package's
+ * own selected platforms.
+ *
+ * "Ready to publish" never means this tool published anything — there is no
+ * social API integration in this product. It means the operator has
+ * everything they need to publish manually: a current video and its
+ * resolved copy, delivered wherever a destination is configured for it.
  */
 
 const STATUS_LABELS: Record<ContentPackageStatus, string> = {
@@ -36,109 +49,267 @@ const STATUS_LABELS: Record<ContentPackageStatus, string> = {
   not_configured: "No platforms selected",
 };
 
-const READINESS_MARK: Record<
-  ContentPackagePlatformEntry["readiness"],
-  { glyph: string; note: string }
-> = {
-  ready: { glyph: "✓", note: "Ready" },
-  missing: { glyph: "—", note: "Missing" },
-  stale: { glyph: "!", note: "Stale" },
-  rendering: { glyph: "●", note: "Rendering" },
-  blocked: { glyph: "!", note: "Blocked" },
-  not_selected: { glyph: "◦", note: "Not part of this package" },
-};
-
 export const PackageStatusBadge: React.FC<{
   readonly status: ContentPackageStatus;
 }> = ({ status }) => (
   <span className={`pkgbadge pkgbadge--${status}`}>{STATUS_LABELS[status]}</span>
 );
 
-const PlatformRow: React.FC<{ readonly platform: ContentPackagePlatformEntry }> = ({
-  platform,
-}) => {
-  const [expanded, setExpanded] = useState(false);
-  const mark = READINESS_MARK[platform.readiness];
-  const hasMetadata =
-    platform.title !== null ||
-    platform.description !== null ||
-    platform.caption !== null ||
-    (platform.hashtags?.length ?? 0) > 0;
+/* ------------------------------------------------------------------ *
+ * The package-level headline ("READY TO PUBLISH", "2 items need attention", ...)
+ * ------------------------------------------------------------------ */
+
+const PUBLISH_HEADLINE: Record<PublishPackageStatus, string> = {
+  ready_to_publish: "Ready to publish",
+  needs_delivery: "Needs delivery",
+  incomplete: "Needs attention",
+  stale: "Needs attention",
+  blocked: "Blocked",
+  not_configured: "No platforms selected",
+};
+
+const packageHeadline = (
+  status: PublishPackageStatus,
+  counts: { readonly missing: number; readonly stale: number; readonly needsDelivery: number; readonly rendering: number; readonly selected: number },
+): string => {
+  if (status === "not_configured" || status === "blocked" || status === "ready_to_publish") {
+    return PUBLISH_HEADLINE[status];
+  }
+
+  const attention = counts.missing + counts.stale + counts.needsDelivery;
+  if (attention === 0 && counts.rendering > 0) {
+    return `Rendering ${counts.rendering} of ${counts.selected}`;
+  }
+  return `${attention} item${attention === 1 ? "" : "s"} need attention`;
+};
+
+const PublishStatusBanner: React.FC<{
+  readonly status: PublishPackageStatus;
+  readonly counts: { readonly missing: number; readonly stale: number; readonly needsDelivery: number; readonly rendering: number; readonly selected: number; readonly ready: number };
+}> = ({ status, counts }) => (
+  <div className={`publishbanner publishbanner--${status}`} role="status">
+    <span className="publishbanner__headline">{packageHeadline(status, counts)}</span>
+    {status !== "not_configured" ? (
+      <span className="publishbanner__detail">
+        {counts.selected} platform{counts.selected === 1 ? "" : "s"} selected
+        {status === "ready_to_publish"
+          ? " · all metadata resolved"
+          : ` · ${counts.ready}/${counts.selected} ready`}
+      </span>
+    ) : null}
+  </div>
+);
+
+/* ------------------------------------------------------------------ *
+ * Copy actions
+ * ------------------------------------------------------------------ */
+
+type CopyState = "idle" | "copied" | "failed";
+
+/**
+ * One clipboard button. Never claims success before
+ * navigator.clipboard.writeText's own promise resolves, and says so plainly
+ * when it does not — no fake success toast (§8 of the milestone brief).
+ */
+const CopyButton: React.FC<{
+  readonly label: string;
+  readonly text: string;
+  readonly className?: string;
+}> = ({ label, text, className }) => {
+  const [state, setState] = useState<CopyState>("idle");
+
+  const copy = async () => {
+    const ok = await copyToClipboard(text);
+    setState(ok ? "copied" : "failed");
+    setTimeout(() => setState("idle"), 2000);
+  };
 
   return (
-    <li
-      className={`contentpackage__row contentpackage__row--${platform.readiness}${platform.selected ? "" : " contentpackage__row--unselected"}`}
+    <button
+      type="button"
+      className={className ?? "button button--quiet"}
+      onClick={() => void copy()}
+      aria-label={label}
     >
-      <div className="contentpackage__head">
-        <span className="contentpackage__mark" aria-hidden="true">
+      {state === "copied" ? "Copied" : state === "failed" ? "Couldn't copy — try again" : label}
+    </button>
+  );
+};
+
+/* ------------------------------------------------------------------ *
+ * One platform's card
+ * ------------------------------------------------------------------ */
+
+const STATE_MARK: Record<PublishPlatformEntry["state"], { glyph: string; note: string }> = {
+  ready: { glyph: "✓", note: "Ready" },
+  needs_delivery: { glyph: "!", note: "Needs delivery" },
+  missing: { glyph: "—", note: "Missing" },
+  stale: { glyph: "!", note: "Stale" },
+  rendering: { glyph: "●", note: "Rendering" },
+  blocked: { glyph: "!", note: "Blocked" },
+  not_selected: { glyph: "◦", note: "Not selected" },
+};
+
+/**
+ * One resolved field, with its plain character count — advisory only, never
+ * a hard limit (§31/§32 of the milestone brief: this repository has no
+ * documented per-platform character guideline to reuse, so none is
+ * invented or presented as a real limit; the count itself is just a fact).
+ */
+const CopyField: React.FC<{
+  readonly label: string;
+  readonly value: string;
+  readonly multiline?: boolean;
+}> = ({ label, value, multiline = false }) => (
+  <div className="publishcard__field">
+    <span className="exports__intentlabel">
+      {label}
+      <span className="publishcard__charcount">
+        {value.length} character{value.length === 1 ? "" : "s"}
+      </span>
+    </span>
+    {multiline ? (
+      <pre className="contentpackage__description">{value}</pre>
+    ) : (
+      <p>{value}</p>
+    )}
+  </div>
+);
+
+/** A checklist line: a small tick/mark plus a label, never color alone (§41: status is not communicated by color only). */
+const CheckRow: React.FC<{
+  readonly ok: boolean | null;
+  readonly label: string;
+}> = ({ ok, label }) => (
+  <li className={`publishcard__check publishcard__check--${ok === null ? "na" : ok ? "yes" : "no"}`}>
+    <span aria-hidden="true" className="publishcard__checkmark">
+      {ok === null ? "–" : ok ? "✓" : "✗"}
+    </span>
+    <span>{label}</span>
+  </li>
+);
+
+const PlatformCard: React.FC<{
+  readonly entry: PublishPlatformEntry;
+  readonly slug: string;
+  readonly onRevealed: (error: string | null) => void;
+}> = ({ entry, slug, onRevealed }) => {
+  const { platform, state } = entry;
+  const mark = STATE_MARK[state];
+  const copyText = formatPlatformCopyForClipboard(platform);
+  const hasVideo = platform.renderStatus !== null && platform.renderStatus !== "missing";
+  const videoCurrent = platform.readiness === "ready" || platform.readiness === "stale";
+
+  const reveal = async () => {
+    try {
+      await revealTrackOutput(slug, platform.presetId);
+      onRevealed(null);
+    } catch (cause) {
+      onRevealed(cause instanceof Error ? cause.message : "Could not reveal the file.");
+    }
+  };
+
+  if (state === "not_selected") {
+    return (
+      <li className="publishcard publishcard--unselected">
+        <div className="publishcard__head">
+          <span className="publishcard__label">{platform.label}</span>
+          <span className="publishcard__note muted">Not selected</span>
+        </div>
+      </li>
+    );
+  }
+
+  return (
+    <li className={`publishcard publishcard--${state}`}>
+      <div className="publishcard__head">
+        <span className="publishcard__mark" aria-hidden="true">
           {mark.glyph}
         </span>
-        <span className="contentpackage__label">{platform.label}</span>
-        <span className="contentpackage__note">
-          {platform.readiness === "stale" && platform.staleReasons.length > 0
-            ? platform.staleReasons
-                .map((reason) => STALE_REASON_LABELS[reason])
-                .join("; ")
-            : mark.note}
+        <span className="publishcard__label">{platform.label}</span>
+        <span className="publishcard__note">
+          {state === "stale" && platform.staleReasons.length > 0
+            ? platform.staleReasons.map((reason) => STALE_REASON_LABELS[reason]).join("; ")
+            : state === "needs_delivery" && entry.deliveryNote !== null
+              ? entry.deliveryNote
+              : mark.note}
         </span>
-        {hasMetadata ? (
-          <button
-            type="button"
-            className="button button--quiet contentpackage__toggle"
-            onClick={() => setExpanded((value) => !value)}
-          >
-            {expanded ? "Hide metadata" : "Preview metadata"}
-          </button>
-        ) : null}
       </div>
 
-      <div className="contentpackage__filename">{platform.outputFilename}</div>
+      <ul className="publishcard__checklist">
+        <CheckRow ok={videoCurrent} label="Video ready" />
+        <CheckRow
+          ok={platform.title !== null || platform.caption !== null}
+          label="Metadata ready"
+        />
+        <CheckRow
+          ok={entry.deliveryRequired ? entry.state !== "needs_delivery" : null}
+          label={entry.deliveryRequired ? "Delivered" : "Delivery not configured"}
+        />
+      </ul>
 
       {platform.blockers.length > 0 ? (
-        <p className="note note--error contentpackage__blocker">
-          {platform.blockers.join(" ")}
-        </p>
+        <p className="note note--error publishcard__blocker">{platform.blockers.join(" ")}</p>
       ) : null}
 
-      {expanded && hasMetadata ? (
-        <div className="contentpackage__metadata">
+      {copyText !== "" ? (
+        <details className="publishcard__preview">
+          <summary>Preview copy</summary>
           {platform.title !== null ? (
-            <div>
-              <span className="exports__intentlabel">Title</span>
-              <p>{platform.title}</p>
-            </div>
+            <CopyField label="Title" value={platform.title} />
           ) : null}
           {platform.description !== null ? (
-            <div>
-              <span className="exports__intentlabel">Description</span>
-              <pre className="contentpackage__description">
-                {platform.description}
-              </pre>
-            </div>
+            <CopyField label="Description" value={platform.description} multiline />
           ) : null}
           {platform.keywords !== null && platform.keywords.length > 0 ? (
-            <div>
-              <span className="exports__intentlabel">Keywords</span>
-              <p>{platform.keywords.join(", ")}</p>
-            </div>
+            <CopyField label="Keywords" value={platform.keywords.join(", ")} />
           ) : null}
           {platform.caption !== null ? (
-            <div>
-              <span className="exports__intentlabel">Caption</span>
-              <p>{platform.caption}</p>
-            </div>
+            <CopyField label="Caption" value={platform.caption} multiline />
           ) : null}
           {platform.hashtags !== null && platform.hashtags.length > 0 ? (
-            <div>
-              <span className="exports__intentlabel">Hashtags</span>
-              <p>{platform.hashtags.join(" ")}</p>
-            </div>
+            <CopyField label="Hashtags" value={platform.hashtags.join(" ")} />
           ) : null}
+        </details>
+      ) : null}
+
+      {entry.primaryAction !== null && state !== "rendering" ? (
+        <p className="publishcard__hint muted">Next: {entry.primaryAction.label} (see Package actions below)</p>
+      ) : null}
+
+      {copyText !== "" ? (
+        <div className="publishcard__actions">
+          <CopyButton label={`Copy ${platform.label} copy`} text={copyText} />
+          {hasVideo ? (
+            <button
+              type="button"
+              className="button button--quiet"
+              onClick={() => void reveal()}
+              aria-label={`Reveal ${platform.label} video file`}
+            >
+              Reveal video
+            </button>
+          ) : null}
+        </div>
+      ) : hasVideo ? (
+        <div className="publishcard__actions">
+          <button
+            type="button"
+            className="button button--quiet"
+            onClick={() => void reveal()}
+            aria-label={`Reveal ${platform.label} video file`}
+          >
+            Reveal video
+          </button>
         </div>
       ) : null}
     </li>
   );
 };
+
+/* ------------------------------------------------------------------ *
+ * The panel
+ * ------------------------------------------------------------------ */
 
 export const ContentPackagePanel: React.FC<{
   readonly track: TrackDetailView;
@@ -149,6 +320,7 @@ export const ContentPackagePanel: React.FC<{
   readonly onBatchStarted: (batchId: string) => void;
 }> = ({ track, globalTemplates, templatesProblem, onChanged, onBatchStarted }) => {
   const [mode, setMode] = useState<"intent" | "full">("intent");
+  const [revealError, setRevealError] = useState<string | null>(null);
 
   const pkg = useMemo(
     () =>
@@ -166,6 +338,8 @@ export const ContentPackagePanel: React.FC<{
     [track, mode, globalTemplates, templatesProblem],
   );
 
+  const readiness = useMemo(() => derivePublishReadiness(pkg), [pkg]);
+
   const selectedPresetIds = useMemo(
     () =>
       canonicalPresetOrder(
@@ -178,11 +352,28 @@ export const ContentPackagePanel: React.FC<{
     (platform) => platform.deliveryStatus !== "not_configured",
   );
 
+  const editCopy = () => {
+    document.getElementById("track-info")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const allCopyText = formatPackageCopyForClipboard(pkg.platforms);
+
   return (
     <div className="contentpackage">
       {pkg.templatesProblem ? (
-        <p className="note note--warning" role="status"><span className="note__message">{pkg.templatesProblem}</span></p>
+        <p className="note note--warning" role="status">
+          <span className="note__message">{pkg.templatesProblem}</span>
+        </p>
       ) : null}
+
+      {revealError ? (
+        <p className="note note--error" role="alert">
+          <span className="note__message">{revealError}</span>
+        </p>
+      ) : null}
+
+      <PublishStatusBanner status={readiness.status} counts={readiness.counts} />
+
       <div className="contentpackage__summary">
         <PackageStatusBadge status={pkg.packageStatus} />
         <span className="exportmissing__counts">
@@ -190,6 +381,7 @@ export const ContentPackagePanel: React.FC<{
           {pkg.counts.missing > 0 ? ` · ${pkg.counts.missing} missing` : ""}
           {pkg.counts.stale > 0 ? ` · ${pkg.counts.stale} stale` : ""}
           {pkg.counts.rendering > 0 ? ` · ${pkg.counts.rendering} rendering` : ""}
+          {readiness.counts.needsDelivery > 0 ? ` · ${readiness.counts.needsDelivery} needs delivery` : ""}
         </span>
 
         <div className="contentpackage__modes">
@@ -210,30 +402,51 @@ export const ContentPackagePanel: React.FC<{
         </div>
       </div>
 
-      <ul className="contentpackage__list">
-        {pkg.platforms.map((platform) => (
-          <PlatformRow key={platform.platformId} platform={platform} />
+      <ul className="publishcard__list">
+        {readiness.platforms.map((entry) => (
+          <PlatformCard
+            key={entry.platformId}
+            entry={entry}
+            slug={track.slug}
+            onRevealed={setRevealError}
+          />
         ))}
       </ul>
 
-      <ExportMissingPanel
-        label="Build package"
-        tracks={[track.slug]}
-        formats={selectedPresetIds}
-        disabled={!track.validation.ok || selectedPresetIds.length === 0}
-        onQueued={onBatchStarted}
-        onChanged={onChanged}
-      />
-
-      {configuredDestination ? (
-        <DeliverPanel
-          label="Deliver package"
+      <div className="contentpackage__packageactions">
+        <p className="exports__intentlabel contentpackage__actionslabel">Package actions</p>
+        <ExportMissingPanel
+          label="Build package"
           tracks={[track.slug]}
-          presets={selectedPresetIds}
+          formats={selectedPresetIds}
           disabled={!track.validation.ok || selectedPresetIds.length === 0}
+          onQueued={onBatchStarted}
           onChanged={onChanged}
         />
-      ) : null}
+
+        {configuredDestination ? (
+          <DeliverPanel
+            label="Deliver package"
+            tracks={[track.slug]}
+            presets={selectedPresetIds}
+            disabled={!track.validation.ok || selectedPresetIds.length === 0}
+            onChanged={onChanged}
+          />
+        ) : null}
+
+        <div className="form__actions">
+          <button
+            type="button"
+            className="button button--quiet"
+            onClick={editCopy}
+          >
+            Edit copy
+          </button>
+          {allCopyText !== "" ? (
+            <CopyButton label="Copy all metadata" text={allCopyText} />
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 };
