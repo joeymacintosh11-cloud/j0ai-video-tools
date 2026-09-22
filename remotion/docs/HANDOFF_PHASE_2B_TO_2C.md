@@ -9718,3 +9718,517 @@ not started: a `--recent` summary flag on the `render-locks` CLI (§57.21),
 or investigating and fixing the pre-existing `destination-health.test.mts`
 regression-fixture concurrency flake noted in §60.18/§60.26 so it stops
 being a recurring "was that me?" question in future verification passes.
+
+## 61. Final V1 Product Polish + V1 Freeze (2026-09-22)
+
+Content Engine V1 is frozen as of this section. This milestone added no new
+subsystem — every prior milestone's own functionality is unchanged — and
+instead audited the whole product end to end for coherence, fixed what a
+real browser review actually found, and declares the baseline below the V1
+freeze point.
+
+### 61.1 What was audited
+
+Full repo state (git, 708/708 test baseline, clean lint/tsc/build) plus a
+line-by-line read of every UI component in the main workflow:
+`TrackDetail`, `ContentPackagePanel`, `PlatformPicker`, `RenderPanel`,
+`BatchContentPackagePanel`, `QueueDrawer`, `DestinationHealthPanel`,
+`RecentRenderHistory`, `DeliverPanel`, `ExportMissingPanel`,
+`ReleaseBundlePanel`, `ExportStatus`, `DeliveryStatus`,
+`ContentMetadataOverridesEditor`, `ErrorBanner`, `App.tsx`'s toolbar/header,
+and the shared `app.css` design tokens — followed by a real, driven browser
+review (Playwright + real Vite/API servers, no mocks) of the product at
+four widths, in several package states, and through the delivery and batch
+flows.
+
+### 61.2 UI polish changes
+
+- **The "Render" section moved into Advanced/diagnostics** (`TrackDetail.tsx`).
+  It previously sat directly below Content Package at the same visual
+  weight, offering a second, differently-scoped way to trigger a render
+  (the global toolbar's format selection, independent of the package's own
+  scope) — a duplicate primary action competing with Content Package's own
+  Build/Deliver, which already open the queue drawer with live progress.
+  Nothing was removed; `RenderPanel`'s manual per-format override, inline
+  progress and logs are unchanged, one click away inside Advanced.
+- **"Edit copy" now opens and scrolls straight to the metadata overrides
+  editor** (`ContentMetadataOverridesEditor.tsx`, `ContentPackagePanel.tsx`),
+  not just the Track info section it lives in — that editor is a collapsed
+  `<details>` by default, so previously "Edit copy" landed one extra click
+  away from the fields it names.
+- **A one-line hint under Intent/Full/Custom** (`ContentPackagePanel.tsx`,
+  `MODE_HINT`), mainly so a first-time switch to Custom doesn't read as "did
+  that just change what's saved?" — it explicitly says it doesn't.
+- **A real, pre-existing layout bug, found live and fixed**: `.app`'s CSS
+  grid declared three row tracks for what are actually four permanent
+  top-level children (header, toolbar, selection-toolbar, body), so grid
+  auto-placement put the small selection toolbar on the `1fr` track meant
+  for the body. Invisible whenever body's own content was tall (the
+  ordinary TrackDetail view), it produced a large, obviously wrong empty
+  gap the moment body's content was short — exposed by the Batch Content
+  Package panel's much shorter view. Fixed with a fourth (and, for the
+  queue-drawer variant, fifth) explicit row; verified full-height with no
+  gap in the batch panel, an active queue drawer, and the ordinary
+  single-track view, at 1440/1200/1000/800px.
+
+### 61.3 Terminology changes
+
+Status wording audited for synonym drift across Content Package,
+`BatchContentPackagePanel`, `RecentRenderHistory`, `DestinationHealthPanel`,
+`DeliverPanel`, and `ExportStatus`/`DeliveryStatus`. Fixed:
+
+- Batch's per-row action label and mode button now say **"Build"** /
+  **"Custom"**, matching single-track's own wording for the identical
+  underlying states (previously **"Render"** / **"Selected platforms"**).
+- `publishReadiness.ts`'s delivery-note fallback now matches
+  `DELIVERY_REASON_LABELS`'s own canonical wording, **"Not delivered yet"**
+  (previously a transposed variant, "Not yet delivered", for the identical
+  situation).
+- `ExportStatus.tsx`'s per-format notes now match every other status note's
+  capitalized, terse style: **"Not intended"** (previously lowercase, "not
+  an intended format") and **"File is empty — will be re-rendered"**
+  (previously lowercase-led).
+- `DeliverPanel.tsx`'s delivery-plan count now reads **"N need(s) a render
+  first"** instead of the vaguer, more technical "N not current" — directly
+  the kind of fix §7 of the brief asked for ("target not current" was one
+  of its own named bad examples).
+
+Everything already in the Advanced/diagnostics area (render history,
+destination health, delivery history's "receipt" vocabulary, release
+bundles) was left as-is: those are genuinely technical, secondary surfaces,
+and the brief is explicit that diagnostics may stay technical where useful.
+
+### 61.4 Toshi defaults
+
+No hard-coded Toshi data was added anywhere in `src/domain/**` — the
+architecture already keeps Toshi-facing defaults in the right place
+(`buildPlatformMetadata`'s built-in templates, `new-track.mts`'s scaffold,
+the app's own header strings) rather than in generic derivation logic, and
+that boundary was preserved rather than touched. The product title ("Toshi
+Visualizer"), platform labels (YouTube / Reels · TikTok / Instagram Square),
+and the built-in metadata templates (title/description/caption/hashtag
+patterns already seeded with `{artist}`/`{key}`/`{bpm}`/`toshi`/`type-beat`)
+were reviewed and read as already intentional and creator-oriented — no
+changes were made here. README's own "Content packages" section was updated
+(§61.41) to mention Custom mode and the Ready-to-Publish banner, both
+shipped since it was last written.
+
+### 61.5 Brand profile boundary
+
+No multi-brand system exists or was added. The lightweight place for
+product identity today is exactly what §61.4 lists: a handful of constants
+and the built-in metadata-template defaults, not a configurable profile
+object. A full brand-profile abstraction (configurable product name,
+platform set, default copy templates per brand) is explicitly V2 scope
+(§61.39) — not started, and no groundwork for it was added, per the
+brief's explicit instruction not to build a large abstraction for a
+single-brand V1.
+
+### 61.6 Status consistency
+
+Audited every status vocabulary against every other: Content Package's
+`PlatformReadiness`/`PublishPlatformState`, `RenderJobStatus`
+(queued/preparing/rendering/completed/failed/cancelled/interrupted, used
+identically by `RenderPanel`, `QueueDrawer`, and — for the journal's own
+terminal subset — `RecentRenderHistory`), `DeliveryStatus`, and
+`DestinationHealthStatus`. Found and fixed the drift documented in §61.3;
+everything else already used one vocabulary per concept across every
+surface that shows it (in particular, "Cancelled"/"Failed"/"Interrupted by
+server restart" already read identically in `RenderPanel`, `QueueDrawer`
+and `RecentRenderHistory` — no change needed there).
+
+### 61.7 Button hierarchy
+
+Content Package's banner + per-platform checklist already dominates the
+page visually (large, colored status banner, checkmarks, one deterministic
+"Next:" hint per card) — moving Render into Advanced (§61.2) removed the
+one place a technical action row competed with it at equal weight. The
+`ExportMissingPanel`-based "Build package / Re-export stale / Export
+missing + stale" three-button row inside Package actions was reviewed
+against §10's "avoid rows of equally strong buttons" concern and
+deliberately left alone: it is the same shared component, with the same
+three-button shape, used consistently in the global toolbar, the
+catalogue-selection bar, and the Advanced/Exports section — changing its
+shape here alone would have made it inconsistent everywhere else instead of
+clearer, for a genuinely low-severity nitpick (the row's *first* button is
+always the one that matches the current primary action; the others are
+already secondary in position, if not in styling weight).
+
+### 61.8 Empty states
+
+Reviewed all of them (§13 of the brief's own list): "No tracks yet",
+"No render history yet", "No problems reported.", "No destination
+configured yet" / "No export destination is configured", "No platforms
+selected", "Nothing to build — everything selected is already ready, in
+flight, or blocked" (batch), "Tick tracks to queue several at once...".
+All were already concise, actionable where there is an action to take, and
+none produced a raw empty box or "undefined" — no changes were needed.
+
+### 61.9 Loading states
+
+`RecentRenderHistory` and `DestinationHealthPanel`/`DeliverPanel`/
+`ExportMissingPanel`/`ReleaseBundlePanel` already show inline "Loading…" /
+"Checking…" / "Queueing…" / "Copying…" / "Writing…" states rather than
+flashing an empty result, and `RenderPanel` already re-attaches to a
+server-side in-flight job on mount rather than momentarily offering a
+"Render" button for a track that is already rendering (§ handoff, existing
+behavior, re-verified during this audit, not changed). No duplicate
+spinners or prematurely-enabled actions were found.
+
+### 61.10 Error states
+
+`ErrorBanner.tsx` (shared by every panel that can fail) already shows the
+friendly message first, with the domain code/HTTP status/path secondary,
+`role="alert"`, and never a raw stack trace — reviewed and left unchanged,
+it already matches §15 exactly. No new generic red banners were added
+anywhere.
+
+### 61.11 Copy UX
+
+`CopyButton` (`ContentPackagePanel.tsx`, previous milestone) already shows
+"Copied" / "Couldn't copy — try again" / the action label, never a
+long success sentence, and never claims success before
+`navigator.clipboard.writeText`'s promise resolves. Reviewed, unchanged —
+already matches §16's own "Copied" example exactly.
+
+### 61.12 Reveal/file UX
+
+Reviewed against the specific prior bug (§59.11: "Reveal video" once showed
+while still rendering, and "Video ready" once showed on a stale platform —
+both fixed two milestones ago). Re-verified live this milestone: `hasVideo`
+(`platform.renderStatus === "current" || "stale"`) and `videoCurrent`
+(`platform.readiness === "ready"`) in `PlatformCard` are unchanged and
+still correct — a Reveal button never appeared during an active render in
+this milestone's own live batch-apply scenario (§61.26).
+
+### 61.13 Metadata edit UX
+
+Verified live (§61.26): "Edit copy" opens the overrides editor (§61.2); a
+copy-only override edit (already covered by `tests/publish-readiness.test.mts`
+and unchanged this milestone) leaves an export current; a rendered-field
+edit still stales the relevant exports. No second editor exists anywhere.
+
+### 61.14 Batch UX
+
+Reviewed track selection, Select all/none, package mode buttons (now
+Intent/Full/**Custom**, §61.3), the per-track platform table, live
+progress, and the apply/queue flow — all functioned correctly live
+(§61.26/§61.27), and the one real defect found (§61.2's grid gap) was in
+this exact surface. No other changes were made; batch's own inspect →
+plan → apply shape (distinct from single-track's simpler dry-run → confirm)
+was left as-is per the brief's own "do not force identical layouts where
+use cases differ."
+
+### 61.15 QueueDrawer UX
+
+Reviewed live during an actual batch apply (§61.27): queued/preparing
+labels, per-row progress and frame counts, Cancel while active, Show once
+completed, and the drawer's own summary line were all correct and
+consistent with `RenderPanel`'s identical vocabulary. Not turned into a
+history page; unchanged.
+
+### 61.16 Advanced diagnostics hierarchy
+
+Recent render, destination health, the full per-format Exports/Delivery
+controls, validation notes, and now Render (§61.2) all live inside the same
+collapsed `<details className="section--advanced">`, unchanged in
+structure from the previous milestone except for Render's addition. No
+functionality was removed from any of them.
+
+### 61.17 Accessibility
+
+Native `<details>`/`<summary>` (no script needed) for both the
+Advanced/diagnostics section and the metadata overrides editor; mode
+buttons carry `role="group"` and `aria-pressed`; the platform picker's
+checkboxes are real labelled `<input type="checkbox">` elements, not
+styled `<div>`s; the disabled last-remaining checkbox is `disabled`
+(announced as such) with an explanatory `title`, not hidden; status is
+never color-only anywhere in Content Package (glyph + text together). No
+new issues were found or introduced this milestone; verified unchanged.
+
+### 61.18 Responsive results
+
+Tested live at 1440/1200/1000/800px (§23's own list) on the single-track
+Content Package (Custom mode, three platform cards) and the batch panel.
+No horizontal overflow at any width (`document.documentElement.scrollWidth
+<= clientWidth` held throughout); the platform-card grid reflows 3→2→1
+columns; the sidebar+detail two-column layout collapses to a single column
+at the existing 860px breakpoint, cleanly. No clipped labels or awkward
+wrapping were found. The one real layout defect found during this pass was
+not a responsive/breakpoint issue at all — it was the grid-row mismatch in
+§61.2, present at every width equally.
+
+### 61.19 Network/request audit
+
+Confirmed live and by code review: `ExportMissingPanel`/`DeliverPanel`/
+`ReleaseBundlePanel`/`DestinationHealthPanel` all fetch only on an explicit
+button click (dry-run plan, then confirm) — none polls, and none fetches
+eagerly on mount. `RecentRenderHistory` and `TrackDeliveryHistory` fetch
+once per track (on mount/slug change) and never poll. Content Package mode
+switching (Intent/Full/Custom) is a pure client-side re-derivation with
+zero network requests, re-confirmed this milestone via the same
+network-log technique the previous milestone used. No duplicate Content
+Package requests, no duplicate render queues, and no eager diagnostics
+requests were found.
+
+### 61.20 Performance observations
+
+No optimization work was done; none was warranted. No duplicate requests,
+accidental polling, or N×API waterfalls were found (§61.19). The Vite
+production build (`npm run build`, single chunk ~1.1MB / 330KB gzipped)
+was unchanged by this milestone's edits and was not investigated further —
+code-splitting the bundle is exactly the kind of "no performance project
+without evidence" work the brief explicitly excludes.
+
+### 61.21 Fixture-concurrency flake — investigated and fixed
+
+Root cause fully reproduced and fixed early in this milestone (§28 of the
+brief), independent of the rest of the polish work: one test in
+`tests/destination-health.test.mts` ("a scan over every kind of drift
+changes not one byte at the destination") omitted the `slugs` scope every
+other test in that file already passes, making its scan catalogue-wide
+(`listTracks()` over the real shared `public/tracks/` directory) for no
+reason the test itself needed. Under the test runner's cross-file
+concurrency, another file's own `regression-<uuid>` fixture could be torn
+down by its own test's `t.after()` between that directory listing and this
+scan's per-track inspection, producing the intermittent `ENOENT` seen at
+the end of the previous milestone. Fixed by scoping the test to its own
+fixture's slug (`slugs: [f.slug]`), matching the file's dominant
+convention — a deterministic, isolated, test-only fix with zero production
+code change (orphan-folder detection, the one thing that scope narrowing
+skips, already has its own dedicated test just below this one). Confirmed:
+4 clean full-suite runs after the fix, following one reproduction of the
+original flake before it, and 40/40 in the file alone, repeated 3 times.
+This is a **good fix** by the brief's own criteria — no `--test-concurrency=1`,
+no sleeps, no retries, no weakened assertion.
+
+### 61.22 Happy-path browser E2E
+
+Driven live end to end against real Vite/API servers with a synthetic
+track (`v1-polish-probe`, never Ghetto Geek): missing package targets on
+creation → inspected Content Package (Intent: 2/3 ready, one missing) →
+switched Full (Instagram, missing, now in scope) → switched Custom → built
+the missing target via the batch panel's own Apply flow (§61.27, doubling
+as the render-progress observation) → all three converged to `current` →
+opened the metadata overrides editor via "Edit copy" → configured an
+isolated synthetic delivery destination through the real Delivery settings
+UI → delivered the full package → arrived at **READY TO PUBLISH · 3
+platforms selected · all metadata resolved**, with every card showing
+Delivered → verified "Copy all metadata" and "Reveal video" both worked.
+Coherent end to end, exactly as §31 describes.
+
+### 61.23 Failure browser E2E
+
+Not independently re-driven this milestone. The brief explicitly allows
+this ("Do not over-expand failure testing if existing coverage is already
+strong") and existing coverage is strong: the previous two milestones'
+real E2E already covered a delivery-drift-and-recovery scenario, a
+stale-sibling-excluded scenario, and (via `tests/publish-readiness.test.mts`
+and `tests/destination-health.test.mts`) dozens of domain-level failure/
+blocked/interrupted scenarios, none of which this milestone's changes
+touch the logic of. `PlatformCard`'s reveal/readiness invariants (§61.12)
+were spot-checked live instead, which is where the two real bugs from that
+era were actually found and would most likely resurface if a regression
+had been introduced — none was.
+
+### 61.24 Reload behavior
+
+Not independently re-driven this milestone; the previous milestone already
+proved Custom scope resets to Intent on reload (§60.14/§60.20, scenario 7)
+and no code this milestone touched changes that mechanism (`uiMode`/
+`customPlatforms` are still plain `useState`, no persistence exists or was
+added). Re-verified by code review only, per the brief's own time
+discipline (§46) not letting a low-marginal-value re-test consume the run.
+
+### 61.25 Track-switch behavior
+
+Same reasoning as §61.24: proven live last milestone (`key={slug}` remount
+resets Custom to Intent on every track switch), unchanged this milestone,
+re-verified by code review rather than re-driven.
+
+### 61.26 Delivery-config preservation
+
+`delivery.local.json` was read and logged before any write
+(`{"root": null, "autoDeliver": false, "autoUpdateReleaseBundle": false}`),
+configured to an isolated scratch destination only through the real
+Delivery settings UI (never a raw API write) for the one live delivery
+scenario in §61.22, and restored through that same settings API
+immediately after. Verified by reading the file directly afterward: byte-
+for-value identical to the pre-test contents. `root: null` was the exact
+prior state, so nothing was reset to a value it did not already hold.
+
+### 61.27 Ghetto Geek protection
+
+Read-only throughout: `npm run validate-track -- ghetto-geek` was run
+before and after this milestone's work (both times: "Track 'ghetto-geek'
+is valid"), and it was never rendered, delivered, or edited. All mutable
+E2E used exclusively the synthetic `v1-polish-probe` track, created,
+rendered, delivered and deleted entirely within this milestone.
+
+### 61.28 Backward compatibility
+
+Explicitly re-verified: saved export intent, Content Package's Intent/Full/
+Custom behavior, the Custom picker's initialization/empty-selection rules,
+Batch Content Package Generation (live-tested this milestone, §61.14),
+Ready-to-Publish (live-tested, §61.22), render manager/queue/live batch
+progress (live-tested via a real batch apply, §61.27), cancellation
+(unchanged code, existing tests re-run clean), persistence, the durable
+render/batch journal, render history, destination health, the fix planner,
+delivery, release bundles, metadata templates, the CLI, and Ghetto Geek
+(§61.27) are all intact. Nothing was deleted; the Render section move
+(§61.2) relocated a component, it did not remove one.
+
+### 61.29 Test changes
+
+One test file changed (`tests/destination-health.test.mts`, §61.21's
+fixture-scope fix — 14 lines, no new test, an existing test made
+deterministic). No other tests were added: this milestone is prioritized
+visual/workflow polish and one fixture fix, per the brief's own "do not add
+dozens of redundant tests just for polish" instruction (§43) — every UI
+change here was instead verified by the real browser review (§61.18,
+§61.22, §61.26).
+
+### 61.30 Final full test baseline
+
+708/708, unchanged in count from the previous milestone's own baseline
+(the fixture fix scoped an existing test, it did not add one). Run 4 times
+clean after the fixture fix, in addition to the reproduction run that
+confirmed the original flake beforehand.
+
+### 61.31 TypeScript/ESLint/build results
+
+`npm run lint` (`eslint src scripts services server ui tests && tsc`) clean
+throughout, checked after every batch of changes, not just at the end.
+`npx vite build` clean (one pre-existing, unrelated chunk-size advisory
+about the ~1.1MB main bundle — not a new warning, not investigated further
+per §61.20).
+
+### 61.32 Cleanup
+
+The synthetic track (`v1-polish-probe`) and its rendered outputs under
+`out/` were deleted; neither was ever git-tracked. The scratch Playwright
+project and the scratch delivery-destination directory (both under the
+session scratchpad, never the repo) were removed. All `/tmp/toshi-v1-*`
+screenshots and server logs were removed. Both API and Vite dev servers
+were stopped by killing their listening ports. `delivery.local.json` was
+confirmed restored (§61.26). Ghetto Geek was validated read-only (§61.27).
+Working tree confirmed clean before the final commit and again after.
+
+### 61.33 Known non-blocking V1 issues
+
+- The Vite production bundle is a single ~1.1MB (330KB gzipped) chunk;
+  Vite's own build output flags this. Not a functional defect and not
+  investigated, per §61.20/§29's explicit "no performance project without
+  evidence."
+- Package actions' three-button `ExportMissingPanel` row (Build/Re-export
+  stale/Export missing+stale) is always fully visible even when a button
+  would have nothing to do (e.g. "Re-export stale" with zero stale
+  targets); clicking it in that state simply reports "no matching exports
+  to queue," so it is not misleading, just not maximally minimal. Left as
+  a low-severity, low-risk item rather than special-cased away (§61.7).
+- The pre-existing `destination-health.test.mts` fixture-concurrency
+  category of issue is now fixed for the one test that had it (§61.21);
+  no other test in the suite was found to share the same catalogue-wide-
+  scan-in-a-shared-directory shape, but this was not exhaustively proven
+  across every test file — a future contributor adding a new catalogue-
+  wide-scope test to any file should scope it explicitly, following this
+  file's now-uniform convention.
+
+### 61.34 V1 feature inventory
+
+**Single-track workflow**: track creation/validation/preparation, cover and
+audio upload, metadata editing with global templates and per-track
+overrides, live preview, per-preset rendering with live progress and logs,
+Content Package (Intent/Full/Custom modes, per-platform readiness, primary
+next action, copy-to-clipboard per platform and package-wide, safe file
+reveal), Ready-to-Publish aggregate status, scoped Build/Deliver actions,
+export freshness/staleness tracking, delivery to a configured destination,
+delivery history/reconciliation, release bundle generation, destination
+health scanning with render-journal context, a destination fix planner,
+recent render history (durable, survives server restarts), and full
+per-track validation notes.
+
+**Batch/catalogue workflow**: multi-track selection, catalogue-wide and
+selection-scoped export/delivery/release-bundle actions, Batch Content
+Package Generation (Intent/Full/Custom modes, inspect → plan → apply, live
+per-track/per-platform progress, session persistence across reload,
+cancellation), a render queue with live progress, cancel and reveal.
+
+**Cross-cutting**: a durable render/batch journal surviving server
+restarts, a read-only render-history API, destination-health scanning
+(catalogue or scoped, orphan-folder detection, render-journal-backed
+context on drift findings), delivery settings with a machine-local,
+never-committed config file, and a CLI mirroring every major API-level
+capability (`content-package`, `destination-health`, `render-missing`,
+`deliver`, `release-bundle`, and more).
+
+### 61.35 Explicit V2 boundaries
+
+V1 intentionally does not, and none of this was started or scaffolded this
+milestone:
+
+- Publish to any social platform, or hold any social API credentials/OAuth.
+- Schedule posts.
+- Generate AI captions, titles, or creative copy — every built-in template
+  is a deterministic string built from the track's own
+  title/artist/key/BPM/subtitle, never a model call.
+- Choose creative/campaign strategy.
+- Analyze social performance or ingest any engagement/analytics feedback.
+- Support full multi-brand profiles (§61.5) — today's Toshi-facing
+  defaults are a handful of constants and templates, not a switchable
+  profile system.
+- Sync Custom package scope across devices, or persist it across a reload
+  (§60.14, unchanged) — both are deliberate V1 scope decisions, not gaps.
+- Provide cloud project storage — this is, and remains, a local desktop
+  tool over a local filesystem.
+
+### 61.36 Files changed
+
+- `tests/destination-health.test.mts` (fixture-scope fix, §61.21)
+- `ui/components/TrackDetail.tsx` (Render moved into Advanced, §61.2)
+- `ui/components/ContentPackagePanel.tsx` (Edit-copy target, mode hint)
+- `ui/components/ContentMetadataOverridesEditor.tsx` (anchor id)
+- `ui/components/BatchContentPackagePanel.tsx` (terminology, §61.3)
+- `ui/components/DeliverPanel.tsx` (terminology)
+- `ui/components/ExportStatus.tsx` (terminology)
+- `src/domain/content/publishReadiness.ts` (terminology)
+- `ui/styles/app.css` (mode-hint styling; the grid-row fix, §61.2)
+- `README.md` (Content packages section, §61.4)
+
+### 61.37 Commits
+
+1. Fix the destination-health fixture-concurrency flake.
+2. Polish V1 workflow structure and terminology.
+3. Fix a grid-row mismatch that could stretch the toolbar instead of the body.
+4. Document Final V1 Product Polish + V1 Freeze (this section).
+
+No push was made.
+
+### 61.38 Final git status
+
+Working tree clean after commits. Ahead of `origin/main` by the commits
+above, following on from the previous milestones' own unpushed commits. No
+push made.
+
+### 61.39 Whether V1 freeze criteria are fully met
+
+Yes, against every criterion §39 of the brief names: the main workflow is
+coherent in a real browser (§61.22); Ready-to-Publish, Intent/Full/Custom,
+the metadata edit flow, the render flow, and the delivery flow all work
+(§61.22, §61.13); batch, cancellation, persistence, journal/history, and
+destination health all remain intact (§61.14, §61.28); no critical or
+high-risk regression was found; the full suite (708/708), TypeScript,
+ESLint, `vite build`, `validate-track`, `prepare-track`, and
+`git diff --check` all pass (§61.30, §61.31); Ghetto Geek is untouched
+(§61.27); test artifacts are cleaned (§61.32); and the working tree is
+clean. **Content Engine V1 is frozen at commit
+`526de79` (plus this section's own documentation commit).**
+
+### 61.40 Recommended first V2 milestone
+
+Not started, per the brief's own explicit instruction to stop here. Of the
+V2 boundaries named in §61.35, a lightweight brand-profile abstraction
+(configurable product name/platform set/default templates, generalizing
+what are today Toshi-specific constants) is the most natural first step,
+since §61.5 already identifies exactly where that boundary currently sits
+and why it was deliberately not crossed in V1.
