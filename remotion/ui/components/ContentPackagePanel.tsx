@@ -56,6 +56,18 @@ const STATUS_LABELS: Record<ContentPackageStatus, string> = {
   not_configured: "No platforms selected",
 };
 
+/**
+ * One line per package-scope mode, shown just under the mode buttons —
+ * added because a first-time operator switching to Custom has no other cue
+ * that it is a view choice, not a save: nothing here mutates the track's own
+ * saved export intent (§ handoff, "saved intent vs. current scope").
+ */
+const MODE_HINT: Record<ContentPackageMode, string> = {
+  intent: "Uses this track's saved export choices.",
+  full: "Every supported platform, regardless of what's saved.",
+  custom: "Choose platforms for this view only — doesn't change what's saved.",
+};
+
 export const PackageStatusBadge: React.FC<{
   readonly status: ContentPackageStatus;
 }> = ({ status }) => (
@@ -405,7 +417,17 @@ export const ContentPackagePanel: React.FC<{
     (platform) => platform.deliveryStatus !== "not_configured",
   );
 
+  // Goes straight to the metadata overrides editor itself, not just the
+  // Track info section it lives in — that editor is a collapsed <details>
+  // by default, so without opening it here "Edit copy" would land the
+  // operator one extra click away from the fields they actually asked for.
   const editCopy = () => {
+    const overrides = document.getElementById("content-metadata-overrides");
+    if (overrides instanceof HTMLDetailsElement) {
+      overrides.open = true;
+      overrides.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     document.getElementById("track-info")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
@@ -464,6 +486,8 @@ export const ContentPackagePanel: React.FC<{
           </button>
         </div>
       </div>
+
+      <p className="muted contentpackage__modehint">{MODE_HINT[uiMode]}</p>
 
       {uiMode === "custom" ? (
         <PlatformPicker

@@ -83,7 +83,7 @@ const ScopedDeliverPanel: React.FC<DeliverPanelProps> = ({
         `${plan.alreadyDelivered.length} already delivered`,
         `${plan.deliverable.length} to deliver`,
         plan.notCurrent.length > 0
-          ? `${plan.notCurrent.length} not current`
+          ? `${plan.notCurrent.length} need${plan.notCurrent.length === 1 ? "s" : ""} a render first`
           : null,
         plan.invalid.length > 0
           ? plural(plan.invalid.length, "invalid track")

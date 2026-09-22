@@ -1632,6 +1632,11 @@ body {
   margin-left: auto;
 }
 
+.contentpackage__modehint {
+  margin: -6px 0 0;
+  font-size: 12px;
+}
+
 .button--active {
   border-color: var(--vintage-gold);
   color: var(--vintage-gold);

@@ -183,7 +183,7 @@ export const derivePublishReadiness = (pkg: ContentPackageView): PublishReadines
       state === "needs_delivery"
         ? platform.deliveryReason !== null
           ? DELIVERY_REASON_LABELS[platform.deliveryReason]
-          : "Not yet delivered"
+          : "Not delivered yet"
         : null;
 
     return {

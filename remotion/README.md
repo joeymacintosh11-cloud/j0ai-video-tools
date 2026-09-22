@@ -549,7 +549,18 @@ subtitle — no external AI calls — and a status badge on each catalogue row.
 By default a package uses the track's own declared `exportPresets` (§ Export
 formats), so nothing is silently added to a track that only ships one format.
 "Full package" asks for all three platforms regardless of what is declared,
-without changing the track's saved intent.
+without changing the track's saved intent. A third mode, **Custom**, lets you
+pick exactly which platforms this *view* covers right now — also without
+touching the track's saved intent; it resets to Intent on a track switch or
+reload, by design.
+
+The Track Detail panel folds all of this into one **Ready to Publish**
+banner: once every platform in the current scope has a current render (and a
+current copy at the destination, wherever one is configured), the package
+reads "Ready to publish," with a one-click "Copy all metadata" for whatever
+is in scope. Until then, the banner names the one thing to do next — build a
+missing asset, re-render a stale one, or deliver — and each platform card
+carries its own "Copy" and, once a render exists, "Reveal" action.
 
 **Build package** and **Deliver package** are not a new render or delivery
 path — they are the existing "export missing" and "deliver" actions, scoped to
@@ -558,6 +569,7 @@ the package's platforms:
 ```console
 npm run content-package -- ghetto-geek
 npm run content-package -- ghetto-geek --mode full --json
+npm run content-package -- ghetto-geek --platform youtube --platform reels
 npm run content-package -- ghetto-geek --apply
 ```
 

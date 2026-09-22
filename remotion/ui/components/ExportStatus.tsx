@@ -30,11 +30,11 @@ const mark = (
     return {
       glyph: "!",
       state: "empty",
-      note: "file is empty — will be re-rendered",
+      note: "File is empty — will be re-rendered",
     };
   }
   if (!output.intended) {
-    return { glyph: "◦", state: "unintended", note: "not an intended format" };
+    return { glyph: "◦", state: "unintended", note: "Not intended" };
   }
   return { glyph: "—", state: "missing", note: "Missing" };
 };

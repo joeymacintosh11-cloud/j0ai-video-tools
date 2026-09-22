@@ -46,7 +46,7 @@ const asApiError = (cause: unknown): ApiRequestError =>
       });
 
 const ACTION_LABEL: Record<ContentPackageActionKind, string> = {
-  render_missing: "Render",
+  render_missing: "Build",
   rerender_stale: "Re-render",
   adopt_existing_render: "Already queued",
   already_ready: "Ready",
@@ -541,7 +541,7 @@ export const BatchContentPackagePanel: React.FC<{
               onModeChange("platforms");
             }}
           >
-            Selected platforms
+            Custom
           </button>
         </div>
         <span className="app__spacer" />

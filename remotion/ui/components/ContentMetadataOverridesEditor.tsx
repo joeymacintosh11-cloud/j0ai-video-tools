@@ -35,7 +35,7 @@ export const ContentMetadataOverridesEditor: React.FC<{
   ).length;
 
   return (
-    <details className="field templates__details">
+    <details className="field templates__details" id="content-metadata-overrides">
       <summary className="field__label">
         Content metadata overrides
         {overrideCount > 0 ? ` (${overrideCount} set)` : ""}

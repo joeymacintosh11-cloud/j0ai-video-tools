@@ -161,16 +161,6 @@ export const TrackDetail: React.FC<{
         />
       </section>
 
-      <section className="section">
-        <h3 className="section__title">Render</h3>
-        <RenderPanel
-          track={track}
-          formats={formats}
-          onChanged={onChanged}
-          onBatchStarted={onBatchStarted}
-        />
-      </section>
-
       {/* Everything below is technical detail the Content Package workflow
           above already surfaces the operator-relevant parts of (readiness,
           delivery attention, primary actions) — kept here, not removed, for
@@ -181,6 +171,24 @@ export const TrackDetail: React.FC<{
           screen-reader support. */}
       <details className="section section--advanced">
         <summary className="section__title">Advanced / diagnostics</summary>
+
+        {/* Content Package's own "Build package"/"Deliver package" already
+            cover the ordinary render path, scoped to the current package
+            selection, with live progress via the queue drawer they open —
+            this raw per-format render (an arbitrary toolbar format
+            selection, independent of package scope) is the manual-override
+            path for whoever wants direct control, inline progress and logs
+            for a single render, kept but no longer sitting at the same
+            visual weight as the primary workflow above it. */}
+        <section className="section">
+          <h3 className="section__title">Render</h3>
+          <RenderPanel
+            track={track}
+            formats={formats}
+            onChanged={onChanged}
+            onBatchStarted={onBatchStarted}
+          />
+        </section>
 
         <section className="section">
           <h3 className="section__title">Exports</h3>
