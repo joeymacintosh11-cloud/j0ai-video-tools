@@ -911,7 +911,20 @@ test("a scan over every kind of drift changes not one byte at the destination", 
   await writeFile(path.join(root, "Old Track", "release.json"), "{}");
 
   const before = await snapshot(root);
-  await scanDestinationHealth({ settings: settingsFor(root) });
+  // Scoped to this fixture's own slug, like every other test in this file --
+  // omitting `slugs` here (as this test used to) makes the scan catalogue-
+  // wide, which lists the real shared public/tracks/ directory via
+  // listTracks(). Under the test runner's cross-file concurrency, another
+  // file's own regression-<uuid> fixture can be torn down by its own test's
+  // t.after() between that listing and this scan's per-track inspection,
+  // producing an intermittent ENOENT that has nothing to do with what this
+  // test actually verifies (that a scan never mutates the destination).
+  // Orphan-folder detection itself (which needs catalogue mode) already has
+  // its own dedicated coverage below ("an orphaned folder that looks
+  // app-managed is mentioned, but only for a catalogue scan"); this test
+  // still keeps the "Old Track" folder on disk to prove a scoped scan never
+  // touches unrelated destination content either.
+  await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
   const after = await snapshot(root);
 
   assert.deepEqual([...after.entries()].sort(), [...before.entries()].sort());
