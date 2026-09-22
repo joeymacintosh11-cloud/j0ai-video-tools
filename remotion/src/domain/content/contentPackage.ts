@@ -350,3 +350,44 @@ export const deriveContentPackage = (
     templatesProblem: options.templatesProblem ?? null,
   };
 };
+
+/* ------------------------------------------------------------------ *
+ * Copy, formatted for a human to paste elsewhere
+ * ------------------------------------------------------------------ */
+
+/**
+ * One platform's resolved copy, exactly as `deriveContentPackage` already
+ * produced it — never re-resolved, never approximated. Fields the platform
+ * does not support (or a blocked/unresolved track leaves null) are left out
+ * entirely rather than printed as an empty section.
+ */
+export const formatPlatformCopyForClipboard = (
+  platform: ContentPackagePlatformEntry,
+): string => {
+  const sections: string[] = [];
+  if (platform.title !== null) sections.push(`Title:\n${platform.title}`);
+  if (platform.description !== null) sections.push(`Description:\n${platform.description}`);
+  if (platform.keywords !== null && platform.keywords.length > 0) {
+    sections.push(`Keywords:\n${platform.keywords.join(", ")}`);
+  }
+  if (platform.caption !== null) sections.push(`Caption:\n${platform.caption}`);
+  if (platform.hashtags !== null && platform.hashtags.length > 0) {
+    sections.push(`Hashtags:\n${platform.hashtags.join(" ")}`);
+  }
+  return sections.join("\n\n");
+};
+
+/**
+ * Every selected platform's copy in one block, headed by platform name, for
+ * pasting into notes or an upload workflow in one paste — the §9 "copy all
+ * package metadata" action. A platform with nothing to show (not selected,
+ * or blocked with no resolved metadata) is left out entirely rather than
+ * printed as an empty heading.
+ */
+export const formatPackageCopyForClipboard = (
+  platforms: readonly ContentPackagePlatformEntry[],
+): string =>
+  platforms
+    .filter((platform) => platform.selected && (platform.title !== null || platform.caption !== null))
+    .map((platform) => `${platform.label.toUpperCase()}\n\n${formatPlatformCopyForClipboard(platform)}`)
+    .join("\n\n\n");

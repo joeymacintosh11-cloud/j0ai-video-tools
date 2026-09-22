@@ -15,6 +15,8 @@ import {
 } from "../src/domain/tracks/errors.ts";
 import {
   deriveContentPackage,
+  formatPackageCopyForClipboard,
+  formatPlatformCopyForClipboard,
   type ContentPackageInput,
   type ContentPackageOptions,
   type PackageExportEntry,
@@ -674,4 +676,47 @@ test("package readiness and the catalogue-style status are unaffected by copy-on
     before.platforms.find((p) => p.platformId === "youtube")!.title,
     after.platforms.find((p) => p.platformId === "youtube")!.title,
   );
+});
+
+/* ------------------------------------------------------------------ *
+ * Copy formatted for the clipboard (Ready-to-Publish milestone)
+ * ------------------------------------------------------------------ */
+
+test("formatPlatformCopyForClipboard includes only the fields this platform actually has", () => {
+  const pkg = deriveContentPackage(baseInput());
+  const youtube = pkg.platforms.find((p) => p.platformId === "youtube")!;
+  const reels = pkg.platforms.find((p) => p.platformId === "reels")!;
+
+  const youtubeText = formatPlatformCopyForClipboard(youtube);
+  assert.match(youtubeText, /^Title:\n/);
+  assert.match(youtubeText, /Description:\n/);
+  assert.match(youtubeText, /Keywords:\n/);
+  assert.doesNotMatch(youtubeText, /Caption:/);
+
+  const reelsText = formatPlatformCopyForClipboard(reels);
+  assert.match(reelsText, /^Caption:\n/);
+  assert.doesNotMatch(reelsText, /Title:|Description:|Keywords:/);
+});
+
+test("formatPlatformCopyForClipboard is empty for a platform with no resolved metadata", () => {
+  const pkg = deriveContentPackage(baseInput({ validationOk: false, metadata: null }));
+  const youtube = pkg.platforms.find((p) => p.platformId === "youtube")!;
+  assert.equal(formatPlatformCopyForClipboard(youtube), "");
+});
+
+test("formatPackageCopyForClipboard includes every selected platform, headed by name, and excludes unselected ones", () => {
+  const pkg = deriveContentPackage(baseInput(), { platforms: ["youtube", "reels"] });
+  const text = formatPackageCopyForClipboard(pkg.platforms);
+
+  assert.match(text, /^YOUTUBE\n\n/);
+  assert.match(text, /REELS \/ TIKTOK\n\n/);
+  assert.doesNotMatch(text, /INSTAGRAM/);
+  // Two platforms' worth of content, separated by a blank line between
+  // sections (three newlines: end one section, blank line, start the next).
+  assert.equal(text.split("\n\n\n").length, 2);
+});
+
+test("formatPackageCopyForClipboard omits a blocked, metadata-less package entirely", () => {
+  const pkg = deriveContentPackage(baseInput({ validationOk: false, metadata: null }));
+  assert.equal(formatPackageCopyForClipboard(pkg.platforms), "");
 });
