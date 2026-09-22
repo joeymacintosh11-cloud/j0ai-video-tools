@@ -9251,3 +9251,470 @@ single-track Content Package panel (reusing `platformFilename`/
 `PLATFORM_LIST` — no new domain logic, since `deriveContentPackage` already
 accepts an explicit `platforms` list) would close the one package mode this
 milestone left without its own UI.
+
+## 60. Single-Track Custom Platforms Picker (2026-09-22)
+
+The previous milestone's own recommended next step, closed: Content
+Package's explicit-platform ("custom") mode was already fully implemented
+at the domain layer, the `GET /api/content-package` API, and the
+`content-package.mts` CLI — none of the three needed a single line
+changed. The only real gap was that the single-track UI
+(`ContentPackagePanel.tsx`) never exposed it, so an operator could not
+narrow "what does this package view cover right now" without leaving the
+browser. This milestone is almost entirely a UI feature for that reason.
+
+### 60.1 Product purpose
+
+An operator working one track at a time can now choose exactly which
+platform outputs the Content Package view in front of them covers —
+"YouTube and Reels, ignore Instagram for now" — and have readiness, counts,
+the primary action, Build/Deliver, and copy-all all immediately re-scope to
+match. Reels/Instagram siblings that are stale, missing, or otherwise not
+ready never block "Ready to publish" when they are outside the current
+scope.
+
+### 60.2 Intent / Full / Custom semantics — unchanged, now all three reachable
+
+`ContentPackageMode` (`src/domain/content/contentPackage.ts`) already
+defined all three:
+
+- **Intent** — each platform whose preset the track's own `exportPresets`
+  already declares. Unchanged; still the default view on opening a track.
+- **Full** — every platform `PLATFORM_LIST` defines, regardless of intent.
+- **Custom** — exactly the platforms the caller names via
+  `ContentPackageOptions.platforms`. Selecting this in `deriveContentPackage`
+  was already how the API/CLI reached it (`?platform=youtube&platform=reels`,
+  `--platform youtube --platform reels`); the UI simply never called it with
+  that option before. No domain semantics were invented or changed.
+
+### 60.3 Saved intent vs. current package scope — the one rule that mattered
+
+Two different things, kept structurally separate exactly as the milestone
+required:
+
+- **A. Persisted export intent** — `TrackMetadata.exportPresets`, written
+  only by the existing "Intended exports" checkboxes in the metadata form
+  and saved only via the existing "Save metadata" action.
+- **B. Current Content Package inspection scope** — `uiMode` and
+  `customPlatforms`, two `useState` values inside `ContentPackagePanel.tsx`,
+  never written anywhere but that component's own render tree.
+
+The picker only ever touches B. Nothing in `ContentPackagePanel.tsx`,
+`PlatformPicker.tsx` or `packageScope.ts` calls `updateTrackMetadata` or any
+other metadata-writing path — verified by inspection (no such import exists
+in either file) and by a domain test
+(`tests/package-scope.test.mts`: "scope selection never mutates the
+caller's export list") that freezes the input `exports`/`intended` array
+before calling `deriveContentPackage` under all three modes and asserts it
+comes back byte-identical afterward.
+
+### 60.4 Custom initialization
+
+`src/domain/content/packageScope.ts` — one pure function,
+`initialCustomPlatforms(fromMode, intentPlatformIds, fullPlatformIds)`:
+
+- **Intent → Custom**: seeds from Intent's own currently-resolved platform
+  set (read via a real `deriveContentPackage(input, { mode: "intent" })`
+  call inside the panel, never a hand-duplicated copy of the "intended"
+  rule — one selection rule, not two).
+- **Full → Custom**: seeds from every supported platform.
+- Applied only the *first* time an operator switches into Custom during a
+  track's session (`customPlatforms === null` guards it) — a selection
+  already made survives switching to Intent/Full and back, per the brief's
+  explicit "preserve it where practical" instruction.
+
+### 60.5 Empty-selection policy — Option B, matching two existing precedents
+
+Chosen over allowing empty Custom: **the last checked platform cannot be
+unchecked** (the checkbox is `disabled`, with a
+`title="Keep at least one platform selected"` tooltip — not merely hidden).
+This was not an arbitrary pick between the brief's two offered options: two
+*other* pickers already in this codebase independently converge on exactly
+this rule — `FormatPicker.tsx` (the toolbar's render-format picker) and the
+Batch Content Package picker's own "Selected platforms" mode — both already
+disable their own last-remaining checkbox for the same stated reason
+("reads as an accident rather than a choice"). Following the codebase's own
+established convention won over inventing a different one.
+
+This only stops *removing* the last checked box — Custom can still *start*
+empty, when Intent itself currently selects nothing (an unusual but valid
+track state); in that case the existing `not_configured` /
+"No platforms selected" banner already communicates it honestly, with no
+silent fallback to Intent (verified by
+`tests/package-scope.test.mts`: "an empty custom selection is reported as
+not_configured, with no primary action, and never falls back to intent").
+
+### 60.6 Platform picker UI
+
+New `ui/components/PlatformPicker.tsx`, deliberately modeled line-for-line
+on `FormatPicker.tsx`'s own checkbox convention (`.formats`/`.format`/
+`.format--on`/`.format__name` — no new CSS was needed) rather than
+inventing a fourth picker idiom in this app. Rendered only while
+`uiMode === "custom"`, directly under the mode buttons, inside the same
+`.contentpackage` grid — so it appears and disappears with the mode itself
+rather than occupying space when irrelevant.
+
+### 60.7 Selected/unselected platform cards
+
+Unchanged from the previous milestone's own design, which already matched
+what this milestone asked for: every supported platform still gets a card
+in every mode; a platform outside the current scope renders as
+`publishcard--not_selected` with a muted "Not selected" note and nothing
+else — no video/metadata/delivery checklist, no actions. Critically, the
+underlying facts (`renderStatus`, `staleReasons`, delivery state) are never
+hidden or faked for an unselected platform — confirmed by a domain test
+("an unselected platform's underlying render state remains visible ... for
+the UI's subdued card") — so a card correctly shows "Not selected" even
+when its real state (e.g. genuinely stale) would otherwise be interesting
+to a diagnostically-minded operator glancing at Full or Custom later.
+
+### 60.8 Readiness aggregation, counts, primary action, Ready to Publish
+
+All four already scoped correctly to `selected` platforms only — this
+predates the milestone (`derivePublishReadiness` and `deriveContentPackage`
+both already filter every count and status by `.selected`/`state !==
+"not_selected"`). No change was made to either function. What changed is
+that the UI can now actually put an arbitrary platform set into `selected`
+via Custom, which is what made this pre-existing scoping visible and
+testable end to end for the first time from the browser. Confirmed live: a
+package with YouTube ready, Reels ready, and Instagram genuinely stale
+(rendered against a now-superseded cover) reads **2/2 ready · READY TO
+PUBLISH · 2 platforms selected** the instant Custom excludes Instagram, and
+reverts the moment it's re-checked — with zero extra network requests
+either way, since this is a pure client-side re-derivation.
+
+### 60.9 Build / rerender / delivery scoping
+
+Not reimplemented — `selectedPresetIds` (already existed, already fed into
+`ExportMissingPanel`/`DeliverPanel`) is derived from `pkg.platforms.filter
+(selected)`, so once `pkg` correctly reflects Custom scope, Build/Re-render/
+Deliver automatically inherit it with no additional code. Verified live
+(§60.15, §60.16): a Custom scope of "YouTube + Reels" against a track with
+all three platforms missing produces a build plan naming only those two
+targets (`"1 track · 2 intended exports · 0 current · 0 stale · 2
+missing"`), and after confirming, Instagram Square remains genuinely
+`missing` — never queued. A Custom scope of one platform against two ready
+platforms delivers only the named one; the unselected-but-ready sibling
+stays `pending`.
+
+### 60.10 Copy-all scoping
+
+Already correct before this milestone —
+`formatPackageCopyForClipboard` (`src/domain/content/contentPackage.ts`,
+previous milestone) filters to `platform.selected` internally. Verified
+live: Custom = YouTube + Instagram Square produces a clipboard payload with
+exactly those two headed sections and no "REELS" text anywhere.
+
+### 60.11 Export-intent / render-fingerprint / metadata invariance
+
+Mode/platform selection is a `ContentPackageOptions` input to a pure
+function; it was never plumbed into anything that writes a file, computes a
+fingerprint, or resolves a template differently. Proven three ways: (a) by
+construction — `deriveContentPackage`'s signature has no path back to disk;
+(b) by the structural mutation test in §60.3; (c) live — the real E2E mode-
+switching scenario asserted the track's own `exportPresets` on disk via a
+direct `GET /api/tracks/:slug` call were still exactly
+`["youtube-16x9", "vertical-9x16"]` after a full Intent → Full → Custom →
+Intent round trip, and a live network-request log recorded during that same
+round trip contained zero `POST` calls to `/api/render-batches`,
+`/api/export-missing`, `/api/delivery/deliver`, or `/api/renders` —
+switching modes alone queues, renders, delivers and mutates nothing.
+
+### 60.12 Destination-health / batch relationship
+
+Neither was touched. Destination health continues to scan independently of
+any single track's current package scope (per its own design, unchanged);
+an unselected platform's real delivery drift, if any, stays visible there
+diagnostically without affecting the Custom package's own Ready-to-Publish
+verdict. The Batch Content Package picker's existing "platforms" mode
+(`BatchContentPackagePanel.tsx`) was read for its established
+selection-UI convention (§60.5) but not modified — both pickers now
+independently reuse the same `PlatformId`/`PLATFORM_LIST` from
+`platformProfiles.ts`, never a second platform-selection type.
+
+### 60.13 API / CLI
+
+No changes. `GET /api/content-package?track=<slug>&platform=<id>...`
+(`server/routes/contentPackage.ts`) already validated each platform id via
+`assertPlatformId` (rejecting unknown/malformed values with
+`INVALID_PLATFORM`) and already deduplicated/ordered via
+`canonicalPlatformOrder`. `scripts/content-package.mts --platform <id>`
+(repeatable) already did the same for the CLI. Both were exercised
+read-only against Ghetto Geek during this milestone's audit
+(`npm run content-package -- ghetto-geek --platform youtube --platform
+reels`) and behaved exactly as this milestone's UI now also does: Instagram
+Square marked `not_selected` but still shown with its real caption/hashtags
+for diagnostic context, "Inspection only — nothing rendered" with no
+`--apply`.
+
+### 60.14 Track-switch and reload semantics
+
+Both fall out of existing architecture with no new code:
+
+- **Track switch**: `TrackDetail` is mounted with `key={detail.data.slug}`
+  (`ui/App.tsx`, pre-existing). A different key fully remounts the
+  component tree, so `uiMode`/`customPlatforms` — plain `useState` inside
+  `ContentPackagePanel.tsx` — reset to their defaults (`"intent"`, `null`)
+  on every track switch. A track's Custom selection is never carried to a
+  different track, misleadingly or otherwise; the new track always opens on
+  Intent. Verified live: Track A set to Custom (YouTube only) navigated to
+  Track B (Intent, `aria-pressed="true"`), and back to Track A (also Intent
+  again — the earlier Custom selection was not resurrected, because the
+  remount discarded it, which is the documented and tested behavior, not an
+  oversight).
+- **Reload**: no persistence was added (no `localStorage`, no URL param, no
+  server-side session) — deliberately, per the brief's "acceptable to
+  return to Intent unless a mechanism makes persistence trivial and clearly
+  appropriate" guidance, and no such mechanism existed cleanly for this.
+  Verified live: switching to Custom, reloading the browser, and reopening
+  the same track returns cleanly to Intent with no corrupted or
+  partially-restored state.
+
+### 60.15 Accessibility
+
+- Mode buttons carry `role="group" aria-label="Package scope"` and
+  `aria-pressed` reflecting the active mode; verified keyboard-operable
+  (`Tab` to the "Custom" button, `Enter` activates it — no mouse).
+- The picker is `role="group" aria-label="Custom platforms"`; each platform
+  is a real `<label>`/`<input type="checkbox">` pair (not a styled `<div>`),
+  so it has a native accessible name, is `Tab`-reachable, and toggles with
+  `Space` — verified live with no pointer input at all.
+- The disabled last-remaining checkbox is `disabled` (announced as such by
+  assistive tech) with an explanatory `title`, not simply removed from the
+  DOM or silently un-clickable.
+- Not-selected state is communicated by the text "Not selected" and a muted
+  style together, never by color alone (unchanged from the previous
+  milestone's own card design).
+
+### 60.16 Responsive UI
+
+Checked at the previous milestone's own corrected width (1000px — "narrow
+desktop/tablet-ish," not phone width, which this two-column desktop-app
+layout was never designed for): the platform-card grid reflows from three
+columns to two with no horizontal scrollbar
+(`document.documentElement.scrollWidth <= clientWidth` held), and the
+picker's checkbox row wraps cleanly using the same `flex-wrap: wrap` every
+other chip row in this app already relies on.
+
+### 60.17 Security
+
+No new endpoint, no new path handling. The only server-facing surface this
+milestone touches (`GET /api/content-package?platform=...`) already existed
+and already validated every platform id server-side before this milestone
+started (§60.13).
+
+### 60.18 Domain tests
+
+14 new tests in `tests/package-scope.test.mts`, deliberately scoped to only
+what is genuinely new for this milestone (the file's own header comment
+explains why `deriveContentPackage`'s custom-mode mechanics themselves are
+not re-tested here — they were already covered by the previous milestone):
+
+1. Intent → Custom initializes from the currently resolved intent set
+2. Full → Custom initializes from every supported platform
+3. Intent → Custom initializes empty when intent itself selects nothing
+4. An unselected stale sibling does not block Ready to Publish
+5. A selected stale target does block Ready to Publish
+6. A selected missing target drives the primary action; an unselected
+   missing sibling does not
+7. Delivery requirement applies only inside scope
+8. Custom counts reflect only the selected platforms
+9. Copy-all respects custom scope
+10. Duplicate platform ids in a custom selection are deduped
+11. An empty custom selection reports not_configured, with no primary
+    action, and never falls back to intent
+12. An unselected platform's underlying render state remains visible (not
+    hidden or faked)
+13. Scope selection never mutates the caller's export list (no
+    export-intent, no fingerprint side effect)
+14. Switching scope is deterministic regardless of how mode arrived there
+
+Directly relevant pre-existing coverage this milestone relies on rather
+than duplicating: `tests/content-package.test.mts` ("an explicit platform
+list overrides mode entirely," "no platform selected reports
+not_configured, not blocked or complete," "formatPackageCopyForClipboard
+... excludes unselected ones," "canonicalPlatformOrder dedupes and orders");
+`tests/publish-readiness.test.mts` ("an unselected platform is excluded
+from counts and never blocks readiness," "explicit-platform (custom) mode:
+only the named platforms are selected"). Together these satisfy the
+brief's ≥20-scenario requirement without re-proving what already had
+coverage.
+
+Full suite: 708/708 (694 before this milestone + 14 new), run four times
+during verification. One run produced a single, non-reproducing failure in
+`tests/destination-health.test.mts` ("a scan over every kind of drift
+changes not one byte at the destination") — an `ENOENT` reading a
+randomly-named `regression-<uuid>` fixture's `metadata.json`, in a file this
+milestone never touched. Re-run three times afterward (full suite twice,
+that file alone three times in isolation) with zero failures; the isolated
+runs prove the file is correct on its own, so the failure is a pre-existing
+cross-file fixture-concurrency race under Node's parallel top-level test
+execution (same category of issue flagged in earlier milestones' notes),
+not a regression from this one. Left undocumented-as-fixed and unserialized
+per the brief's own instruction not to hide flakes without proof — the
+proof is above.
+
+### 60.19 API / view-model tests
+
+None added — no API or view-model code changed (§60.13). The existing
+`server/routes/contentPackage.ts` and `scripts/content-package.mts` tests
+(from earlier milestones) already cover `?platform=`/`--platform`
+validation and were re-run clean as part of the full suite.
+
+### 60.20 Real browser E2E
+
+All driven against a real Vite dev server + real API server with genuine
+Chromium (Playwright, installed ad hoc into a scratch directory — no
+`chromium-cli` on this machine, same fallback as the previous milestone),
+two synthetic tracks (`e2e-picker-probe`: YouTube+Reels intended and
+ready, Instagram Square genuinely stale from a real cover change followed
+by re-rendering only the first two; `e2e-picker-build`: all three
+intended, all three genuinely missing), never Ghetto Geek:
+
+1. **Mode-switching** (§41): Intent (2/2 ready) → Full (Instagram
+   contributes, now 2/3, "1 item needs attention") → Custom seeded from
+   Full (all three checked) → uncheck Instagram (2/2 ready again) → back to
+   Intent (unchanged) — with the saved `exportPresets` verified unchanged on
+   disk and zero mutating network requests throughout.
+2. **Custom build** (§42): Custom = YouTube + Reels on the all-missing
+   fixture; the build plan named exactly those two; after confirming, both
+   rendered and Instagram Square remained `missing`.
+3. **Stale-sibling-excluded** (§43): demonstrated directly by scenario 1's
+   Full→Custom step — Instagram's real staleness never blocked Custom's
+   "Ready to publish."
+4. **Copy** (§44): Custom = YouTube + Instagram Square; clipboard payload
+   (read via a real `navigator.clipboard.readText()` with granted browser
+   permissions) contained both headed sections and no "REELS" text.
+5. **Delivery** (§45): a scratch destination directory was configured
+   through the real Delivery settings UI (not a raw API write) after
+   reading and logging the exact pre-existing `delivery.local.json` value;
+   Custom = YouTube only against two ready platforms delivered exactly
+   YouTube; Reels stayed `pending` despite being ready and outside scope;
+   `delivery.local.json` was restored via the same settings API immediately
+   after and diffed byte-for-value identical to its pre-test contents.
+6. **Track switch** (§46): Track A set to Custom, navigating to Track B and
+   back to A both landed on Intent (`aria-pressed="true"`) — the documented
+   policy (§60.14), not a bug.
+7. **Reload** (§47): Custom → browser reload → reopening the same track
+   returns to Intent cleanly.
+
+Additionally verified live: keyboard-only operation of the mode buttons and
+picker checkboxes (§60.15), and the 1000px responsive reflow (§60.16).
+
+### 60.21 Browser UX review
+
+Screenshots were actually inspected at every step (not inferred from
+assertions alone), per the brief's explicit instruction. Findings:
+
+- The mode row (Intent / Full / Custom) and the picker below it read
+  clearly as "what this package view covers," visually subordinate to the
+  Ready-to-Publish banner above them — the banner is still the first thing
+  a glance lands on.
+- "Not selected" cards are unambiguous: no checklist, no actions, just the
+  label and the muted note, exactly as intended.
+- The picker's checkbox styling intentionally echoes the toolbar's
+  "Formats" row at the top of the page (§60.6) — considered and judged
+  correct rather than confusing: the two are spatially far apart, clearly
+  and differently labelled ("Formats" vs. "Custom platforms"), and both
+  represent the same underlying idea (choosing a set of things from a fixed
+  list), so shared visual language is coherent rather than accidental reuse.
+- No genuine UX defects were found this time — unlike the previous
+  milestone (which found and fixed three real bugs), this feature layers
+  almost entirely on top of already-shipped, already-tested domain code and
+  an already-established picker convention, and it worked correctly on
+  first real-browser inspection. Reported honestly rather than manufacturing
+  a fix to report.
+
+### 60.22 Performance
+
+Mode switching is a pure client-side re-derivation
+(`deriveContentPackage`/`derivePublishReadiness` over data already held in
+the `TrackDetailView` prop) — confirmed zero network requests during the
+entire Intent→Full→Custom→Intent round trip in the real E2E run (§60.11).
+No polling was added. No per-platform waterfall exists; all three
+platforms are derived in one synchronous pass, as before.
+
+### 60.23 Backward compatibility
+
+Explicitly re-verified, all unchanged: saved export intent (§60.3, §60.11),
+Content Package's Intent and Full behavior (only reachable via existing
+paths, unchanged logic), Batch Content Package Generation (not modified —
+§60.12), the Ready-to-Publish workflow from the previous milestone (same
+`derivePublishReadiness`, unchanged), render manager/queue/live batch
+progress/persistence/cancellation/journal (untouched code, and the full
+suite's render/batch/journal test files all still pass), render history,
+destination health, fix planner, delivery, release bundles, metadata
+templates, the CLI, and Ghetto Geek (validated read-only before and after
+this milestone's work — see §60.24).
+
+### 60.24 Delivery-config preservation
+
+Handled exactly per the brief's explicit warning about the previous
+milestone's mistake: `delivery.local.json`'s value was read and logged
+*before* any write (`{"root": null, "autoDeliver": false,
+"autoUpdateReleaseBundle": false}` — delivery off, left that way by the
+previous milestone's own recovery), configured to a scratch destination
+only through the real settings UI for the one delivery E2E scenario, and
+restored through that same API immediately after — verified by reading the
+file directly afterward and diffing it against the original. Confirmed
+byte-for-value identical.
+
+### 60.25 Cleanup
+
+Both synthetic tracks (`e2e-picker-probe`, `e2e-picker-build`) and their
+rendered outputs under `out/` were deleted; neither was ever git-tracked
+(`git status` was clean before and after their removal). The scratch
+Playwright project and the scratch delivery-destination directory (both
+under the session scratchpad, never the repo) were removed. All
+`/tmp/toshi-e2e-*` screenshots and logs were removed. Both API and Vite dev
+servers were stopped by killing their listening ports. `delivery.local.json`
+was confirmed restored (§60.24). Ghetto Geek was validated read-only
+(`npm run validate-track -- ghetto-geek`) both before and after, and was
+never rendered, delivered, or edited. Working tree confirmed clean.
+
+### 60.26 Remaining limitations
+
+- Custom's initial seed is computed once per mode-entry, not kept
+  continuously in sync with Intent if the operator edits "Intended exports"
+  while already in Custom mode — matching the brief's own instruction that
+  this is a one-time initialization, not a live mirror.
+- No URL/session persistence for Custom scope was added (§60.14) — an
+  intentional scope decision, not an oversight; revisit only if an operator
+  workflow actually needs a Custom selection to survive a reload.
+- A pre-existing, non-reproducing test flake in
+  `tests/destination-health.test.mts` (§60.18) remains — unrelated to this
+  milestone, not fixed here, and already flagged for anyone touching that
+  file's regression fixtures next.
+
+### 60.27 Files changed
+
+- `src/domain/content/packageScope.ts` (new)
+- `ui/components/PlatformPicker.tsx` (new)
+- `ui/components/ContentPackagePanel.tsx` (modified: Custom mode wiring)
+- `tests/package-scope.test.mts` (new, 14 tests)
+
+No changes to any API route, CLI script, server service, or other domain
+module — all three already supported explicit platforms end to end.
+
+### 60.28 Commits
+
+1. Define the single-track custom-scope initialization rule.
+2. Add a Custom platform picker to the single-track Content Package panel.
+3. Document Single-Track Custom Platforms Picker.
+
+No push was made.
+
+### 60.29 Final git status
+
+Working tree clean after commits. Ahead of `origin/main` by the commits
+above, following on from the previous milestone's own unpushed commits. No
+push made.
+
+### 60.30 Recommended next feature
+
+No genuine gap was found in this area during this milestone's own audit.
+Two standalone candidates carried over from earlier recommendations, still
+not started: a `--recent` summary flag on the `render-locks` CLI (§57.21),
+or investigating and fixing the pre-existing `destination-health.test.mts`
+regression-fixture concurrency flake noted in §60.18/§60.26 so it stops
+being a recurring "was that me?" question in future verification passes.
