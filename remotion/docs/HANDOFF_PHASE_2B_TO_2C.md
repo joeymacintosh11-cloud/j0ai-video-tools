@@ -8803,3 +8803,451 @@ that remediation must not change automatically) — e.g. a plan action's own
 target — would close the loop between "why is this wrong" and "here is
 what fixing it will do" without touching either authority's own decision
 logic.
+
+## 59. Ready-to-Publish Content Package Workflow (2026-09-22)
+
+The Content Engine's technically powerful subsystems (export coverage,
+delivery, destination health, the render journal) now converge into one
+workflow answer per track: **is this ready to publish, and what do I do
+next?** Deliberately a UX/workflow milestone, not a new backend authority —
+every state shown here already existed somewhere in the app; this milestone
+connects them and gives them one product-facing vocabulary.
+
+### 59.1 What "ready to publish" means here
+
+This product prepares content; it does not publish to social platforms —
+no YouTube/Instagram/TikTok API, no OAuth, no credentials, no scheduling.
+"Ready to publish" means **the operator has everything they need to publish
+manually**: a current video and its resolved copy, and — when a delivery
+destination is configured for that platform — a current copy already
+sitting there. Wording throughout avoids implying this tool ever publishes
+anything itself.
+
+### 59.2 Authoritative inputs — no new readiness truth
+
+`derivePublishReadiness` (`src/domain/content/publishReadiness.ts`) is a
+pure function of one already-computed `ContentPackageView`
+(`deriveContentPackage`, unchanged) and nothing else. No new fetch, no new
+scan, no persisted "ready" flag anywhere. It answers the one question
+package readiness alone does not: whether a current render should also
+mean a platform is *done*, given whether a delivery destination is
+configured for it — everything else (export coverage, freshness, queue
+state, delivery status/reason) is read straight through from fields
+`ContentPackageView` already carried before this milestone, or (delivery
+`reason`/`deliveredAt`) carried structurally but undeclared until now (see
+§59.4).
+
+### 59.3 Aggregate package model
+
+```ts
+type PublishPackageStatus =
+  | "ready_to_publish"
+  | "needs_delivery"
+  | "incomplete"   // missing and/or rendering
+  | "stale"
+  | "blocked"
+  | "not_configured";
+```
+
+Priority order (most urgent first, mirrors `deriveContentPackage`'s own
+precedence style): `blocked > missing/rendering (incomplete) > stale >
+needs_delivery > ready_to_publish`. The package-level headline
+(`PublishStatusBanner`) reads this directly:
+
+```
+READY TO PUBLISH
+2 items need attention        (missing + stale + needs_delivery, combined)
+Rendering 1 of 3              (only when nothing else needs attention)
+Blocked
+No platforms selected
+```
+
+Partial readiness is never hidden: a package with two platforms ready and
+one stale reads "1 item needs attention," never "complete" and never
+"broken."
+
+### 59.4 Per-platform model, and the delivery decision (§12/§13 of the brief)
+
+```ts
+type PublishPlatformState =
+  | "ready" | "needs_delivery" | "missing" | "stale" | "rendering"
+  | "blocked" | "not_selected";
+```
+
+The delivery rule, decided explicitly rather than left implicit: **if a
+destination is configured for a platform, delivery is required for that
+platform to read "ready"; if none is configured, a current local render is
+enough.** This is the nuanced rule the brief itself offered as an option,
+chosen because a destination is something the operator opted into — once
+configured, a "ready" package that quietly is not actually sitting at that
+destination would contradict the workflow they set up. `deliveryRequired`
+is exposed per platform (`platform.deliveryStatus !== "not_configured"`) so
+a caller never needs to re-derive it.
+
+**Local-ready vs. delivered** are distinguished in data (`platform.readiness
+=== "ready"` vs. `platform.deliveryStatus === "delivered"`) but not given
+separate top-level UI states — "needs_delivery" already is exactly "locally
+ready, not yet delivered," and introducing a third top-level banner state
+for "delivered" specifically would not tell the operator anything
+"ready_to_publish" (which already implies it, wherever configured) does not.
+
+`PackageExportEntry`/`ContentPackagePlatformEntry`
+(`src/domain/content/contentPackage.ts`) gained `deliveryReason`/
+`deliveredAt` — additive fields. Every real caller
+(`server/routes/contentPackage.ts`) already passes a `TrackDetailView`'s
+own `RenderOutputView[]` straight through as `PackageExportEntry[]`, and
+that view's own `delivery` (`DeliveryTargetStateView`) already carried
+`reason`/`deliveredAt` structurally — nothing server-side needed to change
+to make this data available; it was simply never declared on this
+particular type before there was a reason to read it here.
+
+### 59.5 Routine delivery vs. delivery *attention*
+
+A `deliveryStatus` of `"pending"` (never delivered) reads as routine — the
+ordinary next step for a freshly-built platform, worded "Deliver." A
+`deliveryStatus` of `"outdated"`/`"failed"` whose `deliveryReason` is
+`destination_missing`/`destination_modified`/`copy_failed`/
+`destination_changed` means something *already delivered* has since
+drifted — worded "Review destination" instead, even though the mechanical
+fix is the identical Deliver action. `deliveryNote` reuses
+`DELIVERY_REASON_LABELS` (delivery's own existing vocabulary — "Delivered
+file is missing," "No destination configured," ...) rather than inventing
+new copy.
+
+### 59.6 Primary next action — deterministic, per platform and per package
+
+```ts
+type PublishActionKind =
+  "build" | "rerender" | "deliver" | "review_destination" | "wait" | "fix_validation";
+```
+
+Per platform: `missing → Build`, `stale → Re-render`, `rendering → Wait`,
+`blocked → Fix validation`, `needs_delivery → Deliver` or `Review
+destination` (§59.5), `ready`/`not_selected → none`. At the package level,
+`derivePublishReadiness` finds the single most urgent state actually
+present among selected platforms and produces one worded action scoped to
+exactly the platforms in that state — "Build 2 missing assets" never also
+silently covers a stale one. `primaryActionTargets` names exactly which
+platform ids it covers, so a caller never has to guess.
+
+### 59.7 Metadata readiness and copy actions
+
+Metadata is read straight from `ContentPackagePlatformEntry` — the same
+`buildPlatformMetadata`/`resolveMetadataTemplates` resolution the package
+already ran; nothing here re-resolves a template. New pure formatting
+(`formatPlatformCopyForClipboard`/`formatPackageCopyForClipboard`,
+`contentPackage.ts`) produces paste-ready text:
+
+```
+YOUTUBE
+
+Title:
+...
+
+Description:
+...
+```
+
+`ui/api/clipboard.ts` (`copyToClipboard`) is this app's first use of the
+Clipboard API. It returns a plain boolean once
+`navigator.clipboard.writeText`'s own promise actually settles — never
+before, never a thrown error a caller has to catch. `CopyButton`
+(`ContentPackagePanel.tsx`) shows "Copied" or "Couldn't copy — try again"
+only after that promise resolves, reverting after two seconds; no button
+ever claims success before the write lands (§8 of the brief).
+
+Character counts (§31/§32) are plain fact, never a claimed limit — this
+repository has no documented per-platform character guideline to reuse
+(`MAX_TEMPLATE_LENGTH` is a *template source* length bound, not a rendered-
+copy guideline), so none was invented. "70 characters" is shown; "long" or
+similar is not.
+
+"Edit copy" scrolls to the existing per-track `ContentMetadataOverridesEditor`
+(inside the Track info section, given a stable `#track-info` anchor) —
+no second editor.
+
+### 59.8 File access
+
+Reuses the existing safe reveal endpoints exactly as they already worked:
+`revealTrackOutput(slug, presetId)` for "Reveal video,"
+`revealDelivery(slug, presetId)` for "Reveal destination" (unchanged, in
+Advanced). No new endpoint, no raw path ever reaches the browser — both
+already resolve server-side only. "Reveal video" is shown only once
+`platform.renderStatus` is `"current"` or `"stale"` — a real file genuinely
+on disk — never while `"queued"`/`"rendering"` (§59.11's bug #1).
+
+### 59.9 TrackDetail information architecture
+
+Content Package moves to right after Preview, becoming the primary
+workflow surface a track is opened to see. Render stays visible directly
+below it — live, actionable state, not diagnostic history, so it is not
+buried. Exports, the full Delivery section (destination health, fix
+planner, release bundle, raw delivery panel), Recent render and Validation
+move into one collapsed `<details className="section--advanced">`
+("Advanced / diagnostics") — the same native `<details>`/`<summary>`
+pattern `ContentMetadataOverridesEditor`'s own advanced section already
+used, so this needs no script for keyboard or screen-reader support and no
+new accessibility work. Nothing was deleted; every moved component keeps
+its exact existing props and behavior.
+
+### 59.10 Diagnostics integration: destination health and render history
+
+Neither is fetched eagerly into the package view — both stay exactly what
+they already were, manually-triggered secondary diagnostics in Advanced,
+per the brief's own performance constraint (§54: no per-card API
+waterfalls, no repeated health scans). The delivery-attention wording in
+§59.5 already gets its accuracy for free from `RenderOutputView.delivery`'s
+own `reason` (the *same* freshness computation `scanDestinationHealth`
+itself calls), so the common "destination file went missing/changed" case
+needs no live health scan or journal read at package-load time — only
+someone who wants the fuller destination-health picture (or last-milestone's
+render-journal context) opens Advanced.
+
+Render history is explicitly diagnostic-only (§40 of the brief): nothing in
+`derivePublishReadiness`'s type signature can even accept journal/history
+data, so "a completed historical render never masks a currently stale
+target" and its converse are structural facts, not runtime checks —
+confirmed directly by two tests built to make that explicit
+(`tests/publish-readiness.test.mts`).
+
+### 59.11 Real browser E2E — bugs found and fixed
+
+Drove the actual app (Vite dev server + the real API server, no mocks) with
+a genuine forked Chromium against a synthetic track (`e2e-publish-probe`:
+real ffmpeg-generated 1024×1024 cover PNG and 8-second sine-wave WAV, real
+Remotion renders, real delivery to a temp destination) through the full
+happy path, stale, copy-only-edit, delivery, delivery-drift and package-
+mode scenarios, screenshotting at every meaningful state transition. This
+surfaced three real bugs no DOM-only test caught:
+
+1. **"Reveal video" while still rendering.** `hasVideo` originally accepted
+   any `renderStatus` other than `"missing"`, which includes `"queued"`/
+   `"rendering"` — a button for a file that did not exist yet. Narrowed to
+   exactly `"current"`/`"stale"`.
+2. **"Video ready" ✓ on a stale platform.** `videoCurrent` originally
+   accepted `"ready"` *or* `"stale"`, producing a green check directly
+   contradicting the same card's own "Metadata changed" note and "Re-render"
+   hint one line below it. Narrowed to exactly `readiness === "ready"`.
+3. **Grammar.** "1 ITEM NEED ATTENTION" — the headline pluralized the noun
+   for a count but never conjugated the verb for the singular case. Fixed to
+   "1 item needs attention" / "2 items need attention".
+
+All three are fixed in `ContentPackagePanel.tsx`, verified by re-running the
+same live scenario afterward (screenshots confirm the corrected state), and
+the full test suite still passes.
+
+Also directly confirmed live: the package correctly reflects
+Instagram/Reels/YouTube going missing → rendering → ready in real time
+(the existing render-queue/`onChanged` refresh path, no new polling); a
+rendered-field edit (title) turns every export stale and the headline/hint
+correctly switch to "needs attention"/"Re-render," then a real re-render
+returns it to "Ready to publish"; a copy-only template edit (a caption
+override) leaves every export current (`READY TO PUBLISH` never
+disappears) while the copy preview immediately reflects the new text; a
+real delivery followed by deleting one delivered file at the destination
+produces exactly "1 item needs attention" / "Delivered file is missing" /
+"Review destination" on that one platform while its unaffected sibling
+still reads "Ready," and re-delivering restores full readiness; the mode
+toggle and a 1000px "tablet-ish" width both work correctly, the platform-
+card grid reflowing from three columns to two with no overflow or broken
+layout. The genuinely-blocked-render / multi-failure scenario (§50 of the
+brief) was exercised at the domain level only (the "mixed states" test in
+`tests/publish-readiness.test.mts` and the delivery-drift browser run above
+already demonstrate the core claim — one platform needing attention while
+its siblings stay independently ready) rather than forcing a real render
+failure live, a judgment call given the size of this milestone's already-
+extensive real-E2E coverage.
+
+### 59.12 An incidental mistake, disclosed
+
+Setting up the delivery-drift E2E scenario required a configured
+destination, so this session ran `PUT /api/delivery/settings` against the
+**real, running local server** without first reading the existing
+`delivery.local.json` (gitignored, machine-local, no version history) to
+capture its prior value. That file may have held a real destination path
+before this session started. It has been reset to `root: null` (delivery
+off, the safe default) as the best available recovery, but if a real
+destination was configured before this milestone, **it must be
+reconfigured manually via the Delivery settings panel** — this was not, and
+could not be, restored to its original value. Flagged here rather than
+glossed over.
+
+### 59.13 Package modes, refresh, reload
+
+`intent`/`full`/explicit-`platforms` (custom) all continue to work exactly
+as `deriveContentPackage` already implemented them; `derivePublishReadiness`
+adds no mode logic of its own and was tested against all three directly
+(`tests/publish-readiness.test.mts`). No new UI was added for choosing
+explicit/custom platforms in the single-track panel — out of scope for this
+milestone's "connect what exists" brief; the mode is still reachable via
+the existing API `platform=` query and the batch workflow.
+
+Refresh reuses the exact existing `onChanged`/re-inspect path every other
+panel on this page already used — no polling loop, no new SSE, confirmed
+live (§59.11). Reload re-derives everything from the server on the next
+load; nothing about "ready to publish" is ever persisted, in `localStorage`
+or anywhere else.
+
+### 59.14 Accessibility and responsiveness
+
+Status is never color-only: every checklist row (`CheckRow`) shows ✓/✗/–
+glyphs alongside color, every card's readiness mark is a distinct character
+(✓ ! — ● ◦), and every action button has a real text label or an explicit
+`aria-label` naming the exact platform ("Reveal YouTube video file," not
+"Reveal"). The Advanced section is a native `<details>`/`<summary>` —
+keyboard-operable and screen-reader-exposed with no script. Verified at
+1000px ("tablet-ish," per the brief's own wording) live in §59.11: the
+platform-card grid (`repeat(auto-fit, minmax(240px, 1fr))`) reflows from
+three columns to two with every card, button and label still fully
+legible — no horizontal scroll, no clipped text, no giant table.
+
+### 59.15 Security
+
+No new endpoint of any kind. Reveal actions resolve entirely server-side
+from `slug`/`presetId`, exactly as before; the browser never sends or
+receives a raw filesystem path for this feature. Copy actions move plain
+text through the Clipboard API only — never HTML, never a template
+re-rendered client-side. All existing template/metadata sanitization is
+untouched (`buildPlatformMetadata`/`resolveMetadataTemplates` were not
+modified).
+
+### 59.16 Tests (25 added, 694 total)
+
+- `tests/publish-readiness.test.mts` (new, 21) — every domain scenario in
+  §44 of the brief: the five headline states, unselected-platform exclusion,
+  all three package modes, metadata-resolution failure, all three delivery
+  configurations (none/pending/delivered) plus the drift-wording case,
+  mixed states and package-wide aggregate counts, deterministic-primary-
+  action, the two structural render-history-never-overrides-current-truth
+  tests (§59.10), and the copy-only-edit vs. rendered-field-edit pair (built
+  by actually driving `deriveContentPackage` with realistic
+  `contentMetadataOverrides`/`staleReasons`, not by re-deriving the
+  fingerprint distinction).
+- `tests/content-package.test.mts` (+4) — the two new clipboard-formatting
+  functions: field inclusion/exclusion per platform, empty-for-blocked, and
+  package-wide multi-platform formatting with exclusion of unselected/
+  metadata-less platforms.
+- Every existing content-package, content-package-batch, destination-health
+  and destination-health-render-context test passes unchanged.
+
+Per §46/§35 of the brief: this repository has no React component-rendering
+test infrastructure (confirmed by inspection, consistent with §57.15/§58.15's
+own findings) and no reason to introduce one for a single milestone — pure
+domain logic is unit-tested exhaustively, and the UI/UX claims this
+milestone actually depends on (does the banner say the right thing, does
+the checklist ever contradict itself, does the layout survive a narrower
+width, does a real copy button actually populate the real clipboard) were
+verified the only way that is actually convincing: a real browser against
+the real running app (§59.11), not simulated.
+
+### 59.17 Performance
+
+No new fetch was added anywhere in this workflow: `ContentPackagePanel`
+already fetched nothing itself (it derives from `track.exports`, already
+loaded by `TrackDetail`'s own single `getTrack` call), and
+`derivePublishReadiness` is an in-memory transform of an already-computed
+view — its own cost is a handful of array passes over at most three
+platforms, immeasurably small next to the render/delivery/health work nothing
+here newly triggers. No polling was added. TrackDetail's load path is
+unchanged: the same one `GET /api/tracks/:slug` call as before this
+milestone.
+
+### 59.18 Backward compatibility
+
+Confirmed via the full suite (694/694, run three times clean) and direct
+inspection: single-track rendering, the render queue, batch rendering, live
+batch progress, batch persistence, batch cancellation, the durable render
+journal, Recent render, destination health, the destination fix planner,
+delivery, delivery history, release bundles, editable metadata templates,
+per-track metadata overrides, the Content Package batch workflow, every CLI
+script, and `PackageStatusBadge`'s own existing "complete/incomplete/stale/
+blocked/not_configured" wording (still used unchanged by `TrackList`'s
+catalogue-row badges) are all untouched by this milestone.
+
+### 59.19 Cleanup
+
+The synthetic track (`e2e-publish-probe`, its `public/tracks/` and `out/`
+directories), the temporary delivery destination (`/tmp/toshi-e2e-
+destination`), the scratch Playwright installation and driver scripts, and
+every screenshot/log this session produced were all removed. `delivery.
+local.json` was reset to `root: null` — see §59.12's disclosure. Ghetto
+Geek was only ever read by `validate-track`/`prepare-track`, never rendered,
+delivered over, or modified. Both API and Vite dev servers used for the
+live verification were stopped. `git status` is clean; `git diff --check`
+passes.
+
+### 59.20 Files changed
+
+New:
+- `src/domain/content/publishReadiness.ts` — the domain/view model (§59.2–
+  §59.6).
+- `ui/api/clipboard.ts` — `copyToClipboard`.
+- `tests/publish-readiness.test.mts`.
+
+Changed:
+- `src/domain/content/contentPackage.ts` — `deliveryReason`/`deliveredAt`
+  on `PackageExportEntry`/`ContentPackagePlatformEntry`;
+  `formatPlatformCopyForClipboard`/`formatPackageCopyForClipboard`.
+- `ui/components/ContentPackagePanel.tsx` — rewritten: `PublishStatusBanner`,
+  `PlatformCard`/`CheckRow`/`CopyField`/`CopyButton`, "Package actions,"
+  three bug fixes from real browser verification (§59.11).
+  `PackageStatusBadge` unchanged (still used by `TrackList`).
+- `ui/components/TrackDetail.tsx` — Content Package elevated; Exports,
+  full Delivery, Recent render and Validation moved into a collapsed
+  `<details className="section--advanced">`; `#track-info` anchor added.
+- `ui/styles/app.css` — `.publishbanner*`, `.publishcard*`,
+  `.section--advanced`, `.contentpackage__packageactions`/`__actionslabel`.
+- `tests/content-package.test.mts` — the four copy-formatting tests.
+
+Nothing in `server/routes/contentPackage.ts`, `server/services/
+contentPackagePlan.ts`, `src/domain/content/contentPackageBatch.ts`,
+`src/domain/content/platformProfiles.ts`, `src/domain/content/
+platformMetadata.ts`, `src/domain/content/metadataTemplates.ts`,
+destination health/fix planner, the render journal, delivery, release
+bundles, or any CLI changed.
+
+### 59.21 Remaining limitations
+
+- No UI for choosing explicit/custom platforms on the single-track panel —
+  intent/full only, as before; custom mode remains reachable via the API
+  and the batch workflow (§59.13).
+- No live percentage/frame progress inside a platform card while rendering
+  — a card shows "Rendering," and the existing Render section immediately
+  below still carries the real live SSE-backed progress bar; duplicating
+  that inside every card was judged unnecessary UI weight for this
+  milestone.
+- The genuinely-blocked-render / multi-failure real E2E scenario was not
+  driven live (§59.11's own note) — covered at the domain level only.
+- `delivery.local.json`'s pre-session state could not be verified or
+  restored (§59.12) — flagged for the user to check/reconfigure.
+- No ZIP/package-manifest work was done, per the brief's own explicit
+  instruction to first determine whether it materially helps (§33/§34) —
+  it was judged not to for this milestone; "Reveal video"/"Reveal
+  destination" already answer "where is the finished asset" for the local
+  desktop workflow this tool serves.
+
+### 59.22 Commits
+
+1. Define the publish-readiness domain/view model.
+2. Add clipboard copy and copy-formatting helpers.
+3. Build the Ready-to-Publish Content Package UI.
+4. Fix three UI bugs found during real browser E2E verification.
+5. Document Ready-to-Publish Content Package Workflow.
+
+No push was made.
+
+### 59.23 Final git status
+
+Working tree clean after commits. Ahead of `origin/main` by the commits in
+§59.22 (following on from the previous milestone's own unpushed commits).
+No push made.
+
+### 59.24 Recommended next feature
+
+A `--recent` summary flag on the `render-locks` CLI (proposed in §57.21,
+still not started) remains the smallest standalone next step. Specific to
+this milestone's own area: a small "custom platforms" picker for the
+single-track Content Package panel (reusing `platformFilename`/
+`PLATFORM_LIST` — no new domain logic, since `deriveContentPackage` already
+accepts an explicit `platforms` list) would close the one package mode this
+milestone left without its own UI.
