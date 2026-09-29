@@ -6,6 +6,10 @@ import type {
   ApiErrorCode,
   ApiResponse,
   BatchContentPackageView,
+  ContentLibraryAdoptView,
+  ContentLibraryRecordView,
+  ContentLibraryReexportView,
+  ContentLibraryView,
   ContentMetadataSettingsPatch,
   ContentMetadataSettingsView,
   ContentPackageBatchApplyView,
@@ -616,3 +620,42 @@ export const applyDestinationFix = (
 /** SSE endpoint for a batch's aggregate; consumed with EventSource. */
 export const renderBatchEventsUrl = (batchId: string): string =>
   `/api/render-batches/${encodeURIComponent(batchId)}/events`;
+
+/* ------------------------------------------------------------------ *
+ * Content library
+ * ------------------------------------------------------------------ */
+
+/** Filter values as the query string names them; see parseContentLibraryQuery. */
+export type ContentLibraryQuery = {
+  readonly track?: string | null;
+  readonly preset?: string | null;
+  readonly status?: string | null;
+  readonly kind?: string | null;
+  readonly since?: string | null;
+  readonly order?: "newest" | "oldest";
+  readonly limit?: number;
+};
+
+export const getContentLibrary = (query: ContentLibraryQuery = {}): Promise<ContentLibraryView> => {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && `${value}`.length > 0) params.set(key, `${value}`);
+  }
+  const search = params.toString();
+  return request<ContentLibraryView>(`/api/content-library${search ? `?${search}` : ""}`);
+};
+
+export const getContentLibraryRecord = (recordId: string): Promise<ContentLibraryRecordView> =>
+  request<ContentLibraryRecordView>(`/api/content-library/${encodeURIComponent(recordId)}`);
+
+/** Starts a normal one-target render batch; the new export records itself on completion. */
+export const reexportContentLibraryRecord = (recordId: string): Promise<ContentLibraryReexportView> =>
+  jsonRequest<ContentLibraryReexportView>(
+    `/api/content-library/${encodeURIComponent(recordId)}/reexport`,
+    "POST",
+    {},
+  );
+
+/** Records exports already on disk that the library does not know about. */
+export const adoptExistingExports = (): Promise<ContentLibraryAdoptView> =>
+  jsonRequest<ContentLibraryAdoptView>("/api/content-library/adopt", "POST", {});

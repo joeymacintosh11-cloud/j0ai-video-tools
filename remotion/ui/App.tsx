@@ -14,6 +14,7 @@ import {
 } from "./api/client.ts";
 import { ApiRequestError } from "./api/client.ts";
 import { BatchContentPackagePanel } from "./components/BatchContentPackagePanel.tsx";
+import { ContentLibraryPanel } from "./components/ContentLibraryPanel.tsx";
 import { ContentMetadataSettingsPanel } from "./components/ContentMetadataSettingsPanel.tsx";
 import { DeliverPanel } from "./components/DeliverPanel.tsx";
 import { DeliveryHistoryPanel } from "./components/DeliveryHistoryPanel.tsx";
@@ -55,6 +56,10 @@ export const App: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [showingSettings, setShowingSettings] = useState(false);
   const [showingHistory, setShowingHistory] = useState(false);
+  const [showingLibrary, setShowingLibrary] = useState(false);
+  // Bumped whenever anything may have changed (a render finished, the window
+  // regained focus), so an open library re-reads without polling.
+  const [libraryRefresh, setLibraryRefresh] = useState(0);
   const [showingBatchPackage, setShowingBatchPackage] = useState(false);
   const [batchMode, setBatchMode] = useState<BatchSessionMode>("intent");
   const [batchPlatforms, setBatchPlatforms] = useState<readonly PlatformId[]>(
@@ -186,6 +191,7 @@ export const App: React.FC = () => {
     reloadDetail();
     reloadDelivery();
     reloadContentMetadataSettings();
+    setLibraryRefresh((previous) => previous + 1);
   }, [reloadTracks, reloadDetail, reloadDelivery, reloadContentMetadataSettings]);
 
   useWindowFocus(refreshAll);
@@ -270,9 +276,23 @@ export const App: React.FC = () => {
           onClick={() => {
             setShowingSettings((previous) => !previous);
             setShowingHistory(false);
+            setShowingLibrary(false);
           }}
         >
           {showingSettings ? "Close settings" : "Delivery"}
+        </button>
+        {/* Always offered: the library records every completed render,
+            whether or not a delivery destination exists. */}
+        <button
+          type="button"
+          className="button button--quiet"
+          onClick={() => {
+            setShowingLibrary((previous) => !previous);
+            setShowingSettings(false);
+            setShowingHistory(false);
+          }}
+        >
+          {showingLibrary ? "Close library" : "Library"}
         </button>
         {/* Only once there is a destination: before that nothing can have
             been delivered, and the settings panel is where that is set. */}
@@ -283,6 +303,7 @@ export const App: React.FC = () => {
             onClick={() => {
               setShowingHistory((previous) => !previous);
               setShowingSettings(false);
+              setShowingLibrary(false);
             }}
           >
             {showingHistory ? "Close history" : "History"}
@@ -430,6 +451,18 @@ export const App: React.FC = () => {
               onChanged={refreshAll}
               onClose={() => setShowingBatchPackage(false)}
             />
+          </div>
+        ) : showingLibrary ? (
+          <div className="detail">
+            <section className="section">
+              <h3 className="section__title">Content library</h3>
+              <p className="muted">
+                Every export generated for every track, and which version is on disk now.
+                Recorded in <code>out/.content-library/library.jsonl</code> as each render
+                completes, and never rewritten.
+              </p>
+              <ContentLibraryPanel refreshToken={libraryRefresh} onBatchStarted={setBatchId} />
+            </section>
           </div>
         ) : showingHistory ? (
           <div className="detail">
