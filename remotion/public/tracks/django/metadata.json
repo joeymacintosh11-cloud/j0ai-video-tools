@@ -1,0 +1,28 @@
+{
+  "title": "Die ene mooie vrouw",
+  "artist": "Toshi",
+  "key": "A Minor",
+  "bpm": 102,
+  "subtitle": "Toshi Remix",
+  "exportPresets": [
+    "youtube-16x9",
+    "vertical-9x16",
+    "square-1x1"
+  ],
+  "deliveryFolder": "Django",
+  "contentMetadataOverrides": {
+    "youtube": {
+      "titleTemplate": "{title} | {tagline} | {artist}",
+      "descriptionTemplate": "{title} by {artist}.\n\nKey: {key}\nBPM: {bpm}\n\n{subtitle}\n\nProduced by {artist}.",
+      "keywordsTemplate": "{artist}, {bpm}bpm, {key}, type-beat, toshi"
+    },
+    "reels": {
+      "captionTemplate": "{title} — {artist} ({key}, {bpm} BPM){subtitleSuffix}",
+      "hashtagsTemplate": "#{artist} #TypeBeat #ToshiBeats"
+    },
+    "instagram-square": {
+      "captionTemplate": "{title} — {artist} ({key}, {bpm} BPM){subtitleSuffix}",
+      "hashtagsTemplate": "#{artist} #TypeBeat #ToshiBeats"
+    }
+  }
+}
