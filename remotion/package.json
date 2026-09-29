@@ -54,6 +54,7 @@
     "content-package-batch": "node scripts/content-package-batch.mts",
     "content-metadata": "node scripts/content-metadata.mts",
     "render-journal": "node scripts/render-journal.mts",
+    "content-library": "node scripts/content-library.mts",
     "test": "node --test tests/*.test.mts",
     "render-all-formats": "node scripts/render-track.mts --all-formats"
   }

@@ -20,6 +20,12 @@ import {
 } from "./routes/deliveryHistory.ts";
 import { handleExportMissing } from "./routes/exportMissing.ts";
 import { handleGetRenderHistory } from "./routes/renderHistory.ts";
+import {
+  handleAdoptExistingExports,
+  handleGetContentLibrary,
+  handleGetContentLibraryRecord,
+  handleReexportContentLibraryRecord,
+} from "./routes/contentLibrary.ts";
 import { handleGetContentPackage } from "./routes/contentPackage.ts";
 import {
   handleApplyContentPackageBatch,
@@ -315,6 +321,28 @@ const route = async (
     }
     if (third === "cancel" && method === "POST") {
       handleCancelBatch(second, response);
+      return;
+    }
+
+    sendNotFound(response, "Endpoint");
+    return;
+  }
+
+  if (collection === "content-library") {
+    if (second === undefined && method === "GET") {
+      await handleGetContentLibrary(request, response);
+      return;
+    }
+    if (second === "adopt" && third === undefined && method === "POST") {
+      await handleAdoptExistingExports(response);
+      return;
+    }
+    if (second !== undefined && third === undefined && method === "GET") {
+      await handleGetContentLibraryRecord(response, second);
+      return;
+    }
+    if (second !== undefined && third === "reexport" && segments.length === 4 && method === "POST") {
+      await handleReexportContentLibraryRecord(response, second);
       return;
     }
 

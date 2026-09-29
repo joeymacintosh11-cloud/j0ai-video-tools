@@ -16,6 +16,13 @@ import type {
 } from "../delivery/deliveryHistory.ts";
 import type { RenderJournalStatus } from "../render/renderJournal.ts";
 import type {
+  ContentLibraryEntry,
+  ContentLibraryProblem,
+  ContentLibraryStatus,
+  ContentLibrarySummary,
+  LibraryFormatSummary,
+} from "../library/contentLibrary.ts";
+import type {
   DestinationFinding,
   DestinationHealthCounts,
   DestinationHealthStatus,
@@ -1215,3 +1222,58 @@ export type {
   PlaceholderKey,
   YoutubeTemplateFields,
 } from "../content/metadataTemplates.ts";
+
+/* ------------------------------------------------------------------ *
+ * Content library
+ * ------------------------------------------------------------------ */
+
+/** Whether per-version delivery facts could be attributed, and if not, why. */
+export type ContentLibraryDeliveryAvailability = "not_configured" | "available" | "unavailable";
+
+/**
+ * GET /api/content-library
+ *
+ * Mirrors `DeliveryHistoryView`'s status/statusNote split: a damaged library
+ * still returns every record that could be read, with `status`/`statusNote`
+ * saying so rather than the endpoint failing outright.
+ */
+export type ContentLibraryView = {
+  readonly status: ContentLibraryStatus;
+  readonly statusNote: string | null;
+  readonly problems: readonly ContentLibraryProblem[];
+  /** Entries matching the query, ordered and limited. Status is derived, never stored. */
+  readonly entries: readonly ContentLibraryEntry[];
+  /** How many matched before the limit was applied. */
+  readonly matched: number;
+  readonly limit: number;
+  /** Over the whole library, or over one track when the query names one. */
+  readonly summary: ContentLibrarySummary;
+  readonly knownTracks: readonly { readonly slug: string; readonly title: string }[];
+  readonly knownPresets: readonly { readonly id: string; readonly label: string }[];
+  /** Which formats the named track has had generated; null without a track filter. */
+  readonly formats: readonly LibraryFormatSummary[] | null;
+  readonly deliveries: ContentLibraryDeliveryAvailability;
+};
+
+/** GET /api/content-library/:recordId */
+export type ContentLibraryRecordView = {
+  readonly entry: ContentLibraryEntry;
+  /** Every version of the same track and format, oldest first. */
+  readonly versions: readonly ContentLibraryEntry[];
+  readonly reexport: { readonly allowed: boolean; readonly reason: string | null };
+  readonly deliveries: ContentLibraryDeliveryAvailability;
+};
+
+/** POST /api/content-library/:recordId/reexport — a normal one-target render batch. */
+export type ContentLibraryReexportView = {
+  readonly recordId: string;
+  readonly batch: RenderBatchView;
+};
+
+/** POST /api/content-library/adopt */
+export type ContentLibraryAdoptView = {
+  readonly adopted: number;
+  readonly alreadyRecorded: number;
+  readonly skipped: readonly { readonly slug: string; readonly presetId: string; readonly reason: string }[];
+  readonly problems: readonly string[];
+};
