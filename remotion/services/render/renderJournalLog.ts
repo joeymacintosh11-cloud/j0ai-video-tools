@@ -1,18 +1,4 @@
-import { randomInt, randomUUID } from "node:crypto";
-import {
-  closeSync,
-  constants,
-  existsSync,
-  fsyncSync,
-  linkSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  unlinkSync,
-  writeSync,
-} from "node:fs";
-import { open } from "node:fs/promises";
-import { hostname } from "node:os";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   parseRenderJournal,
@@ -22,6 +8,7 @@ import {
   type RenderJournalEvent,
   type RenderJournalRead,
 } from "../../src/domain/render/renderJournal.ts";
+import { appendJsonlLine, withJsonlAppendLock } from "../storage/jsonlAppendLog.ts";
 import { withFileMutation, writeAtomicFile } from "../tracks/atomicFile.ts";
 import { OUT_DIR } from "../tracks/trackLocations.ts";
 
@@ -36,15 +23,14 @@ import { OUT_DIR } from "../tracks/trackLocations.ts";
  * directory listing. Never committed, never placed under `public/` or mixed
  * with a track's own rendered output, per the milestone brief.
  *
- * The append/lock/fsync strategy is copied deliberately from
- * services/delivery/deliveryHistoryLog.ts — see that file's own comment for
- * the full reasoning (JSON Lines so a crash can damage at most one line;
- * O_APPEND plus an exclusive cross-process lock plus fsync so a reported
- * append is durable before anything is told so). It is not shared code
- * because the two logs differ in one real way: a delivery log is one per
- * export destination (parameterized by `root`), while this journal is one
- * fixed file for the whole application — there is exactly one render
- * manager's worth of history to keep, wherever it runs.
+ * The append/lock/fsync strategy is the delivery log's — see
+ * services/delivery/deliveryHistoryLog.ts for the full reasoning (JSON Lines
+ * so a crash can damage at most one line; O_APPEND plus an exclusive
+ * cross-process lock plus fsync so a reported append is durable before
+ * anything is told so). The primitives themselves now live in
+ * services/storage/jsonlAppendLog.ts, shared with the content library's own
+ * project-local log; the delivery log keeps its own copy because it lives at
+ * an export destination and wraps each step in destination-identity checks.
  *
  * **Why a cross-process lock, when render manager is normally "the" server.**
  * `renderManager` is a plain module singleton, not a network service: several
@@ -79,124 +65,8 @@ const defaultRoot = (): string =>
 
 export const renderJournalPath = (root: string = defaultRoot()): string =>
   path.join(root, RENDER_JOURNAL_FILENAME);
-const lockPath = (root: string): string => path.join(root, LOCK_FILENAME);
-
-const LOCK_TIMEOUT_MS = 5_000;
-const LOCK_RETRY_MS = 8;
-const LOCK_RETRY_JITTER_MS = 12;
-const LOCK_SUSPECT_MS = 250;
-
-type LockOwner = {
-  readonly pid: number;
-  readonly hostname: string;
-  readonly token: string;
-  readonly createdAt: string;
-};
-
-const isAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-};
-
-const readOwner = (file: string): LockOwner | null => {
-  try {
-    const owner = JSON.parse(readFileSync(file, "utf8")) as LockOwner;
-    return typeof owner?.token === "string" &&
-      typeof owner.hostname === "string" &&
-      Number.isInteger(owner.pid) &&
-      owner.pid > 0
-      ? owner
-      : null;
-  } catch {
-    return null;
-  }
-};
-
-/** Only a dead process on this host permits reclaiming; see deliveryHistoryLog.ts's twin. */
-const clearAbandoned = (file: string): boolean => {
-  const owner = readOwner(file);
-  if (owner === null || owner.hostname !== hostname() || isAlive(owner.pid)) return false;
-  try {
-    if (readOwner(file)?.token !== owner.token) return false;
-    unlinkSync(file);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const publishLock = (file: string, token: string): void => {
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  try {
-    const descriptor = openSync(temporary, "wx");
-    try {
-      writeSync(
-        descriptor,
-        JSON.stringify({
-          pid: process.pid,
-          hostname: hostname(),
-          token,
-          createdAt: new Date().toISOString(),
-        } satisfies LockOwner),
-      );
-      fsyncSync(descriptor);
-    } finally {
-      closeSync(descriptor);
-    }
-    linkSync(temporary, file);
-  } finally {
-    try {
-      unlinkSync(temporary);
-    } catch {
-      // Never created, or already gone.
-    }
-  }
-};
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-
-const withAppendLock = async <T>(root: string, operation: () => Promise<T>): Promise<T> => {
-  mkdirSync(root, { recursive: true });
-  const file = lockPath(root);
-  const token = randomUUID();
-  const start = Date.now();
-  let held = false;
-
-  while (!held) {
-    try {
-      publishLock(file, token);
-      held = true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const waited = Date.now() - start;
-      if (waited >= LOCK_TIMEOUT_MS) {
-        throw new Error(
-          `The render journal at ${root} is locked by another process and did not free up ` +
-            `within ${LOCK_TIMEOUT_MS / 1000}s.`,
-        );
-      }
-      if (waited > LOCK_SUSPECT_MS) clearAbandoned(file);
-      await sleep(LOCK_RETRY_MS + randomInt(LOCK_RETRY_JITTER_MS));
-    }
-  }
-
-  try {
-    return await operation();
-  } finally {
-    try {
-      if (readOwner(file)?.token === token) unlinkSync(file);
-    } catch {
-      // Already gone, or not ours to remove.
-    }
-  }
-};
+const withAppendLock = <T>(root: string, operation: () => Promise<T>): Promise<T> =>
+  withJsonlAppendLock({ root, lockFilename: LOCK_FILENAME, label: "render journal" }, operation);
 
 /** The whole journal, parsed. Small by design (see retention) — read in one go. */
 export const readRenderJournal = (root: string = defaultRoot()): RenderJournalRead => {
@@ -211,45 +81,6 @@ export const readRenderJournal = (root: string = defaultRoot()): RenderJournalRe
     throw error;
   }
   return parseRenderJournal(text);
-};
-
-const appendLine = async (file: string, line: string): Promise<void> => {
-  const bytes = Buffer.from(line, "utf8");
-  const flags =
-    constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0);
-  const created = !existsSync(file);
-  const handle = await open(file, flags, 0o644);
-
-  try {
-    let written = 0;
-    while (written < bytes.length) {
-      const result = await handle.write(bytes, written, bytes.length - written);
-      if (result.bytesWritten <= 0) {
-        throw new Error(
-          `Wrote only ${written} of ${bytes.length} bytes to ${file} and then stopped making progress.`,
-        );
-      }
-      written += result.bytesWritten;
-    }
-    await handle.sync();
-  } finally {
-    try {
-      await handle.close();
-    } catch {
-      // The descriptor is going away with this operation regardless.
-    }
-  }
-
-  if (created) {
-    const directory = await open(path.dirname(file), constants.O_RDONLY);
-    try {
-      await directory.sync();
-    } catch {
-      // Not every filesystem allows fsync on a directory.
-    } finally {
-      await directory.close().catch(() => undefined);
-    }
-  }
 };
 
 export type AppendRenderJournalResult = {
@@ -276,7 +107,7 @@ export const appendRenderJournalEvent = async (
         const existing = readRenderJournal(root);
         const needsNewline = !existing.endsWithNewline;
         const line = `${needsNewline ? "\n" : ""}${JSON.stringify(event)}\n`;
-        await appendLine(file, line);
+        await appendJsonlLine(file, line);
         return { appended: true, problem: null };
       }),
     );
