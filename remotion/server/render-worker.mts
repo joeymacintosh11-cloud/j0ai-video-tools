@@ -77,6 +77,16 @@ const main = async (): Promise<void> => {
     presetId,
     cancelSignal,
     jobId,
+    onRecorded: (outcome) => {
+      if (outcome.appended && outcome.record) {
+        log(`Recorded in the content library (record ${outcome.record.recordId}).`);
+      } else if (!outcome.duplicate) {
+        log(
+          `Could not record this export in the content library: ${outcome.problem ?? "unknown problem"}. The export itself is fine.`,
+          "error",
+        );
+      }
+    },
     onPhase: (phase) => {
       if (phase === "bundling") {
         log("Bundling Remotion project.");

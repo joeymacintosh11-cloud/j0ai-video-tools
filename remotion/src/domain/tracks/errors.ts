@@ -26,7 +26,9 @@ export type TrackErrorCode =
   | "RENDER_BATCH_NOT_FOUND"
   | "RENDER_NOT_CANCELLABLE"
   | "RENDER_ALREADY_ACTIVE"
-  | "RENDER_TARGET_LOCKED";
+  | "RENDER_TARGET_LOCKED"
+  | "LIBRARY_RECORD_NOT_FOUND"
+  | "LIBRARY_RECORD_NOT_CURRENT";
 
 export type TrackIssue = {
   readonly code: TrackErrorCode;

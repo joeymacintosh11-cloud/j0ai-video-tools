@@ -9,8 +9,9 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { deliverAfterRender } from "../delivery/autoDeliver.ts";
 import type { DeliveryOutcome } from "../delivery/deliverExport.ts";
+import type { AppendContentLibraryResult } from "../library/contentLibraryLog.ts";
+import { publishRecordedExport, trackSnapshotFromProps } from "../library/recordExport.ts";
 import { fingerprintInputs } from "../tracks/exportManifest.ts";
-import { publishExport } from "./publishExport.ts";
 import { withRenderTargetLock, type RenderTargetLock } from "./renderLock.ts";
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
 import { COMPOSITION_ID } from "../../src/domain/video/compositionConfig.ts";
@@ -56,6 +57,12 @@ export type RenderTrackVideoOptions = {
   readonly onProgress?: (update: RenderProgressUpdate) => void;
   /** Called when auto-delivery ran, whatever its result. */
   readonly onDelivery?: (outcome: DeliveryOutcome) => void;
+  /**
+   * Called once the completed export has been recorded in the content
+   * library (services/library/recordExport.ts), or has failed to be — the
+   * render itself has succeeded either way.
+   */
+  readonly onRecorded?: (outcome: AppendContentLibraryResult) => void;
 };
 
 export type RenderTrackVideoResult = RenderResolvedInfo;
@@ -65,10 +72,14 @@ const renderToTarget = async ({
   props,
   presetId = DEFAULT_RENDER_PRESET_ID,
   cancelSignal,
+  jobId,
   onPhase,
   onResolved,
   onProgress,
-}: RenderTrackVideoOptions, lock: RenderTargetLock): Promise<RenderTrackVideoResult> => {
+}: RenderTrackVideoOptions, lock: RenderTargetLock): Promise<{
+  readonly resolved: RenderTrackVideoResult;
+  readonly recorded: AppendContentLibraryResult;
+}> => {
   let cancelled = false;
   cancelSignal?.(() => {
     cancelled = true;
@@ -123,11 +134,17 @@ const renderToTarget = async ({
       onResolved?.(resolved);
 
       onPhase?.("rendering");
-      await publishExport(
+      // publishExport, plus a content-library record for what it published —
+      // written only once the publish has succeeded, still under this lock.
+      const recorded = await publishRecordedExport({
         slug,
         presetId,
         inputs,
-        async (stagedVideo) => {
+        track: trackSnapshotFromProps(slug, props),
+        jobId: jobId ?? null,
+        lock,
+        checkCancelled,
+        produce: async (stagedVideo) => {
           await renderMedia({
             composition,
             serveUrl: bundleLocation,
@@ -162,10 +179,8 @@ const renderToTarget = async ({
 
           await closeBrowser();
         },
-        checkCancelled,
-        lock,
-      );
-      return resolved;
+      });
+      return { resolved, recorded };
     } finally {
       await closeBrowser();
     }
@@ -202,14 +217,16 @@ export const renderTrackVideo = async (
 ): Promise<RenderTrackVideoResult> => {
   const presetId = options.presetId ?? DEFAULT_RENDER_PRESET_ID;
 
-  const result = await withRenderTargetLock(
+  const { resolved, recorded } = await withRenderTargetLock(
     options.slug,
     presetId,
     (lock) => renderToTarget(options, lock),
     { jobId: options.jobId ?? null },
   );
 
+  options.onRecorded?.(recorded);
+
   await deliverAfterRender(options.slug, presetId, options.onDelivery);
 
-  return result;
+  return resolved;
 };

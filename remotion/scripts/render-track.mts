@@ -10,7 +10,7 @@ import {
   renderTrackVideo,
 } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
-import { describeAnalysis, printMetadataSummary, runCli } from "./cli.ts";
+import { describeAnalysis, printMetadataSummary, runCli, printLibraryOutcome } from "./cli.ts";
 
 const printUsage = () => {
   console.error(
@@ -94,6 +94,7 @@ runCli("rendering track", async () => {
     const { outputLabel } = await renderTrackVideo({
       slug,
       props,
+      onRecorded: printLibraryOutcome,
       presetId,
       onPhase: (phase) => {
         if (phase === "bundling") {

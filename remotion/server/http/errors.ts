@@ -35,6 +35,8 @@ const STATUS_BY_CODE: Record<TrackErrorCode, number> = {
   RENDER_NOT_CANCELLABLE: 409,
   RENDER_ALREADY_ACTIVE: 409,
   RENDER_TARGET_LOCKED: 409,
+  LIBRARY_RECORD_NOT_FOUND: 404,
+  LIBRARY_RECORD_NOT_CURRENT: 409,
 };
 
 export const statusForCode = (code: TrackErrorCode): number =>

@@ -13,7 +13,7 @@ import {
 import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
 import type { BeatVisualizerProps } from "../src/BeatVisualizer/BeatVisualizer.ts";
-import { runCli } from "./cli.ts";
+import { runCli, printLibraryOutcome } from "./cli.ts";
 
 /**
  * Renders only the exports a track — or the whole catalogue — is missing.
@@ -185,6 +185,7 @@ runCli("rendering missing exports", async () => {
     const { outputLabel } = await renderTrackVideo({
       slug: target.slug,
       props,
+      onRecorded: printLibraryOutcome,
       presetId: target.presetId,
       onDelivery: (outcome) => {
         console.log(

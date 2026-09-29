@@ -15,7 +15,7 @@ import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
 import { listTracks } from "../services/tracks/listTracks.ts";
 import type { BeatVisualizerProps } from "../src/BeatVisualizer/BeatVisualizer.ts";
-import { runCli } from "./cli.ts";
+import { runCli, printLibraryOutcome } from "./cli.ts";
 
 /**
  * Inspects, plans, and optionally builds Content Packages for several tracks
@@ -246,6 +246,7 @@ runCli("inspecting content package batch", async () => {
     const { outputLabel } = await renderTrackVideo({
       slug: action.slug,
       props,
+      onRecorded: printLibraryOutcome,
       presetId: action.presetId,
       onDelivery: (outcome) => {
         console.log(

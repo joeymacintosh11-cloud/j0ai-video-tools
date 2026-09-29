@@ -2,6 +2,7 @@ import { TrackError } from "../src/domain/tracks/errors.ts";
 import type { TrackMetadata } from "../src/domain/tracks/types.ts";
 import type { AnalysisAudioResult } from "../services/tracks/prepareTrackAudio.ts";
 import { publicLabel } from "../src/domain/tracks/paths.ts";
+import type { AppendContentLibraryResult } from "../services/library/contentLibraryLog.ts";
 
 /**
  * Runs a CLI entry point, mapping the shared error model onto terminal output
@@ -45,4 +46,17 @@ export const describeAnalysis = (
   return analysis.regenerated
     ? `✓ Generated waveform analysis audio: ${label}`
     : `✓ ${upToDateWording}: ${label}`;
+};
+
+/** One line saying whether a finished render made it into the content library. */
+export const printLibraryOutcome = (outcome: AppendContentLibraryResult): void => {
+  if (outcome.appended && outcome.record) {
+    console.log(
+      `✓ Recorded in the content library (${outcome.record.exportKind === "reexport" ? "re-export" : "original"}, ${outcome.record.recordId})`,
+    );
+  } else if (!outcome.duplicate) {
+    console.log(
+      `! Not recorded in the content library: ${outcome.problem ?? "unknown problem"}. The export itself is fine.`,
+    );
+  }
 };

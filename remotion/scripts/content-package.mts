@@ -20,7 +20,7 @@ import { trackExportCoverage } from "../services/tracks/exportCoverage.ts";
 import { inspectTrack } from "../services/tracks/inspectTrack.ts";
 import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
-import { runCli } from "./cli.ts";
+import { runCli, printLibraryOutcome } from "./cli.ts";
 
 /**
  * Inspects, and optionally builds, a track's content package: the
@@ -228,6 +228,7 @@ runCli("inspecting content package", async () => {
     const { outputLabel } = await renderTrackVideo({
       slug: target.slug,
       props,
+      onRecorded: printLibraryOutcome,
       presetId: target.presetId,
       onDelivery: (outcome) => {
         console.log(
