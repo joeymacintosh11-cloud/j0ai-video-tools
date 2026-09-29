@@ -10232,3 +10232,147 @@ V2 boundaries named in §61.35, a lightweight brand-profile abstraction
 what are today Toshi-specific constants) is the most natural first step,
 since §61.5 already identifies exactly where that boundary currently sits
 and why it was deliberately not crossed in V1.
+
+## 62. V2 — Delivery History & Content Library (2026-09-29)
+
+First V2 milestone. Adds a permanent, destination-independent record of every
+export generated for every track, and a Library view over it.
+
+### 62.1 What already existed, and the gap
+
+The brief asked for an append-only "delivery history". Two append-only JSONL
+histories already existed and were **not** duplicated:
+
+- **The delivery log** (§ Delivery history, `src/domain/delivery/deliveryHistory.ts`)
+  — copies to a destination, living *at* that destination, so it does not
+  exist while delivery is off (this machine's current state).
+- **The render journal** (§56) — render lifecycle including failures and
+  cancellations, bounded to 30 days / 1,000 jobs, compactable, and by design
+  free of content facts.
+
+Missing was a permanent record of *what content was generated*: fingerprint,
+manifest identity, output path, track/preset snapshot, original vs re-export,
+and lineage. That is what this milestone adds.
+
+**Terminology.** The brief's "delivery" is this codebase's *export* (a render
+published to `out/`); "delivery" here already means a copy to a destination.
+The new record is therefore an *export record* in a *content library*, joined
+read-only with the existing delivery log, not a second delivery log.
+
+### 62.2 Architecture
+
+- `src/domain/library/contentLibrary.ts` — pure: schema v1 record, line/file
+  parsing (malformed / unsupported / truncated / duplicate, same vocabulary and
+  status notes as the delivery log), derived status, filters, ordering, format
+  summaries, delivery attribution, and `parseContentLibraryQuery` (shared by the
+  API and the CLI so filters validate identically).
+- `services/storage/jsonlAppendLog.ts` — **extracted, not new**: the render
+  journal's private lock / durable-append / release primitives, moved verbatim.
+  The render journal now imports them (behaviour-identical; its 36 tests,
+  including the killed-process lock reclaim, pass unchanged). The delivery log
+  keeps its own copy: it lives at a destination and wraps each step in
+  destination-identity checks.
+- `services/library/contentLibraryLog.ts` — `out/.content-library/library.jsonl`,
+  append under the lock with dedup by `recordId` and a `build(existing)` callback
+  so lineage is decided against the same contents the append lands on; tail
+  repair; operator lock release. `TOSHI_CONTENT_LIBRARY_DIR` redirects it (tests,
+  manual checks), mirroring `TOSHI_RENDER_JOURNAL_DIR`; a forked worker inherits it.
+- `services/library/recordExport.ts` — `publishRecordedExport` wraps the existing
+  `publishExport`; `adoptExistingExports` backfills.
+- `server/services/contentLibrary.ts` — query and inspect; `server/routes/contentLibrary.ts`.
+
+### 62.3 When a record is written
+
+At exactly one place: `renderTrackVideo`, the path every CLI and worker render
+already shares, now calls `publishRecordedExport` instead of `publishExport`.
+Under the render target's lock it reads the manifest already on disk, publishes,
+reads the new manifest, and appends. Consequences:
+
+- **Only completed exports.** `publishExport` returns only after the atomic
+  publish; a failed, cancelled or validation-refused render throws first, so no
+  code path turns a failure into a record. Failures stay in the render journal.
+- **Exact lineage.** `exportKind` is `reexport` if a non-empty file was already
+  at the canonical path; `replaces` names the library record whose full
+  manifest identity matches what was replaced (null if it predates the library)
+  and `changed` lists which inputs differ (`compareInputs`).
+- **Never fails a render.** The append returns a result; the worker logs it into
+  the job log, and the four CLIs that render print one line via `printLibraryOutcome`.
+- **No duplicates.** `recordId` is a truncated sha256 of the published export's
+  identity (slug, preset, renderedAt, fingerprint, bytes, mtime, inode), checked
+  under the append lock.
+
+### 62.4 Derived status (never persisted)
+
+Computed at read time from the live manifest: **current** (this version is the
+file on disk and fresh), **stale** (on disk but not confirmed fresh — includes
+`invalid`), **superseded** (a later version exists, or an unrecorded file
+replaced it), **missing** (not on disk, nothing later). Records are never
+rewritten to say a version went out of date.
+
+**Delivery attribution.** With a destination configured, a delivery counts
+against the version that was current when it happened (time window between
+consecutive versions of that track/format), with the input fingerprint as a
+guard. With no destination, delivery facts are `null` — never a misleading zero.
+
+### 62.5 API, CLI, UI
+
+- `GET /api/content-library` (track, preset, status, kind, job, id, from/to/since,
+  order, limit ≤ 500), `GET /api/content-library/:recordId` (with every version of
+  its format and re-export eligibility), `POST .../:recordId/reexport`,
+  `POST /api/content-library/adopt`. New error codes `LIBRARY_RECORD_NOT_FOUND`
+  (404) and `LIBRARY_RECORD_NOT_CURRENT` (409).
+- **Re-export** is offered only on the version on disk now (current or stale):
+  every render uses the track's current files, so an old version can never be
+  reproduced. The route refuses up front if the target is already in flight or
+  locked elsewhere (so no empty batch is created), then starts a normal
+  one-target batch; the new record appears only when that render completes and
+  names the clicked version as `replaces` by construction.
+- `npm run content-library` — list/filter, `--id`, `--json`, `--adopt-existing`,
+  `--repair-tail`, `--release-lock`.
+- **Library** header button (always visible) → `ContentLibraryPanel`: filters,
+  per-format strip when a track is chosen ("Never generated" shown), one row per
+  version, inline inspector with lineage links, Reveal file, Re-export. Refreshes
+  via a token bumped by `refreshAll`, so it updates when a render finishes; no polling.
+
+### 62.6 Adoption
+
+Exports rendered before the library existed are adopted only if their file
+still matches their manifest. Adopted records say so (`source: "adopted"`,
+`exportKind`/`renderJobId`/`replaces` null, current-metadata track snapshot,
+`visualizerVersion: "unknown"` unless freshness vouches for it). Idempotent.
+Tracks are inspected one at a time so a folder vanishing mid-scan is reported,
+not fatal (the §61.21 race class). Ghetto Geek's exports have no manifests and
+are correctly skipped.
+
+### 62.7 Verification
+
+- 55 new tests (708 → 763), full suite clean ×3 at normal concurrency:
+  `content-library.test.mts` (23, pure), `content-library-log.test.mts` (13,
+  including 4 real processes × 15 concurrent appends, dedup under concurrency,
+  truncated/malformed handling, tail repair, lock release),
+  `content-library-record.test.mts` (13, real `publishExport` + manifests:
+  original, re-export lineage, failed/cancelled record nothing, unwritable
+  library never fails a render, adoption, live status, delivery attribution),
+  `content-library-api.test.mts` (6, real router + fake worker: filters, 400s,
+  404, 409 superseded, re-export queues exactly one render and writes nothing).
+- The suite never creates a real `out/.content-library/`.
+- Manual browser check against a scratch library/journal: empty state,
+  adoption (read-only; adopted this machine's own `django` exports into the
+  *scratch* library), real forked-worker renders recording originals with job
+  ids, copy-only edit adds nothing, rendered-field edit shows stale, Library
+  re-export → new "Re-export · Metadata changed" record, original untouched
+  and superseded, the open panel refreshing itself, lineage links, a corrupted
+  line showing a warning with every valid record still listed, empty filter state.
+  No console errors. Real journal, `django`, Ghetto Geek and `delivery.local.json`
+  untouched; synthetic track and scratch data removed.
+
+### 62.8 Limitations and follow-ups
+
+- Historical video files are not kept: a superseded version's record survives,
+  its file does not. Archiving old renders would be a separate, disk-heavy decision.
+- The library is read in one pass (as the delivery log is); fine for years of
+  daily renders, and encapsulated so a streaming reader can replace it.
+- No automatic backfill: adoption is an explicit action (API/CLI/UI button).
+- The delivery log still carries its own lock copy; moving it onto
+  `jsonlAppendLog.ts` would need the destination-identity checks parameterised.
+- The Library has no "oldest first" toggle in the UI (the API and CLI support it).

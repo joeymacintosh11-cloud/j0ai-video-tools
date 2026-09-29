@@ -651,6 +651,37 @@ and render call as the single-track `content-package` command, just across
 several tracks at once. A batch covers at most 100 tracks per request, named
 explicitly; there is no implicit "operate on the whole catalogue" behavior.
 
+### Content library
+
+Every render replaces the file at `out/<slug>/<preset>.mp4`, so the folder only
+ever shows the latest version. The content library remembers every version: each
+completed export appends one line to `out/.content-library/library.jsonl` with
+the track and format as they were rendered, the manifest's fingerprint and
+identity, the render job, and — for a re-export — which version it replaced and
+which inputs had changed ("cover changed", "metadata changed").
+
+It is written only after an export is atomically published, so a failed,
+cancelled or refused render never appears in it (those stay in the render
+journal). It needs no delivery destination, and it is independent of release
+bundles; when a destination *is* configured, each version also shows how many
+times it was delivered, read from the destination's own delivery log.
+
+Records are never rewritten. Whether a version is **current**, **stale**,
+**superseded** or **missing** is worked out when you look, from the manifest on
+disk now. Open **Library** in the app header to filter, inspect a version and
+its lineage, reveal the file, or re-export the version that is on disk now —
+which queues a normal render and adds a new record when it finishes. An older
+version cannot be re-exported: every render uses the track's current files.
+
+```console
+npm run content-library                              # newest first
+npm run content-library -- --track ghetto-geek       # plus which formats exist
+npm run content-library -- --status superseded --since 30d
+npm run content-library -- --id <record id>          # one version, every sibling
+npm run content-library -- --adopt-existing          # record exports rendered before the library existed
+npm run content-library -- --repair-tail             # drop an interrupted final line, nothing else
+```
+
 ### Delivery history
 
 A release bundle says what a track ships *now*. It cannot say what went out last
