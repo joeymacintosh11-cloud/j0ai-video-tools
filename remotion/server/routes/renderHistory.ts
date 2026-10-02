@@ -72,6 +72,7 @@ export const handleGetRenderHistory = (
     // classifyRecoveredJob never returns queued/preparing/rendering — see
     // its own comment in core/domain/render/renderJournal.ts.
     presetId: job.presetId as RenderHistoryJobView["presetId"],
+    engine: job.engine,
     status: job.status as RenderHistoryJobView["status"],
     recordedAt: job.recordedAt,
     historical: true,

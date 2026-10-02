@@ -39,12 +39,14 @@ export type Manager =
  */
 export const manager = async (
   t: TestContext,
-  spawn: () => Worker,
+  /** Receives fork()'s module path and argv, for tests that check what a job asked for. */
+  spawn: (modulePath: string, args: readonly string[]) => Worker,
 ): Promise<Manager> => {
   t.mock.method(
     childProcess,
     "fork",
-    (() => spawn() as unknown as ChildProcess) as typeof childProcess.fork,
+    ((modulePath: string, args: readonly string[] = []) =>
+      spawn(modulePath, args) as unknown as ChildProcess) as unknown as typeof childProcess.fork,
   );
   syncBuiltinESMExports();
   t.after(() => {

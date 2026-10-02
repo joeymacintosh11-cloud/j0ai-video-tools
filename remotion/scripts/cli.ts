@@ -1,4 +1,6 @@
-import { TrackError } from "../core/domain/tracks/errors.ts";
+import { renderEngines } from "../adapters/renderEngines.mts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
+import { DEFAULT_RENDERER_ID, RENDERER_IDS, type RendererId } from "../core/domain/video/renderers.ts";
 import type { TrackMetadata } from "../core/domain/tracks/types.ts";
 import type { AnalysisAudioResult } from "../services/tracks/prepareTrackAudio.ts";
 import { publicLabel } from "../core/domain/tracks/paths.ts";
@@ -60,3 +62,34 @@ export const printLibraryOutcome = (outcome: AppendContentLibraryResult): void =
     );
   }
 };
+
+/**
+ * `--engine <id>`: which renderer to render with. Absent means the default
+ * (remotion), so every existing command line behaves exactly as before.
+ *
+ * Checked against this installation's engines while arguments are parsed, so
+ * an unknown or unavailable renderer fails before any track is prepared. The
+ * engine itself is only loaded (renderEngines.resolve) when a render starts.
+ */
+export const readEngineFlag = (argv: readonly string[]): RendererId => {
+  const index = argv.indexOf("--engine");
+  if (index === -1) return renderEngines.assertAvailable(undefined);
+
+  const value = argv[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new TrackError(
+      trackIssue("INVALID_RENDERER", `--engine needs a value: one of ${RENDERER_IDS.join(", ")}.`),
+    );
+  }
+
+  return renderEngines.assertAvailable(value);
+};
+
+/** True for the argument that is --engine's value, so it is never read as a slug. */
+export const isEngineFlagValue = (argv: readonly string[], index: number): boolean =>
+  index > 0 && argv[index - 1] === "--engine";
+
+export const ENGINE_FLAG_USAGE = [
+  `  --engine <id>     Render engine. Installed: ${renderEngines.available.join(", ")}.`,
+  `                    Defaults to ${DEFAULT_RENDERER_ID} when omitted.`,
+];

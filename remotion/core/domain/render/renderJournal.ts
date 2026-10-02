@@ -1,3 +1,5 @@
+import { storedRendererId, type RendererId } from "../video/renderers.ts";
+
 /**
  * The durable render-lifecycle journal: what happened, not what should happen.
  *
@@ -80,6 +82,12 @@ export type RenderJournalEvent = {
   readonly batchId: string | null;
   readonly slug: string;
   readonly presetId: string;
+  /**
+   * The renderer the job was queued for (core/domain/video/renderers.ts).
+   * Absent on every event written before renderers were selectable, all of
+   * which were Remotion renders; readers go through storedRendererId().
+   */
+  readonly engine?: string;
   readonly state: RenderJournalLifecycleState;
   readonly recordedAt: string;
   /**
@@ -195,6 +203,7 @@ export const parseRenderJournalLine = (line: string): ParsedRenderJournalLine =>
     !isNonEmptyString(event.jobId) ||
     !isNonEmptyString(event.slug) ||
     !isNonEmptyString(event.presetId) ||
+    (event.engine !== undefined && !isNonEmptyString(event.engine)) ||
     !isNonEmptyString(event.bootId) ||
     typeof event.state !== "string" ||
     !KNOWN_STATES.has(event.state) ||
@@ -214,6 +223,7 @@ export const parseRenderJournalLine = (line: string): ParsedRenderJournalLine =>
       batchId: event.batchId ?? null,
       slug: event.slug,
       presetId: event.presetId,
+      ...(event.engine === undefined ? {} : { engine: event.engine as string }),
       state: event.state as RenderJournalLifecycleState,
       recordedAt: event.recordedAt as string,
       bootId: event.bootId,
@@ -324,6 +334,8 @@ export type RenderJournalJobRecord = {
   readonly jobId: string;
   readonly slug: string;
   readonly presetId: string;
+  /** Null only when the journal names a renderer this version does not know. */
+  readonly engine: RendererId | null;
   readonly batchId: string | null;
   readonly state: RenderJournalLifecycleState;
   readonly recordedAt: string;
@@ -377,6 +389,7 @@ export const reconstructRenderJournal = (
         jobId: event.jobId,
         slug: event.slug,
         presetId: event.presetId,
+        engine: storedRendererId(event.engine),
         batchId: event.batchId,
         state: event.state,
         recordedAt: event.recordedAt,
@@ -413,6 +426,7 @@ export const reconstructRenderJournal = (
       jobId: event.jobId,
       slug: event.slug,
       presetId: event.presetId,
+      engine: storedRendererId(event.engine),
       batchId: event.batchId,
       state: event.state,
       recordedAt: event.recordedAt,
@@ -448,6 +462,7 @@ export type RecoveredRenderJob = {
   readonly jobId: string;
   readonly slug: string;
   readonly presetId: string;
+  readonly engine: RendererId | null;
   readonly batchId: string | null;
   readonly status: RenderJournalLifecycleState | "interrupted";
   readonly recordedAt: string;
@@ -465,6 +480,7 @@ export const classifyRecoveredJob = (
     jobId: record.jobId,
     slug: record.slug,
     presetId: record.presetId,
+    engine: record.engine,
     batchId: record.batchId,
     status: isTerminalJournalState(record.state)
       ? record.state

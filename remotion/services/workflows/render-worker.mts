@@ -1,4 +1,4 @@
-import { remotionRenderEngine } from "../../adapters/remotion/remotionRenderEngine.mts";
+import { renderEngines } from "../../adapters/renderEngines.mts";
 import { makeCancelSignal } from "../../core/ports/renderEngine.ts";
 import { TrackError } from "../../core/domain/tracks/errors.ts";
 import { publicLabel } from "../../core/domain/tracks/paths.ts";
@@ -42,6 +42,10 @@ const presetId = assertRenderPresetId(process.argv[3]);
 // Recorded in the render target lock so contention can name the job. Optional:
 // a worker started without one still renders.
 const jobId = process.argv[4] ?? null;
+// The renderer this job was queued for. Absent means the default, so an older
+// caller still works; resolved inside main() so an unknown or unavailable
+// engine comes back as a structured job error rather than a crash.
+const engineId = process.argv[5];
 
 const { cancelSignal, cancel } = makeCancelSignal();
 let cancelRequested = false;
@@ -55,6 +59,7 @@ process.on("message", (message: WorkerCommand) => {
 });
 
 const main = async (): Promise<void> => {
+  const engine = await renderEngines.resolve(engineId);
   emit({ type: "status", status: "preparing" });
   log(`Preparing track "${slug}" for ${presetId}.`);
 
@@ -73,7 +78,7 @@ const main = async (): Promise<void> => {
   let lastLoggedPercentage = -1;
 
   const result = await renderTrackVideo({
-    engine: remotionRenderEngine,
+    engine,
     slug,
     props,
     presetId,
@@ -91,7 +96,11 @@ const main = async (): Promise<void> => {
     },
     onPhase: (phase) => {
       if (phase === "bundling") {
-        log("Bundling Remotion project.");
+        log(
+          engine.id === "remotion"
+            ? "Bundling Remotion project."
+            : `Opening the ${engine.id} render engine.`,
+        );
       }
       if (phase === "resolving") {
         log("Resolving composition and reading audio duration.");

@@ -94,6 +94,15 @@ export type LibraryPresetSnapshot = {
 export type LibraryTemplate = {
   readonly composition: string;
   readonly visualizerVersion: string;
+  /**
+   * The renderer that produced the export (core/domain/video/renderers.ts).
+   * Absent on records written before renderers were recorded, and on an
+   * adopted export whose visualizer could not be vouched for. A string rather
+   * than RendererId because a newer version may record a renderer this one
+   * does not know; read it with storedRendererId(), which treats absent as
+   * remotion and an unknown id as null.
+   */
+  readonly renderer?: string;
 };
 
 export type LibraryInputs = Readonly<
@@ -360,6 +369,7 @@ export const parseContentLibraryLine = (line: string): ParsedContentLibraryLine 
     record.template === null ||
     !isNonEmptyString(record.template.composition) ||
     !isNonEmptyString(record.template.visualizerVersion) ||
+    (record.template.renderer !== undefined && !isNonEmptyString(record.template.renderer)) ||
     !validOutput(record.output) ||
     !validManifest(record.manifest) ||
     (record.renderJobId !== null && !isNonEmptyString(record.renderJobId)) ||

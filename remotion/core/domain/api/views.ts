@@ -1,3 +1,4 @@
+import type { RendererId } from "../video/renderers.ts";
 import type {
   ExportFreshness,
   ExportMode,
@@ -392,6 +393,11 @@ export type RenderJobView = {
   readonly slug: string;
   /** Which export format this job renders. */
   readonly presetId: RenderPresetId;
+  /**
+   * Which renderer produces it (core/domain/video/renderers.ts). Null only for
+   * a historical job whose journal names a renderer this version does not know.
+   */
+  readonly engine: RendererId | null;
   /** The batch this job belongs to, or null for a single render. */
   readonly batchId: string | null;
   readonly status: RenderJobStatus;
@@ -423,6 +429,13 @@ export type RenderJobView = {
   readonly recoveredAfterRestart?: boolean;
 };
 
+/** POST /api/tracks/:slug/render request body; both fields optional. */
+export type StartRenderBody = {
+  readonly preset?: RenderPresetId;
+  /** Renderer to use; absent means the default (remotion). */
+  readonly engine?: RendererId;
+};
+
 /** POST /api/tracks/:slug/render */
 export type StartRenderView = {
   readonly jobId: string;
@@ -434,6 +447,8 @@ export type StartRenderView = {
 export type RenderTarget = {
   readonly slug: string;
   readonly preset: RenderPresetId;
+  /** Renderer to use; absent means the default (remotion). */
+  readonly engine?: RendererId;
 };
 
 /** POST /api/render-batches request body. */
@@ -1096,6 +1111,8 @@ export type RenderHistoryJobView = {
   readonly jobId: string;
   readonly slug: string;
   readonly presetId: RenderPresetId;
+  /** As on RenderJobView: null only for a renderer this version does not know. */
+  readonly engine: RendererId | null;
   /**
    * Never "queued"/"preparing"/"rendering": every job this endpoint reports
    * has already settled from the durable journal's point of view, exactly

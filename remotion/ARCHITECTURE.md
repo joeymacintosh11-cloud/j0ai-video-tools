@@ -16,8 +16,12 @@ core/                   Platform-independent. Pure TypeScript: no node:*, no
                         delivery and release-bundle models, content packages,
                         the content library, the render journal, and the API
                         wire format (domain/api/views.ts).
+    video/renderers.ts  Renderer ids (remotion, premiere, after-effects) and
+                        the default (remotion).
   ports/                Extension points that adapters implement.
     renderEngine.ts     RenderEngine / RenderSession, CancelSignal.
+    renderEngineRegistry.ts
+                        Looks engines up by renderer id, with clear errors.
 
 services/               The engine runtime on Node: the single owner of the
                         filesystem, ffmpeg, locks and append-only logs.
@@ -30,6 +34,8 @@ services/               The engine runtime on Node: the single owner of the
                         worker process.
 
 adapters/               Implementations of core ports for one technology.
+  renderEngines.mts     The engine registry: renderer id -> engine (lazy).
+                        The only adapters/ module a host imports.
   remotion/             The Remotion renderer.
     remotionRenderEngine.mts   RenderEngine via bundle/selectComposition/
                                renderMedia; owns the encoding settings.
@@ -51,12 +57,12 @@ Dependencies point inward: hosts and adapters depend on `services/` and
 | `core/` | `core/` | any package (`node:*`, React, Remotion…), anything outside `core/` |
 | `services/` | `core/`, `services/`, Node | `adapters/`*, `server/`, `scripts/`, `ui/`, Remotion |
 | `adapters/<x>/` | `core/`, its own technology | other adapters, hosts |
-| `server/`, `scripts/` | `core/`, `services/`, an adapter's engine to plug it in | the Remotion composition, Remotion packages; `scripts/` never imports `server/` |
+| `server/`, `scripts/` | `core/`, `services/`, the engine registry (`adapters/renderEngines.mts`) | any specific engine or composition, Remotion packages; `scripts/` never imports `server/` |
 | `ui/` | `core/`, the composition (for the `<Player>` preview) | `services/`, `server/`, `scripts/` |
 
 \* `services/workflows/render-worker.mts` is the exception. It is a process
-entry point, like a CLI script, and it's where the API's renders get their
-engine.
+entry point, like a CLI script: it resolves each job's engine from the
+registry, and imports nothing else from `adapters/`.
 
 `tests/architecture.test.mts` enforces every row of this table, so a change
 that breaks a rule fails `npm test`.
@@ -85,6 +91,39 @@ Two core types are all a renderer needs to know:
 An engine therefore implements only steps 2–5. The lock, freshness,
 publication, library and delivery come with it.
 
+## Choosing the engine per job
+
+Every render names a renderer id (`core/domain/video/renderers.ts`); naming
+none means `remotion`, which is how every command and request behaved before.
+
+```
+CLI --engine <id>            ─┐
+POST .../render { engine }   ─┼─> render job { slug, preset, engine } ─> registry.resolve(engine) ─> RenderEngine
+POST /api/render-batches     ─┘      (render manager, journal, worker)     (adapters/renderEngines.mts)
+     targets[].engine
+```
+
+- **Validation happens at the edge.** `registry.assertAvailable()` checks an id
+  without loading anything: an unknown id is `INVALID_RENDERER`, a reserved id
+  with no adapter (`premiere`, `after-effects` today) is `RENDERER_UNAVAILABLE`.
+  The CLI checks while parsing arguments and the API before queuing (HTTP 400).
+  The worker resolves again, so a bad id that slips through becomes a
+  structured job error rather than a crash.
+- **The job carries it.** `RenderJobView.engine`, every render-journal event,
+  and the worker's argv carry the id. Older journal events with no engine
+  read back as `remotion`.
+- **The export records it.** Content-library records store
+  `template.renderer`. Older records have none and read back as `remotion`
+  (`storedRendererId`).
+- **Freshness distinguishes it.** `rendererFingerprintParts()` adds the renderer
+  to an export's visualizer fingerprint. It adds nothing for Remotion, so
+  every manifest written before engines were selectable keeps its exact
+  fingerprint and stays current. Freshness is judged against the default
+  renderer, so an export from another engine reads as stale
+  (`visualizer_changed`) instead of passing for a current Remotion export.
+  Every engine still writes to the same `out/<slug>/<preset>.mp4`, and a job's
+  per-target lock is per slug and preset, never per engine.
+
 ## Adding a renderer (e.g. Premiere Pro, After Effects)
 
 1. Create `adapters/<name>/` and implement `RenderEngine` from
@@ -101,20 +140,20 @@ publication, library and delivery come with it.
 2. Map fields, don't redefine them. Layout shapes come from
    `RenderPreset.layout`, brand assets from `BRAND_ASSET_PATHS`, frame math
    from `secondsToFrames`.
-3. Pick the engine at an entry point: pass `engine: yourEngine` to
-   `renderTrackVideo` from a CLI script, or from the render worker for API
-   renders. Nothing in `services/` changes.
+3. Register it under its renderer id in `adapters/renderEngines.mts`, as a lazy
+   loader (one line). From then on `--engine <id>`, the API's `engine` field
+   and the render worker all reach it. Nothing in `services/`, `server/` or
+   `scripts/` changes. A renderer id outside `RENDERER_IDS` also needs adding
+   to `core/domain/video/renderers.ts`.
 4. `tests/render-engine-port.test.mts` shows how to drive `renderTrackVideo`
-   with a stand-in engine. `npm run lint` already covers `adapters/`.
+   with a stand-in engine, and `tests/render-engine-registry.test.mts` how
+   resolution is tested. `npm run lint` already covers `adapters/`.
 
-Every engine writes to the same `out/<slug>/<preset>.mp4`, and export freshness
-does not record which engine produced a file: its visualizer fingerprint is
-`VISUALIZER_VERSION` (`core/domain/video/exportFreshness.ts`) plus the brand
-assets. Content-library records note the template (`COMPOSITION_ID`) and
-`VISUALIZER_VERSION`. An adapter whose output looks different should therefore
-bring its own visualizer version (and template id). Otherwise a Remotion export
-and, say, an After Effects export of the same track are treated as
-interchangeable.
+The engine's id is recorded with its exports and fingerprinted (see *Choosing
+the engine per job*), so different renderers' exports are never mistaken for
+each other. `VISUALIZER_VERSION` and `COMPOSITION_ID` still describe the
+Remotion template. A non-Remotion export is stale against the default
+renderer until per-track engine preferences exist.
 
 ## Adding a host (a batch service, a desktop panel)
 

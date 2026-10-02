@@ -4,6 +4,7 @@ import type {
   RenderTarget,
 } from "../../core/domain/api/views.ts";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { renderEngines } from "../../adapters/renderEngines.mts";
 import { readJsonBody, sendOk } from "../http/json.ts";
 import { openSseStream } from "../http/sse.ts";
 import { renderManager } from "../../services/workflows/renderManager.ts";
@@ -42,7 +43,7 @@ const readTargets = (body: Record<string, unknown>): RenderTarget[] => {
       );
     }
 
-    const { slug, preset } = entry as Record<string, unknown>;
+    const { slug, preset, engine } = entry as Record<string, unknown>;
 
     if (typeof slug !== "string" || slug.length === 0) {
       throw new TrackError(
@@ -51,8 +52,11 @@ const readTargets = (body: Record<string, unknown>): RenderTarget[] => {
     }
 
     // The slug and preset are validated properly by the render manager, which
-    // is the one place that decides what is renderable.
-    return { slug, preset } as RenderTarget;
+    // is the one place that decides what is renderable. The engine is checked
+    // here, against this installation's adapters, so an unavailable renderer
+    // is a 400 now rather than a failed job later.
+    if (engine === undefined) return { slug, preset } as RenderTarget;
+    return { slug, preset, engine: renderEngines.assertAvailable(engine) } as RenderTarget;
   });
 };
 

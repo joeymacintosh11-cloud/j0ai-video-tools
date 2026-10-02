@@ -78,18 +78,20 @@ test("core/ never reaches outward into an adapter or app", () => {
   );
 });
 
-const REMOTION_ENGINE = path.join("adapters", "remotion", "remotionRenderEngine.mts");
+/** The one adapters/ module a host may import: engines by renderer id. */
+const ENGINE_REGISTRY = path.join("adapters", "renderEngines.mts");
 
-test("services, server and CLI depend on the core render contract, not on the Remotion composition", () => {
-  // They pass VisualizerProps (core/domain/video/visualizerProps.ts) around.
-  // Entry points may plug in the Remotion *engine*; only the adapter itself,
-  // and the web UI's live preview, touch the composition.
+test("services, server and CLI reach renderers only through the engine registry", () => {
+  // They pass VisualizerProps (core/domain/video/visualizerProps.ts) around
+  // and ask adapters/renderEngines.mts for an engine by id. No host imports a
+  // specific engine or the composition; only the adapter itself, and the web
+  // UI's live preview, touch the composition.
   for (const dir of ["services", "server", "scripts"]) {
     assert.deepEqual(
       violations(
         dir,
         (_specifier, target) =>
-          target !== null && isUnder(target, path.join("adapters", "remotion")) && target !== REMOTION_ENGINE,
+          target !== null && isUnder(target, "adapters") && target !== ENGINE_REGISTRY,
       ),
       [],
       dir,
@@ -114,10 +116,10 @@ test("the engine and its hosts never call Remotion directly", () => {
 });
 
 /**
- * The render worker is a process entry point, like a CLI script: it is where
- * the Remotion engine is plugged into the engine for API and fix-plan renders.
- * It lives beside the render manager that forks it, and is the one file under
- * services/ allowed to name an adapter.
+ * The render worker is a process entry point, like a CLI script: it resolves
+ * the job's engine from the registry for API, batch and fix-plan renders. It
+ * lives beside the render manager that forks it, and is the one file under
+ * services/ allowed to import adapters/ (the registry only — see above).
  */
 const SERVICES_ENTRY_POINTS = [path.join("services", "workflows", "render-worker.mts")];
 
@@ -163,4 +165,19 @@ test("the web UI talks to the engine only over the API", () => {
     ),
     [],
   );
+});
+
+test("only the engine registry names a specific render engine adapter", () => {
+  // Adding a renderer means adding an adapter and one registry line; nothing
+  // else in adapters/ wires engines together.
+  const engineModules = sourceFilesUnder("adapters").filter((file) => /RenderEngine\.mts$/.test(file));
+  assert.ok(engineModules.length > 0);
+  for (const file of sourceFilesUnder("adapters")) {
+    if (file === ENGINE_REGISTRY) continue;
+    const importsAnotherAdaptersEngine = importsOf(file).some((specifier) => {
+      const target = resolveRelative(file, specifier);
+      return target !== null && engineModules.includes(target) && path.dirname(target) !== path.dirname(file);
+    });
+    assert.equal(importsAnotherAdaptersEngine, false, file);
+  }
 });

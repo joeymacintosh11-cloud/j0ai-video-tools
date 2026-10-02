@@ -1,4 +1,4 @@
-import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.mts";
+import { renderEngines } from "../adapters/renderEngines.mts";
 import {
   deriveContentPackage,
   type ContentPackageInput,
@@ -21,7 +21,13 @@ import { trackExportCoverage } from "../services/tracks/exportCoverage.ts";
 import { inspectTrack } from "../services/tracks/inspectTrack.ts";
 import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
-import { runCli, printLibraryOutcome } from "./cli.ts";
+import {
+  ENGINE_FLAG_USAGE,
+  isEngineFlagValue,
+  printLibraryOutcome,
+  readEngineFlag,
+  runCli,
+} from "./cli.ts";
 
 /**
  * Inspects, and optionally builds, a track's content package: the
@@ -37,7 +43,7 @@ import { runCli, printLibraryOutcome } from "./cli.ts";
 const printUsage = () => {
   console.error(
     [
-      "Usage: npm run content-package -- <track-slug> [--mode intent|full] [--platform <id>]... [--json] [--apply]",
+      "Usage: npm run content-package -- <track-slug> [--mode intent|full] [--platform <id>]... [--json] [--apply] [--engine <id>]",
       "",
       "  <track-slug>      Folder name under public/tracks/, e.g. ghetto-geek",
       "  --mode <mode>     intent (default, each platform the track already",
@@ -46,6 +52,7 @@ const printUsage = () => {
       "  --platform <id>   Restrict to this platform; repeatable. Overrides --mode.",
       "  --json            Print the package as JSON instead of text",
       "  --apply           Render this package's missing/stale outputs",
+      ...ENGINE_FLAG_USAGE,
       "",
       "With no --apply, this only inspects and reports — nothing is rendered.",
       "",
@@ -86,7 +93,8 @@ const parseArgs = (argv: string[]) => {
     (arg, index) =>
       !arg.startsWith("--") &&
       !(index > 0 && argv[index - 1] === "--mode") &&
-      !(index > 0 && argv[index - 1] === "--platform"),
+      !(index > 0 && argv[index - 1] === "--platform") &&
+      !isEngineFlagValue(argv, index),
   );
 
   return {
@@ -95,6 +103,7 @@ const parseArgs = (argv: string[]) => {
     platforms: platforms.length > 0 ? platforms : undefined,
     json: argv.includes("--json"),
     apply: argv.includes("--apply"),
+    engineId: readEngineFlag(argv),
   };
 };
 
@@ -177,7 +186,7 @@ const describeBuildPlan = (plan: ExportPlan): void => {
 };
 
 runCli("inspecting content package", async () => {
-  const { slug, mode, platforms, json, apply } = parseArgs(process.argv.slice(2));
+  const { slug, mode, platforms, json, apply, engineId } = parseArgs(process.argv.slice(2));
 
   if (!slug) {
     printUsage();
@@ -227,7 +236,7 @@ runCli("inspecting content package", async () => {
     let lastLoggedPercentage = -1;
 
     const { outputLabel } = await renderTrackVideo({
-      engine: remotionRenderEngine,
+      engine: await renderEngines.resolve(engineId),
       slug: target.slug,
       props,
       onRecorded: printLibraryOutcome,

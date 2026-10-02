@@ -20,7 +20,7 @@ const ref = (slug: string, platformId: "reels" | "instagram-square", presetId: "
 });
 
 const job = (id: string, slug: string, presetId: "vertical-9x16" | "square-1x1", status: RenderJobView["status"], progress = 0): RenderJobView => ({
-  id, slug, presetId, batchId: "batch", status, progress, framesRendered: progress > 0 ? 54 : null,
+  id, slug, presetId, engine: "remotion", batchId: "batch", status, progress, framesRendered: progress > 0 ? 54 : null,
   totalFrames: progress > 0 ? 100 : null, fps: null, elapsedMs: 0, startedAt: null,
   queuedAt: "2026-01-01T00:00:00Z", finishedAt: null, outputPath: null, outputLabel: null, error: null,
 });

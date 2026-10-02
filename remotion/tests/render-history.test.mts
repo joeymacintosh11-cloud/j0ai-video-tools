@@ -288,8 +288,10 @@ test("a job's response never carries a filesystem path, boot id or any field bey
 
   assert.deepEqual(
     new Set(Object.keys(job)),
-    new Set(["jobId", "slug", "presetId", "status", "recordedAt", "historical", "recoveredAfterRestart", "error"]),
+    new Set(["jobId", "slug", "presetId", "engine", "status", "recordedAt", "historical", "recoveredAfterRestart", "error"]),
   );
+  // These journal events predate engine selection, so they were Remotion renders.
+  assert.equal(job.engine, "remotion");
   const serialized = JSON.stringify(job);
   assert.ok(!serialized.includes("out/"), "response must not leak a filesystem path");
   assert.ok(!serialized.includes(RENDER_MANAGER_BOOT_ID), "response must not leak the raw boot id");

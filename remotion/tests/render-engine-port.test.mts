@@ -11,10 +11,15 @@ import {
   type RenderSession,
 } from "../core/ports/renderEngine.ts";
 import { readDeliverySettings } from "../services/delivery/deliverySettings.ts";
-import { readContentLibrary } from "../services/library/contentLibraryLog.ts";
+import { contentLibraryPath, readContentLibrary } from "../services/library/contentLibraryLog.ts";
 import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
-import { readExportManifest } from "../services/tracks/exportManifest.ts";
+import { createHash } from "node:crypto";
+import { parseContentLibraryLine } from "../core/domain/library/contentLibrary.ts";
+import { storedRendererId } from "../core/domain/video/renderers.ts";
+import { VISUALIZER_VERSION } from "../core/domain/video/exportFreshness.ts";
+import { trackExportCoverage } from "../services/tracks/exportCoverage.ts";
+import { fileContentHash, fingerprintInputs, readExportManifest } from "../services/tracks/exportManifest.ts";
 import { PUBLIC_DIR, trackOutputLocation } from "../services/tracks/trackLocations.ts";
 import { fixture } from "./fixtures.mts";
 
@@ -34,9 +39,10 @@ type Call = string;
 
 const fakeEngine = (
   calls: Call[],
-  options: { failRender?: Error; content?: string } = {},
+  options: { failRender?: Error; content?: string; id?: RenderEngine["id"] } = {},
 ): RenderEngine => ({
-  id: "fake",
+  // A stand-in renderer; which id it claims matters only where a test says so.
+  id: options.id ?? "remotion",
   open: async (): Promise<RenderSession> => {
     calls.push("open");
     return {
@@ -165,4 +171,107 @@ test("a render cancelled before it starts never opens the engine", async (t) => 
     /got cancelled/,
   );
   assert.deepEqual(calls, []);
+});
+
+/* ------------------------------------------------------------------ *
+ * Renderer identity: recorded, and part of freshness
+ * ------------------------------------------------------------------ */
+
+test("Remotion's export fingerprint is byte-for-byte what it was before renderers were recorded", async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+
+  const implicit = fingerprintInputs(ctx.props, "youtube-16x9");
+  assert.deepEqual(fingerprintInputs(ctx.props, "youtube-16x9", PUBLIC_DIR, "remotion"), implicit);
+
+  // The visualizer hash exactly as exportManifest.ts computed it before
+  // renderers existed, so every manifest already on disk stays current.
+  const legacyVisualizer = createHash("sha256")
+    .update(
+      JSON.stringify([
+        VISUALIZER_VERSION,
+        fileContentHash(path.join(PUBLIC_DIR, ctx.props.brandLogoSrc)),
+        fileContentHash(path.join(PUBLIC_DIR, ctx.props.brandBadgeSrc)),
+      ]),
+    )
+    .digest("hex");
+  assert.equal(implicit.visualizer, legacyVisualizer);
+});
+
+test("another renderer changes only the visualizer fingerprint", async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+
+  const remotion = fingerprintInputs(ctx.props, "square-1x1");
+  const premiere = fingerprintInputs(ctx.props, "square-1x1", PUBLIC_DIR, "premiere");
+  const afterEffects = fingerprintInputs(ctx.props, "square-1x1", PUBLIC_DIR, "after-effects");
+
+  assert.notEqual(premiere.visualizer, remotion.visualizer);
+  assert.notEqual(premiere.visualizer, afterEffects.visualizer);
+  assert.deepEqual({ ...premiere, visualizer: null }, { ...remotion, visualizer: null });
+});
+
+test("a Remotion render is recorded as Remotion and is current", async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+
+  await renderTrackVideo({
+    engine: fakeEngine([]),
+    slug: ctx.f.slug,
+    props: ctx.props,
+    presetId: "youtube-16x9",
+  });
+
+  const [record] = readContentLibrary().records.filter((entry) => entry.track.slug === ctx.f.slug);
+  assert.equal(record.template.renderer, "remotion");
+  const facts = trackExportCoverage(ctx.f.slug).find((entry) => entry.presetId === "youtube-16x9");
+  assert.equal(facts?.freshness, "current");
+});
+
+test("another engine's export records its renderer and is not mistaken for a current Remotion export", async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+
+  await renderTrackVideo({
+    engine: fakeEngine([], { id: "premiere" }),
+    slug: ctx.f.slug,
+    props: ctx.props,
+    presetId: "vertical-9x16",
+  });
+
+  const [record] = readContentLibrary().records.filter((entry) => entry.track.slug === ctx.f.slug);
+  assert.equal(record.template.renderer, "premiere");
+
+  // Freshness is judged against the default renderer, so the export is stale
+  // on the visualizer axis and nothing else.
+  const facts = trackExportCoverage(ctx.f.slug).find((entry) => entry.presetId === "vertical-9x16");
+  assert.equal(facts?.freshness, "stale");
+  assert.deepEqual(facts?.staleReasons, ["visualizer_changed"]);
+});
+
+test("library records from before renderers were recorded still parse, and read back as Remotion", async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+
+  // A real record, as this code writes it, then aged back to the old shape.
+  await renderTrackVideo({ engine: fakeEngine([]), slug: ctx.f.slug, props: ctx.props, presetId: "square-1x1" });
+  const line = (await readFile(contentLibraryPath(), "utf8"))
+    .split("\n")
+    .find((row) => row.includes(ctx.f.slug));
+  assert.ok(line);
+  const written = JSON.parse(line);
+  assert.equal(written.template.renderer, "remotion");
+
+  const { renderer: _dropped, ...oldTemplate } = written.template;
+  void _dropped;
+  const legacy = parseContentLibraryLine(JSON.stringify({ ...written, template: oldTemplate }));
+  assert.ok(legacy.ok, legacy.ok ? "" : legacy.message);
+  assert.equal("renderer" in legacy.record.template, false);
+  assert.equal(storedRendererId(legacy.record.template.renderer), "remotion");
+
+  const future = parseContentLibraryLine(
+    JSON.stringify({ ...written, template: { ...written.template, renderer: "cloud-farm" } }),
+  );
+  assert.ok(future.ok, "a renderer this version does not know never hides the record");
+  assert.equal(storedRendererId(future.record.template.renderer), null);
 });
