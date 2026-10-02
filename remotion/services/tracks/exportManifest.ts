@@ -8,6 +8,11 @@ import {
   statSync,
 } from "node:fs";
 import path from "node:path";
+import {
+  DEFAULT_RENDERER_ID,
+  rendererFingerprintParts,
+  type RendererId,
+} from "../../core/domain/video/renderers.ts";
 import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
 import {
   EXPORT_MANIFEST_VERSION,
@@ -86,11 +91,17 @@ export const fileContentHash = (file: string): string => {
   }
 };
 
-/** publicRoot is the immutable bundle copy when recording a real render. */
+/**
+ * publicRoot is the immutable bundle copy when recording a real render.
+ * renderer is the engine that produced (or would produce) the export; its
+ * part of the visualizer fingerprint is empty for Remotion, so every existing
+ * Remotion manifest keeps exactly the fingerprint it was written with.
+ */
 export const fingerprintInputs = (
   props: VisualizerProps,
   presetId: RenderPresetId,
   publicRoot = PUBLIC_DIR,
+  renderer: RendererId = DEFAULT_RENDERER_ID,
 ): ExportInputs => {
   const preset = renderPreset(presetId);
   return {
@@ -113,6 +124,7 @@ export const fingerprintInputs = (
     ]),
     visualizer: hash([
       VISUALIZER_VERSION,
+      ...rendererFingerprintParts(renderer),
       fileContentHash(path.join(publicRoot, props.brandLogoSrc)),
       fileContentHash(path.join(publicRoot, props.brandBadgeSrc)),
     ]),

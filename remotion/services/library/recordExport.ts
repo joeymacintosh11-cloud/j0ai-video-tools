@@ -12,6 +12,7 @@ import { isValidSlug } from "../../core/domain/tracks/slug.ts";
 import type { TrackMetadata } from "../../core/domain/tracks/types.ts";
 import { COMPOSITION_ID } from "../../core/domain/video/compositionConfig.ts";
 import { VISUALIZER_VERSION } from "../../core/domain/video/exportFreshness.ts";
+import { DEFAULT_RENDERER_ID, type RendererId } from "../../core/domain/video/renderers.ts";
 import {
   RENDER_PRESET_LIST,
   renderPreset,
@@ -126,6 +127,8 @@ export type RecordPublishedExportInput = {
   readonly jobId: string | null;
   readonly before: ExportBeforePublish;
   readonly published: ExportManifest;
+  /** The renderer that produced the export; absent means remotion. */
+  readonly renderer?: RendererId;
   readonly now?: () => Date;
   readonly root?: string;
 };
@@ -160,7 +163,11 @@ export const recordPublishedExport = (
       recordedAt: now().toISOString(),
       track,
       preset: presetSnapshot(presetId),
-      template: { composition: COMPOSITION_ID, visualizerVersion: VISUALIZER_VERSION },
+      template: {
+        composition: COMPOSITION_ID,
+        visualizerVersion: VISUALIZER_VERSION,
+        renderer: input.renderer ?? DEFAULT_RENDERER_ID,
+      },
       output: {
         path: outputLabel(slug, presetId),
         bytes: published.output.bytes,
@@ -195,6 +202,8 @@ export type PublishRecordedExportInput = {
   readonly lock?: RenderTargetLock;
   readonly track: LibraryTrackSnapshot;
   readonly jobId: string | null;
+  /** The renderer producing the export; absent means remotion. */
+  readonly renderer?: RendererId;
   readonly root?: string;
 };
 
@@ -245,6 +254,7 @@ export const publishRecordedExport = async (
     jobId: input.jobId,
     before,
     published: manifest,
+    renderer: input.renderer,
     root: input.root,
   });
 };
@@ -362,7 +372,14 @@ export const adoptExistingExports = async (
           recordedAt: now().toISOString(),
           track: trackFromMetadata(slug, metadata),
           preset: presetSnapshot(preset.id),
-          template: { composition: COMPOSITION_ID, visualizerVersion },
+          // Remotion is the only renderer that existed before the library did,
+          // and a visualizer fingerprint that still matches is a Remotion one
+          // (see rendererFingerprintParts); otherwise it is honestly unknown.
+          template: {
+            composition: COMPOSITION_ID,
+            visualizerVersion,
+            ...(visualizerVersion === VISUALIZER_VERSION ? { renderer: DEFAULT_RENDERER_ID } : {}),
+          },
           output: {
             path: outputLabel(slug, preset.id),
             bytes: manifest.output.bytes,

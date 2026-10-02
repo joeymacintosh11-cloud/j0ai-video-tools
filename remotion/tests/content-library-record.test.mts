@@ -320,6 +320,8 @@ test("existing exports can be adopted once, honestly marked, skipping files that
 
   const [adopted] = readContentLibrary(root).records;
   assert.deepEqual([adopted.source, adopted.exportKind, adopted.renderJobId, adopted.replaces], ["adopted", null, null, null]);
+  // Its visualizer fingerprint still matches, which only a Remotion export can.
+  assert.equal(adopted.template.renderer, "remotion");
 
   const again = await adoptExistingExports({ root, slugs: [f.slug] });
   assert.deepEqual([again.adopted, again.alreadyRecorded], [0, 1]);

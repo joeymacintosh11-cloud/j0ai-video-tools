@@ -90,7 +90,9 @@ const renderToTarget = async ({
     const inputProps: VisualizerProps = { ...props, presetId };
     // Fingerprint the copied assets the renderer actually consumes, not live
     // source files that can change while this render is running.
-    const inputs = fingerprintInputs(inputProps, presetId, session.assetRoot);
+    // Fingerprinted as this engine's output, so an export from a different
+    // renderer is never taken for a current one (rendererFingerprintParts).
+    const inputs = fingerprintInputs(inputProps, presetId, session.assetRoot, engine.id);
 
     onPhase?.("resolving");
     const video = await session.resolve(inputProps);
@@ -112,6 +114,7 @@ const renderToTarget = async ({
       inputs,
       track: trackSnapshotFromProps(slug, props),
       jobId: jobId ?? null,
+      renderer: engine.id,
       lock,
       checkCancelled,
       produce: async (stagedVideo) => {

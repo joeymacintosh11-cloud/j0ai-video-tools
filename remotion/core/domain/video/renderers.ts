@@ -48,3 +48,16 @@ export const assertRendererId = (value: unknown): RendererId => {
  */
 export const storedRendererId = (value: unknown): RendererId | null =>
   value === undefined ? DEFAULT_RENDERER_ID : isRendererId(value) ? value : null;
+
+/**
+ * What a renderer adds to an export's visualizer fingerprint
+ * (services/tracks/exportManifest.ts), so that exports drawn by different
+ * renderers are never mistaken for one another: an export is current only for
+ * the renderer whose fingerprint it carries.
+ *
+ * Remotion adds nothing. Every manifest written before renderers were
+ * selectable is a Remotion export fingerprinted without this part, so keeping
+ * Remotion's contribution empty is what keeps all of those exports current.
+ */
+export const rendererFingerprintParts = (renderer: RendererId): readonly string[] =>
+  renderer === "remotion" ? [] : [`renderer:${renderer}`];
