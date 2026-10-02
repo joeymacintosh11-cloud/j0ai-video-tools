@@ -1,4 +1,4 @@
-import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.mts";
+import { renderEngines } from "../adapters/renderEngines.mts";
 import {
   deriveContentPackage,
   type ContentPackageInput,
@@ -227,7 +227,7 @@ runCli("inspecting content package", async () => {
     let lastLoggedPercentage = -1;
 
     const { outputLabel } = await renderTrackVideo({
-      engine: remotionRenderEngine,
+      engine: await renderEngines.resolve(undefined),
       slug: target.slug,
       props,
       onRecorded: printLibraryOutcome,

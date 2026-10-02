@@ -1,3 +1,4 @@
+import type { RendererId } from "../domain/video/renderers.ts";
 import type { VisualizerProps } from "../domain/video/visualizerProps.ts";
 
 /**
@@ -71,8 +72,11 @@ export type ResolvedVideo = {
 };
 
 export type RenderEngine = {
-  /** Stable, human-readable id, e.g. "remotion". */
-  readonly id: string;
+  /**
+   * Which renderer this is (core/domain/video/renderers.ts). Recorded with
+   * every export it produces, and part of the export's freshness fingerprint.
+   */
+  readonly id: RendererId;
   /**
    * Gets ready to render (bundling, launching an app, connecting to a host).
    * The returned session must always be closed, success or not.

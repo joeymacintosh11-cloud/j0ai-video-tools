@@ -1,4 +1,4 @@
-import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.mts";
+import { renderEngines } from "../adapters/renderEngines.mts";
 import { assertExportMode } from "../core/domain/video/exportFreshness.ts";
 import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import {
@@ -184,7 +184,7 @@ runCli("rendering missing exports", async () => {
     let lastLoggedPercentage = -1;
 
     const { outputLabel } = await renderTrackVideo({
-      engine: remotionRenderEngine,
+      engine: await renderEngines.resolve(undefined),
       slug: target.slug,
       props,
       onRecorded: printLibraryOutcome,

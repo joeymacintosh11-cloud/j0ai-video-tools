@@ -1,4 +1,4 @@
-import { remotionRenderEngine } from "../../adapters/remotion/remotionRenderEngine.mts";
+import { renderEngines } from "../../adapters/renderEngines.mts";
 import { makeCancelSignal } from "../../core/ports/renderEngine.ts";
 import { TrackError } from "../../core/domain/tracks/errors.ts";
 import { publicLabel } from "../../core/domain/tracks/paths.ts";
@@ -73,7 +73,7 @@ const main = async (): Promise<void> => {
   let lastLoggedPercentage = -1;
 
   const result = await renderTrackVideo({
-    engine: remotionRenderEngine,
+    engine: await renderEngines.resolve(undefined),
     slug,
     props,
     presetId,

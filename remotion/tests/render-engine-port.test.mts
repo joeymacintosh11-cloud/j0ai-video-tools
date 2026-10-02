@@ -34,9 +34,10 @@ type Call = string;
 
 const fakeEngine = (
   calls: Call[],
-  options: { failRender?: Error; content?: string } = {},
+  options: { failRender?: Error; content?: string; id?: RenderEngine["id"] } = {},
 ): RenderEngine => ({
-  id: "fake",
+  // A stand-in renderer; which id it claims matters only where a test says so.
+  id: options.id ?? "remotion",
   open: async (): Promise<RenderSession> => {
     calls.push("open");
     return {
