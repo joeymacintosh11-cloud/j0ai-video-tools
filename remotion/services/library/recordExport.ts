@@ -13,6 +13,7 @@ import type { TrackMetadata } from "../../core/domain/tracks/types.ts";
 import { COMPOSITION_ID } from "../../core/domain/video/compositionConfig.ts";
 import { VISUALIZER_VERSION } from "../../core/domain/video/exportFreshness.ts";
 import { DEFAULT_RENDERER_ID, type RendererId } from "../../core/domain/video/renderers.ts";
+import type { RenderTemplateIdentity } from "../../core/ports/renderEngine.ts";
 import {
   RENDER_PRESET_LIST,
   renderPreset,
@@ -129,6 +130,8 @@ export type RecordPublishedExportInput = {
   readonly published: ExportManifest;
   /** The renderer that produced the export; absent means remotion. */
   readonly renderer?: RendererId;
+  /** The engine-reported template; absent means the built-in visualizer. */
+  readonly template?: RenderTemplateIdentity;
   readonly now?: () => Date;
   readonly root?: string;
 };
@@ -164,8 +167,8 @@ export const recordPublishedExport = (
       track,
       preset: presetSnapshot(presetId),
       template: {
-        composition: COMPOSITION_ID,
-        visualizerVersion: VISUALIZER_VERSION,
+        composition: input.template?.composition ?? COMPOSITION_ID,
+        visualizerVersion: input.template?.version ?? VISUALIZER_VERSION,
         renderer: input.renderer ?? DEFAULT_RENDERER_ID,
       },
       output: {
@@ -204,6 +207,8 @@ export type PublishRecordedExportInput = {
   readonly jobId: string | null;
   /** The renderer producing the export; absent means remotion. */
   readonly renderer?: RendererId;
+  /** The engine-reported template; absent means the built-in visualizer. */
+  readonly template?: RenderTemplateIdentity;
   readonly root?: string;
 };
 
@@ -255,6 +260,7 @@ export const publishRecordedExport = async (
     before,
     published: manifest,
     renderer: input.renderer,
+    template: input.template,
     root: input.root,
   });
 };

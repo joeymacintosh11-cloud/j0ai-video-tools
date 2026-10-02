@@ -48,6 +48,8 @@ export type RenderTrackVideoOptions = {
   readonly onPhase?: (phase: RenderPhase) => void;
   readonly onResolved?: (info: RenderResolvedInfo) => void;
   readonly onProgress?: (update: RenderProgressUpdate) => void;
+  /** The engine's own diagnostics (binary, template, output, failures). */
+  readonly onEngineLog?: (message: string) => void;
   /** Called when auto-delivery ran, whatever its result. */
   readonly onDelivery?: (outcome: DeliveryOutcome) => void;
   /**
@@ -70,6 +72,7 @@ const renderToTarget = async ({
   onPhase,
   onResolved,
   onProgress,
+  onEngineLog,
 }: RenderTrackVideoOptions, lock: RenderTargetLock): Promise<{
   readonly resolved: RenderTrackVideoResult;
   readonly recorded: AppendContentLibraryResult;
@@ -83,19 +86,21 @@ const renderToTarget = async ({
   };
   checkCancelled();
   onPhase?.("bundling");
-  const session = await engine.open();
+  const session = await engine.open({ log: onEngineLog });
 
   try {
     checkCancelled();
     const inputProps: VisualizerProps = { ...props, presetId };
-    // Fingerprint the copied assets the renderer actually consumes, not live
-    // source files that can change while this render is running.
-    // Fingerprinted as this engine's output, so an export from a different
-    // renderer is never taken for a current one (rendererFingerprintParts).
-    const inputs = fingerprintInputs(inputProps, presetId, session.assetRoot, engine.id);
 
     onPhase?.("resolving");
-    const video = await session.resolve(inputProps);
+    const { template, ...video } = await session.resolve(inputProps);
+
+    // Fingerprint the copied assets the renderer actually consumes, not live
+    // source files that can change while this render is running. Taken after
+    // resolve() so an engine's template identity is part of it, and as this
+    // engine's output, so an export from a different renderer or template is
+    // never taken for a current one (rendererFingerprintParts).
+    const inputs = fingerprintInputs(inputProps, presetId, session.assetRoot, engine.id, template);
 
     const output = trackOutputLocation(slug, presetId);
     const resolved: RenderResolvedInfo = {
@@ -115,6 +120,7 @@ const renderToTarget = async ({
       track: trackSnapshotFromProps(slug, props),
       jobId: jobId ?? null,
       renderer: engine.id,
+      template,
       lock,
       checkCancelled,
       produce: async (stagedVideo) => {

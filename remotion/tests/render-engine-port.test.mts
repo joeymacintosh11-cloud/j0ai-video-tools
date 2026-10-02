@@ -9,6 +9,7 @@ import {
   makeCancelSignal,
   type RenderEngine,
   type RenderSession,
+  type RenderTemplateIdentity,
 } from "../core/ports/renderEngine.ts";
 import { readDeliverySettings } from "../services/delivery/deliverySettings.ts";
 import { contentLibraryPath, readContentLibrary } from "../services/library/contentLibraryLog.ts";
@@ -39,18 +40,30 @@ type Call = string;
 
 const fakeEngine = (
   calls: Call[],
-  options: { failRender?: Error; content?: string; id?: RenderEngine["id"] } = {},
+  options: {
+    failRender?: Error;
+    content?: string;
+    id?: RenderEngine["id"];
+    template?: RenderTemplateIdentity;
+  } = {},
 ): RenderEngine => ({
   // A stand-in renderer; which id it claims matters only where a test says so.
   id: options.id ?? "remotion",
-  open: async (): Promise<RenderSession> => {
+  open: async (openOptions): Promise<RenderSession> => {
     calls.push("open");
+    openOptions?.log?.("fake engine opened");
     return {
       // Reads public/ in place, as a non-bundling engine would.
       assetRoot: PUBLIC_DIR,
       resolve: async (props: VisualizerProps) => {
         calls.push(`resolve:${props.presetId}`);
-        return { durationInFrames: 90, fps: 30, width: 1080, height: 1920 };
+        return {
+          durationInFrames: 90,
+          fps: 30,
+          width: 1080,
+          height: 1920,
+          ...(options.template ? { template: options.template } : {}),
+        };
       },
       render: async ({ outputPath, onProgress }) => {
         calls.push("render");
@@ -274,4 +287,34 @@ test("library records from before renderers were recorded still parse, and read 
   );
   assert.ok(future.ok, "a renderer this version does not know never hides the record");
   assert.equal(storedRendererId(future.record.template.renderer), null);
+});
+
+test("an engine-reported template is fingerprinted and recorded; its log reaches the caller", async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  const logs: string[] = [];
+  const template = { composition: "Visualizer 1x1", version: "aep-sha256:0123456789abcdef" };
+
+  await renderTrackVideo({
+    engine: fakeEngine([], { template }),
+    slug: ctx.f.slug,
+    props: ctx.props,
+    presetId: "square-1x1",
+    onEngineLog: (message) => logs.push(message),
+  });
+
+  assert.deepEqual(logs, ["fake engine opened"]);
+  const [record] = readContentLibrary().records.filter((entry) => entry.track.slug === ctx.f.slug);
+  assert.equal(record.template.composition, "Visualizer 1x1");
+  assert.equal(record.template.visualizerVersion, "aep-sha256:0123456789abcdef");
+
+  // The template is a visualizer input: another version is another fingerprint,
+  // and leaving it out is exactly the built-in visualizer's fingerprint.
+  const base = fingerprintInputs(ctx.props, "square-1x1", PUBLIC_DIR, "remotion");
+  const withTemplate = fingerprintInputs(ctx.props, "square-1x1", PUBLIC_DIR, "remotion", template);
+  const edited = fingerprintInputs(ctx.props, "square-1x1", PUBLIC_DIR, "remotion", { ...template, version: "aep-sha256:fedcba9876543210" });
+  assert.notEqual(withTemplate.visualizer, base.visualizer);
+  assert.notEqual(edited.visualizer, withTemplate.visualizer);
+  assert.deepEqual({ ...withTemplate, visualizer: null }, { ...base, visualizer: null });
+  assert.deepEqual(fingerprintInputs(ctx.props, "square-1x1", PUBLIC_DIR, "remotion", undefined), base);
 });
