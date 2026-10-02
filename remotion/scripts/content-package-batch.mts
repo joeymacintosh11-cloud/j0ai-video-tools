@@ -1,3 +1,4 @@
+import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.ts";
 import {
   deriveBatchContentPackage,
   planContentPackageBatch,
@@ -244,6 +245,7 @@ runCli("inspecting content package batch", async () => {
     let lastLoggedPercentage = -1;
 
     const { outputLabel } = await renderTrackVideo({
+      engine: remotionRenderEngine,
       slug: action.slug,
       props,
       onRecorded: printLibraryOutcome,

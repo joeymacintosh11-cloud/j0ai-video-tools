@@ -89,3 +89,28 @@ test("services, server and CLI depend on the core render contract, not on the Re
     );
   }
 });
+
+const isRemotionPackage = (specifier: string): boolean =>
+  specifier === "remotion" || specifier.startsWith("@remotion/");
+
+test("the engine and its hosts never call Remotion directly", () => {
+  // Rendering goes through the RenderEngine port (core/ports/renderEngine.ts);
+  // only adapters/remotion/ implements it with Remotion. The web UI's live
+  // <Player> preview is the one other, deliberate, Remotion consumer.
+  for (const dir of ["services", "server", "scripts"]) {
+    assert.deepEqual(
+      violations(dir, (specifier) => isRemotionPackage(specifier)),
+      [],
+      dir,
+    );
+  }
+});
+
+test("the engine (services/) does not depend on any adapter", () => {
+  // Adapters are plugged in by the entry points (CLI scripts, render worker);
+  // services/ only ever sees the port.
+  assert.deepEqual(
+    violations("services", (_specifier, target) => target !== null && isUnder(target, "adapters")),
+    [],
+  );
+});

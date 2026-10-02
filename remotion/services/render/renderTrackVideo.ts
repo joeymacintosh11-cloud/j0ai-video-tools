@@ -1,12 +1,3 @@
-import { bundle } from "@remotion/bundler";
-import {
-  openBrowser,
-  renderMedia,
-  selectComposition,
-  type CancelSignal,
-} from "@remotion/renderer";
-import { rm } from "node:fs/promises";
-import path from "node:path";
 import { deliverAfterRender } from "../delivery/autoDeliver.ts";
 import type { DeliveryOutcome } from "../delivery/deliverExport.ts";
 import type { AppendContentLibraryResult } from "../library/contentLibraryLog.ts";
@@ -19,21 +10,17 @@ import {
   DEFAULT_RENDER_PRESET_ID,
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
-import {
-  REMOTION_ENTRY_POINT,
-  trackOutputLocation,
-} from "../tracks/trackLocations.ts";
+import type {
+  CancelSignal,
+  RenderEngine,
+  RenderProgressUpdate,
+} from "../../core/ports/renderEngine.ts";
+import { trackOutputLocation } from "../tracks/trackLocations.ts";
 
 export { COMPOSITION_ID };
+export type { RenderProgressUpdate };
 
 export type RenderPhase = "bundling" | "resolving" | "rendering";
-
-export type RenderProgressUpdate = {
-  readonly progress: number;
-  readonly renderedFrames: number;
-  readonly encodedFrames: number;
-  readonly stitchStage: string;
-};
 
 export type RenderResolvedInfo = {
   readonly durationInFrames: number;
@@ -45,6 +32,12 @@ export type RenderResolvedInfo = {
 };
 
 export type RenderTrackVideoOptions = {
+  /**
+   * The renderer that turns props into a video (core/ports/renderEngine.ts).
+   * Chosen by the caller — the CLI and the render worker pass the Remotion
+   * adapter — so this module stays renderer-agnostic.
+   */
+  readonly engine: RenderEngine;
   readonly slug: string;
   readonly props: VisualizerProps;
   /** Format to render; defaults to 16:9, matching the pre-preset behaviour. */
@@ -68,6 +61,7 @@ export type RenderTrackVideoOptions = {
 export type RenderTrackVideoResult = RenderResolvedInfo;
 
 const renderToTarget = async ({
+  engine,
   slug,
   props,
   presetId = DEFAULT_RENDER_PRESET_ID,
@@ -89,103 +83,44 @@ const renderToTarget = async ({
   };
   checkCancelled();
   onPhase?.("bundling");
-  const bundleLocation = await bundle({ entryPoint: REMOTION_ENTRY_POINT });
+  const session = await engine.open();
 
-  // A single shared browser instance is reused for both steps below, which
-  // is more reliable than letting each API launch (and tear down) its own.
   try {
     checkCancelled();
     const inputProps: VisualizerProps = { ...props, presetId };
-    // Fingerprint the copied assets the browser actually consumes, not live
+    // Fingerprint the copied assets the renderer actually consumes, not live
     // source files that can change while this render is running.
-    const inputs = fingerprintInputs(
-      inputProps,
-      presetId,
-      path.join(bundleLocation, "public"),
-    );
-    const puppeteerInstance = await openBrowser("chrome");
-    let browserClosed = false;
-    const closeBrowser = async () => {
-      if (!browserClosed) {
-        await puppeteerInstance.close({ silent: true });
-        browserClosed = true;
-      }
+    const inputs = fingerprintInputs(inputProps, presetId, session.assetRoot);
+
+    onPhase?.("resolving");
+    const video = await session.resolve(inputProps);
+
+    const output = trackOutputLocation(slug, presetId);
+    const resolved: RenderResolvedInfo = {
+      ...video,
+      outputPath: output.path,
+      outputLabel: output.label,
     };
-    try {
-      // The preset travels in the props, so calculateBeatVisualizerMetadata
-      // reports this format's width, height and frame count back to us.
-      onPhase?.("resolving");
-      const composition = await selectComposition({
-        serveUrl: bundleLocation,
-        id: COMPOSITION_ID,
-        inputProps,
-        puppeteerInstance,
-      });
+    onResolved?.(resolved);
 
-      const output = trackOutputLocation(slug, presetId);
-      const resolved: RenderResolvedInfo = {
-        durationInFrames: composition.durationInFrames,
-        fps: composition.fps,
-        width: composition.width,
-        height: composition.height,
-        outputPath: output.path,
-        outputLabel: output.label,
-      };
-      onResolved?.(resolved);
-
-      onPhase?.("rendering");
-      // publishExport, plus a content-library record for what it published —
-      // written only once the publish has succeeded, still under this lock.
-      const recorded = await publishRecordedExport({
-        slug,
-        presetId,
-        inputs,
-        track: trackSnapshotFromProps(slug, props),
-        jobId: jobId ?? null,
-        lock,
-        checkCancelled,
-        produce: async (stagedVideo) => {
-          await renderMedia({
-            composition,
-            serveUrl: bundleLocation,
-            codec: "h264",
-            outputLocation: stagedVideo,
-            inputProps,
-            imageFormat: "jpeg",
-            overwrite: true,
-            puppeteerInstance,
-            cancelSignal,
-            // Each render worker tab pays a one-time cost to decode the waveform
-            // analysis audio the first time it reads it; every frame after that
-            // is fast. Keep concurrency modest and the timeout generous so that
-            // one-time decode has room to finish instead of tripping the frame
-            // timeout, even though analysis.wav makes it much smaller than before.
-            concurrency: 3,
-            timeoutInMilliseconds: 15 * 60 * 1000,
-            onProgress: ({
-              progress,
-              renderedFrames,
-              encodedFrames,
-              stitchStage,
-            }) => {
-              onProgress?.({
-                progress,
-                renderedFrames,
-                encodedFrames,
-                stitchStage,
-              });
-            },
-          });
-
-          await closeBrowser();
-        },
-      });
-      return { resolved, recorded };
-    } finally {
-      await closeBrowser();
-    }
+    onPhase?.("rendering");
+    // publishExport, plus a content-library record for what it published —
+    // written only once the publish has succeeded, still under this lock.
+    const recorded = await publishRecordedExport({
+      slug,
+      presetId,
+      inputs,
+      track: trackSnapshotFromProps(slug, props),
+      jobId: jobId ?? null,
+      lock,
+      checkCancelled,
+      produce: async (stagedVideo) => {
+        await session.render({ outputPath: stagedVideo, cancelSignal, onProgress });
+      },
+    });
+    return { resolved, recorded };
   } finally {
-    await rm(bundleLocation, { recursive: true, force: true });
+    await session.close();
   }
 };
 
@@ -197,8 +132,10 @@ const renderToTarget = async ({
  * supplies props (from prepareTrack) and gets real progress via callbacks —
  * nothing here logs or decides exit codes.
  *
- * Encoding settings are deliberately identical to what the CLI has always
- * used; changing them would change render output.
+ * How the video itself is produced is the engine's business (the Remotion
+ * adapter keeps the encoding settings the CLI has always used); everything
+ * around it — lock, fingerprint, publish, record, deliver — lives here, once,
+ * for every engine.
  *
  * The target lock is taken here rather than at either call site, because this
  * is the one place both the CLI and the render worker pass through: whatever

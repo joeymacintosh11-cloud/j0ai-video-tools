@@ -20,7 +20,6 @@ export const PROJECT_ROOT = path.join(servicesTracksDir, "..", "..");
 export const PUBLIC_DIR = path.join(PROJECT_ROOT, "public");
 export const TRACKS_DIR = path.join(PUBLIC_DIR, TRACKS_DIR_NAME);
 export const OUT_DIR = path.join(PROJECT_ROOT, "out");
-export const REMOTION_ENTRY_POINT = path.join(PROJECT_ROOT, "src", "index.ts");
 
 export type TrackLocations = {
   readonly trackDir: string;
