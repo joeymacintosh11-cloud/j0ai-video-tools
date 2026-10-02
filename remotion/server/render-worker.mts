@@ -1,4 +1,4 @@
-import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.ts";
+import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.mts";
 import { makeCancelSignal } from "../core/ports/renderEngine.ts";
 import { TrackError } from "../core/domain/tracks/errors.ts";
 import { publicLabel } from "../core/domain/tracks/paths.ts";

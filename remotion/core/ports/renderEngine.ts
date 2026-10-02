@@ -7,7 +7,7 @@ import type { VisualizerProps } from "../domain/video/visualizerProps.ts";
  * render: the per-target lock, input fingerprinting, staged publication, the
  * content-library record and auto-delivery. A RenderEngine owns only the part
  * that turns VisualizerProps into a video file. Remotion is one implementation
- * (adapters/remotion/remotionRenderEngine.ts); another renderer — a Premiere
+ * (adapters/remotion/remotionRenderEngine.mts); another renderer — a Premiere
  * Pro or After Effects bridge, a cloud farm — implements this interface and
  * gets all of the above for free.
  *

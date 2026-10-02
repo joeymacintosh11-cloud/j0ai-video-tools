@@ -1,4 +1,4 @@
-import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.ts";
+import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.mts";
 import { assertExportMode } from "../core/domain/video/exportFreshness.ts";
 import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import {

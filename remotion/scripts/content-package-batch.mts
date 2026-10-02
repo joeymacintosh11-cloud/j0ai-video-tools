@@ -1,4 +1,4 @@
-import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.ts";
+import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.mts";
 import {
   deriveBatchContentPackage,
   planContentPackageBatch,
