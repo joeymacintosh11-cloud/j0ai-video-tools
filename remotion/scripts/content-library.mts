@@ -20,7 +20,7 @@ import { adoptExistingExports } from "../services/library/recordExport.ts";
 import {
   getContentLibraryRecord,
   queryContentLibrary,
-} from "../server/services/contentLibrary.ts";
+} from "../services/workflows/contentLibrary.ts";
 import { runCli } from "./cli.ts";
 
 /**

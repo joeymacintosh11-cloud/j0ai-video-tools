@@ -11,7 +11,7 @@ import {
   buildContentPackagesForSlugs,
   loadContentPackageBatchContext,
   namedBatchSlugs,
-} from "../server/services/contentPackagePlan.ts";
+} from "../services/workflows/contentPackagePlan.ts";
 import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
 import { listTracks } from "../services/tracks/listTracks.ts";

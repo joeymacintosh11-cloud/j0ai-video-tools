@@ -1,11 +1,11 @@
-import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.mts";
-import { makeCancelSignal } from "../core/ports/renderEngine.ts";
-import { TrackError } from "../core/domain/tracks/errors.ts";
-import { publicLabel } from "../core/domain/tracks/paths.ts";
-import { assertRenderPresetId } from "../core/domain/video/renderPresets.ts";
-import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
-import { prepareTrack } from "../services/tracks/prepareTrack.ts";
-import type { WorkerCommand, WorkerEvent } from "./types.ts";
+import { remotionRenderEngine } from "../../adapters/remotion/remotionRenderEngine.mts";
+import { makeCancelSignal } from "../../core/ports/renderEngine.ts";
+import { TrackError } from "../../core/domain/tracks/errors.ts";
+import { publicLabel } from "../../core/domain/tracks/paths.ts";
+import { assertRenderPresetId } from "../../core/domain/video/renderPresets.ts";
+import { renderTrackVideo } from "../render/renderTrackVideo.ts";
+import { prepareTrack } from "../tracks/prepareTrack.ts";
+import type { WorkerCommand, WorkerEvent } from "./renderJobTypes.ts";
 
 /**
  * Renders one track in one format, in its own process.

@@ -45,8 +45,8 @@ childProcess.fork = (() => {
 }) as typeof childProcess.fork;
 syncBuiltinESMExports();
 
-const { renderManager } = await import("../server/services/renderManager.ts");
-const { RENDER_MANAGER_BOOT_ID } = await import("../server/services/renderJournal.ts");
+const { renderManager } = await import("../services/workflows/renderManager.ts");
+const { RENDER_MANAGER_BOOT_ID } = await import("../services/workflows/renderJournal.ts");
 
 const job = renderManager.startRender(slug);
 // Let the fake worker announce "rendering", exactly like a real one mid-way

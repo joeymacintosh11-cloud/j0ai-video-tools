@@ -360,7 +360,7 @@ export type TrackPreviewView<TInputProps = unknown> = {
  * render journal's honest description of a job that was queued/preparing/
  * rendering the last time any process recorded it, and whose owning process
  * is not the one answering now (see core/domain/render/renderJournal.ts and
- * server/services/renderJournal.ts). A client sees it only from
+ * services/workflows/renderJournal.ts). A client sees it only from
  * `GET /api/renders/:id` when `historical` is also true.
  */
 export type RenderJobStatus =

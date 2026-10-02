@@ -36,20 +36,20 @@ import {
   deliveryFolderFor,
 } from "../../core/domain/delivery/deliveryPaths.ts";
 import { RENDER_PRESET_IDS } from "../../core/domain/video/renderPresets.ts";
-import { deliveryStateForTarget } from "../../services/delivery/deliverExport.ts";
-import { readDeliveryReceipt } from "../../services/delivery/deliveryReceipt.ts";
+import { deliveryStateForTarget } from "../delivery/deliverExport.ts";
+import { readDeliveryReceipt } from "../delivery/deliveryReceipt.ts";
 import {
   readDeliverySettings,
   resolveDeliveryRoot,
   type DeliverySettings,
-} from "../../services/delivery/deliverySettings.ts";
+} from "../delivery/deliverySettings.ts";
 import {
   releaseBundlePaths,
   releaseBundleStateFor,
-} from "../../services/delivery/releaseBundle.ts";
-import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
-import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
-import { listTracks } from "../../services/tracks/listTracks.ts";
+} from "../delivery/releaseBundle.ts";
+import { trackExportCoverage } from "../tracks/exportCoverage.ts";
+import { inspectTrack } from "../tracks/inspectTrack.ts";
+import { listTracks } from "../tracks/listTracks.ts";
 
 /**
  * Compares the destination's actual contents against what current records

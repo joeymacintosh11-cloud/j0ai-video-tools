@@ -10,7 +10,7 @@ import { readJsonBody, sendOk } from "../http/json.ts";
 import {
   generatePlannedBundles,
   planReleaseBundles,
-} from "../services/releaseBundlePlan.ts";
+} from "../../services/workflows/releaseBundlePlan.ts";
 
 /**
  * Generates release bundles for named tracks or the whole catalogue.

@@ -158,7 +158,7 @@ test("a superseded version refuses to re-export, and changes nothing", async (t)
 test("re-exporting the current version queues exactly one normal render, and never touches the original record", async (t) => {
   const childProcess = (await import("node:child_process")).default;
   const { Worker } = await import("./managerHarness.mts");
-  const { renderManager } = await import("../server/services/renderManager.ts");
+  const { renderManager } = await import("../services/workflows/renderManager.ts");
   const worker = new Worker();
   worker.pid = 4242;
   t.mock.method(childProcess, "fork", () => worker);

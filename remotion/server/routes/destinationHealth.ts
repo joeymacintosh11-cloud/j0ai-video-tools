@@ -8,14 +8,14 @@ import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { readDeliverySettings } from "../../services/delivery/deliverySettings.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
-import { scanDestinationHealth } from "../services/destinationHealth.ts";
-import { enrichDestinationHealthWithRenderContext } from "../services/destinationHealthRenderContext.ts";
+import { scanDestinationHealth } from "../../services/workflows/destinationHealth.ts";
+import { enrichDestinationHealthWithRenderContext } from "../../services/workflows/destinationHealthRenderContext.ts";
 import {
   applyDestinationFixPlan,
   planDestinationFix,
   type ApplyDestinationFixInput,
   type DestinationFixPlan,
-} from "../services/destinationFixPlan.ts";
+} from "../../services/workflows/destinationFixPlan.ts";
 
 /**
  * Scans the configured destination for drift against current records.
@@ -42,7 +42,7 @@ export const handleGetDestinationHealth = async (
   });
   // Explanatory-only: composed after the scan has already decided every
   // finding, never before. Not applied to the fix planner (see
-  // server/services/destinationHealthRenderContext.ts's own comment) — only
+  // services/workflows/destinationHealthRenderContext.ts's own comment) — only
   // this read-only endpoint enriches its response.
   const result = enrichDestinationHealthWithRenderContext(scanned);
 

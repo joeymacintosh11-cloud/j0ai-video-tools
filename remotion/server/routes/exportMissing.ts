@@ -4,8 +4,8 @@ import type { ExportMissingView } from "../../core/domain/api/views.ts";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
-import { planMissingExports, toRenderTargets } from "../services/exportPlan.ts";
-import { renderManager } from "../services/renderManager.ts";
+import { planMissingExports, toRenderTargets } from "../../services/workflows/exportPlan.ts";
+import { renderManager } from "../../services/workflows/renderManager.ts";
 
 /**
  * Which tracks to cover: the ones named, or every one of them.

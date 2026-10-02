@@ -1,5 +1,5 @@
-import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
-import { enrichDestinationHealthWithRenderContext } from "../server/services/destinationHealthRenderContext.ts";
+import { scanDestinationHealth } from "../services/workflows/destinationHealth.ts";
+import { enrichDestinationHealthWithRenderContext } from "../services/workflows/destinationHealthRenderContext.ts";
 import { readDeliverySettings } from "../services/delivery/deliverySettings.ts";
 import { formatBundleTimestamp } from "../core/domain/delivery/releaseBundle.ts";
 import type {

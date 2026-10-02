@@ -9,9 +9,9 @@ import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import { readContentMetadataSettings } from "../../services/content/metadataTemplateSettings.ts";
 import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
 import { sendOk } from "../http/json.ts";
-import { renderManager } from "../services/renderManager.ts";
-import { deliveryRootForView } from "./tracks.ts";
-import { toTrackDetailView } from "../views/trackView.ts";
+import { renderManager } from "../../services/workflows/renderManager.ts";
+import { deliveryRootForView } from "../../services/workflows/trackView.ts";
+import { toTrackDetailView } from "../../services/workflows/trackView.ts";
 
 /**
  * GET /api/content-package?track=<slug>&mode=intent|full&platform=<id>...

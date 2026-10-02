@@ -8,21 +8,37 @@ import {
   DEFAULT_RENDER_PRESET_ID,
   resolveExportPresets,
 } from "../../core/domain/video/renderPresets.ts";
-import { deliveryStateForTarget } from "../../services/delivery/deliverExport.ts";
-import { releaseBundleStateFor } from "../../services/delivery/releaseBundle.ts";
-import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
+import { deliveryStateForTarget } from "../delivery/deliverExport.ts";
+import {
+  readDeliverySettings,
+  resolveDeliveryRoot,
+} from "../delivery/deliverySettings.ts";
+import { releaseBundleStateFor } from "../delivery/releaseBundle.ts";
+import { trackExportCoverage } from "../tracks/exportCoverage.ts";
 import {
   trackLocations,
   trackOutputLocation,
-} from "../../services/tracks/trackLocations.ts";
+} from "../tracks/trackLocations.ts";
 
 /**
  * Turns a TrackInspection into the API's wire shape.
  *
  * The view types themselves live in core/domain/api/views.ts, shared with the
  * UI; this module is only the Node-side mapping, because it needs
- * trackLocations() for absolute paths.
+ * trackLocations() for absolute paths. Shared by the API routes and the
+ * content-package workflows (and so the CLI), which is why it lives here
+ * rather than in server/.
  */
+
+/**
+ * The destination root for this response, or null when delivery is off.
+ *
+ * Resolved once per request: a listing then stats each export's destination at
+ * most once, and with no destination configured it does no filesystem work at
+ * all.
+ */
+export const deliveryRootForView = async (): Promise<string | null> =>
+  resolveDeliveryRoot(await readDeliverySettings()).root;
 
 export const toTrackSummaryView = (
   inspection: TrackInspection,

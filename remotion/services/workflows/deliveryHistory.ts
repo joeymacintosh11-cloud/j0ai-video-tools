@@ -16,22 +16,22 @@ import { RENDER_PRESET_IDS } from "../../core/domain/video/renderPresets.ts";
 import {
   deliveryEventFor,
   deliveryIdForReceipt,
-} from "../../services/delivery/deliveryHistory.ts";
+} from "../delivery/deliveryHistory.ts";
 import {
   appendDeliveryLogEvent,
   readDeliveryLog,
-} from "../../services/delivery/deliveryHistoryLog.ts";
+} from "../delivery/deliveryHistoryLog.ts";
 import {
   readDeliveryReceipt,
   type DeliveryReceipt,
-} from "../../services/delivery/deliveryReceipt.ts";
+} from "../delivery/deliveryReceipt.ts";
 import {
   readDeliverySettings,
   resolveDeliveryRoot,
   type DeliverySettings,
-} from "../../services/delivery/deliverySettings.ts";
-import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
-import { OUT_DIR } from "../../services/tracks/trackLocations.ts";
+} from "../delivery/deliverySettings.ts";
+import { inspectTrack } from "../tracks/inspectTrack.ts";
+import { OUT_DIR } from "../tracks/trackLocations.ts";
 
 /**
  * Queries the destination's delivery history, and reconciles it with receipts.

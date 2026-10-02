@@ -9,7 +9,7 @@ import {
   targetKey,
   type RecoveredRenderJob,
 } from "../../core/domain/render/renderJournal.ts";
-import { readRenderJournal } from "../../services/render/renderJournalLog.ts";
+import { readRenderJournal } from "../render/renderJournalLog.ts";
 import type { DestinationHealthResult } from "./destinationHealth.ts";
 import { RENDER_MANAGER_BOOT_ID } from "./renderJournal.ts";
 import { renderManager } from "./renderManager.ts";
@@ -27,7 +27,7 @@ import { renderManager } from "./renderManager.ts";
  * for `GET /api/render-history` — it is not part of either authority. It
  * never creates, removes, or changes the severity of a finding; it only
  * ever adds a `renderContext` field to a finding that already exists,
- * exactly as `scanDestinationHealth` produced it. `server/services/
+ * exactly as `scanDestinationHealth` produced it. `services/workflows/
  * destinationFixPlan.ts` calls `scanDestinationHealth` directly and never
  * this function, which is what makes "the fix planner is unaffected by
  * render context" true by construction rather than by convention (§22 of

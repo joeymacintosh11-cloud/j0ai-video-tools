@@ -5,7 +5,7 @@
  * an API-server restart. It never decides what runs next — that stays with
  * `renderManager`, the worker process, the render queue and the render lock,
  * exactly as before this existed. See services/render/renderJournalLog.ts for
- * the file it is read from, and server/services/renderJournal.ts for how the
+ * the file it is read from, and services/workflows/renderJournal.ts for how the
  * server turns reconstructed history into a query answer.
  *
  * Pure and browser-safe, mirroring core/domain/delivery/deliveryHistory.ts:
@@ -637,7 +637,7 @@ export const targetKey = (slug: string, presetId: string): string =>
  * journal has ever seen, in one pass — built once per caller, not once per
  * target. This is what lets destination-health attach render context to
  * many findings from one journal read instead of a lookup-shaped rescan per
- * finding (`server/services/destinationHealthRenderContext.ts`).
+ * finding (`services/workflows/destinationHealthRenderContext.ts`).
  *
  * Deliberately not built from `recentRenderJobsForSlug`: that function's own
  * `limit` bounds how many of a *track's* most recent jobs it considers

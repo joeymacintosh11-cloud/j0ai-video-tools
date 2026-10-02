@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   appendRenderJournalEvent,
   readRenderJournal,
-} from "../../services/render/renderJournalLog.ts";
+} from "../render/renderJournalLog.ts";
 import {
   classifyRecoveredJob,
   reconstructRenderJournal,

@@ -10,7 +10,7 @@ import {
 import {
   planMissingExports,
   type ExportPlan,
-} from "../server/services/exportPlan.ts";
+} from "../services/workflows/exportPlan.ts";
 import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
 import type { VisualizerProps } from "../core/domain/video/visualizerProps.ts";

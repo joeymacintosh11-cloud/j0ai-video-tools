@@ -15,7 +15,7 @@ import {
   writeDeliverySettings,
 } from "../../services/delivery/deliverySettings.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
-import { deliverPlanned, planDeliveries } from "../services/deliveryPlan.ts";
+import { deliverPlanned, planDeliveries } from "../../services/workflows/deliveryPlan.ts";
 
 /**
  * Local delivery: settings, and copying finished exports to them.

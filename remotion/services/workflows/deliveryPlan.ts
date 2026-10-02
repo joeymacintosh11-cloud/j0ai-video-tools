@@ -18,17 +18,17 @@ import {
   deliverExport,
   deliveryStateForTarget,
   type DeliveryOutcome,
-} from "../../services/delivery/deliverExport.ts";
+} from "../delivery/deliverExport.ts";
 import {
   readDeliverySettings,
   resolveDeliveryRoot,
   type DeliverySettings,
-} from "../../services/delivery/deliverySettings.ts";
-import { updateReleaseBundleAfterDelivery } from "../../services/delivery/autoReleaseBundle.ts";
-import type { GenerateReleaseBundleResult } from "../../services/delivery/releaseBundle.ts";
-import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
-import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
-import { listTracks } from "../../services/tracks/listTracks.ts";
+} from "../delivery/deliverySettings.ts";
+import { updateReleaseBundleAfterDelivery } from "../delivery/autoReleaseBundle.ts";
+import type { GenerateReleaseBundleResult } from "../delivery/releaseBundle.ts";
+import { trackExportCoverage } from "../tracks/exportCoverage.ts";
+import { inspectTrack } from "../tracks/inspectTrack.ts";
+import { listTracks } from "../tracks/listTracks.ts";
 
 /**
  * Works out which current exports are not yet at the destination.

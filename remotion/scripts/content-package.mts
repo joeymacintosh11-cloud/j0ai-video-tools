@@ -10,7 +10,7 @@ import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import {
   planMissingExports,
   type ExportPlan,
-} from "../server/services/exportPlan.ts";
+} from "../services/workflows/exportPlan.ts";
 import {
   readDeliverySettings,
   resolveDeliveryRoot,

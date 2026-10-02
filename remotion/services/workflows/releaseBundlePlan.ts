@@ -7,14 +7,14 @@ import {
   releaseBundleStateFor,
   type GenerateReleaseBundleResult,
   type ReleaseBundleState,
-} from "../../services/delivery/releaseBundle.ts";
+} from "../delivery/releaseBundle.ts";
 import {
   readDeliverySettings,
   resolveDeliveryRoot,
   type DeliverySettings,
-} from "../../services/delivery/deliverySettings.ts";
-import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
-import { listTracks } from "../../services/tracks/listTracks.ts";
+} from "../delivery/deliverySettings.ts";
+import { inspectTrack } from "../tracks/inspectTrack.ts";
+import { listTracks } from "../tracks/listTracks.ts";
 
 /**
  * Plans and performs release bundle generation across tracks.

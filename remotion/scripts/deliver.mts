@@ -2,7 +2,7 @@ import {
   deliverPlanned,
   planDeliveries,
   type DeliveryPlan,
-} from "../server/services/deliveryPlan.ts";
+} from "../services/workflows/deliveryPlan.ts";
 import {
   DELIVERY_SETTINGS_FILE,
   readDeliverySettings,

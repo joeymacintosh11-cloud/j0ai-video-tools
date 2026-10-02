@@ -9,7 +9,7 @@ import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
 import { metadataRevision } from "../services/tracks/metadataRevision.ts";
 import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
 import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
-import { toTrackDetailView } from "../server/views/trackView.ts";
+import { toTrackDetailView } from "../services/workflows/trackView.ts";
 import {
   TrackError,
 } from "../core/domain/tracks/errors.ts";

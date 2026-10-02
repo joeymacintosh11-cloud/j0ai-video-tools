@@ -110,7 +110,7 @@ export const DESTINATION_FINDING_SEVERITY: Record<
 
 /**
  * Optional historical context, attached after the fact by
- * `server/services/destinationHealthRenderContext.ts` — never by the scanner
+ * `services/workflows/destinationHealthRenderContext.ts` — never by the scanner
  * itself (see that module's own comment on the architecture boundary this
  * preserves). The `state` union deliberately excludes `"completed"`: a
  * completed render has no explanatory value for *why* the destination copy
@@ -199,7 +199,7 @@ export const RENDER_CONTEXT_ELIGIBLE_CODES: ReadonlySet<DestinationFindingCode> 
  * a claim this function — or the scan — ever has evidence for. `error` is
  * read only for its `message`; a caller is expected to have already
  * discarded anything else an error object might carry (see
- * `server/services/destinationHealthRenderContext.ts`'s own comment on why
+ * `services/workflows/destinationHealthRenderContext.ts`'s own comment on why
  * that matters).
  */
 export const describeRenderContext = (

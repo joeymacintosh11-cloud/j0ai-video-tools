@@ -113,11 +113,54 @@ test("the engine and its hosts never call Remotion directly", () => {
   }
 });
 
+/**
+ * The render worker is a process entry point, like a CLI script: it is where
+ * the Remotion engine is plugged into the engine for API and fix-plan renders.
+ * It lives beside the render manager that forks it, and is the one file under
+ * services/ allowed to name an adapter.
+ */
+const SERVICES_ENTRY_POINTS = [path.join("services", "workflows", "render-worker.mts")];
+
 test("the engine (services/) does not depend on any adapter", () => {
   // Adapters are plugged in by the entry points (CLI scripts, render worker);
-  // services/ only ever sees the port.
+  // the rest of services/ only ever sees the port.
   assert.deepEqual(
-    violations("services", (_specifier, target) => target !== null && isUnder(target, "adapters")),
+    violations(
+      "services",
+      (_specifier, target) => target !== null && isUnder(target, "adapters"),
+    ).filter((violation) => !SERVICES_ENTRY_POINTS.some((entry) => violation.startsWith(`${entry} `))),
+    [],
+  );
+});
+
+test("the engine (services/) never depends on an app: the API server, the web UI or the CLI", () => {
+  assert.deepEqual(
+    violations(
+      "services",
+      (_specifier, target) =>
+        target !== null && ["server", "ui", "scripts"].some((app) => isUnder(target, app)),
+    ),
+    [],
+  );
+});
+
+test("the CLI is an app beside the API server, not a client of it", () => {
+  // Workflows the CLI shares with the API live in services/workflows/, so a
+  // batch or desktop host can reuse them without pulling in the HTTP server.
+  assert.deepEqual(
+    violations("scripts", (_specifier, target) => target !== null && isUnder(target, "server")),
+    [],
+  );
+});
+
+test("the web UI talks to the engine only over the API", () => {
+  // It may share core types and the composition (for <Player>), never Node code.
+  assert.deepEqual(
+    violations(
+      "ui",
+      (_specifier, target) =>
+        target !== null && ["services", "server", "scripts"].some((app) => isUnder(target, app)),
+    ),
     [],
   );
 });

@@ -6,7 +6,7 @@ import type {
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
 import { openSseStream } from "../http/sse.ts";
-import { renderManager } from "../services/renderManager.ts";
+import { renderManager } from "../../services/workflows/renderManager.ts";
 
 /** The most targets one request may queue, so a typo cannot flood the queue. */
 const MAX_TARGETS = 50;

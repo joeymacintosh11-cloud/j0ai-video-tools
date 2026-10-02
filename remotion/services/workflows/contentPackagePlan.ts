@@ -9,10 +9,9 @@ import {
 import type { ContentPackageBatchTrack } from "../../core/domain/content/contentPackageBatch.ts";
 import { assertPlatformId, type PlatformId } from "../../core/domain/content/platformProfiles.ts";
 import type { PartialMetadataTemplates } from "../../core/domain/content/metadataTemplates.ts";
-import { readContentMetadataSettings } from "../../services/content/metadataTemplateSettings.ts";
-import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
-import { deliveryRootForView } from "../routes/tracks.ts";
-import { toTrackDetailView } from "../views/trackView.ts";
+import { readContentMetadataSettings } from "../content/metadataTemplateSettings.ts";
+import { inspectTrack } from "../tracks/inspectTrack.ts";
+import { deliveryRootForView, toTrackDetailView } from "./trackView.ts";
 import { renderManager } from "./renderManager.ts";
 
 /**

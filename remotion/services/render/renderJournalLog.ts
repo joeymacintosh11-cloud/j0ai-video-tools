@@ -35,7 +35,7 @@ import { OUT_DIR } from "../tracks/trackLocations.ts";
  * **Why a cross-process lock, when render manager is normally "the" server.**
  * `renderManager` is a plain module singleton, not a network service: several
  * scripts (`scripts/destination-fix-plan.mts` with `--apply --wait`,
- * anything importing `server/services/renderManager.ts` directly) run it in
+ * anything importing `services/workflows/renderManager.ts` directly) run it in
  * their *own* process, forking their own worker and writing their own
  * events, fully independently of whether the API server is running. Two such
  * processes — the API server and a concurrently-run CLI script — can and do

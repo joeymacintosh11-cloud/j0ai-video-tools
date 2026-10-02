@@ -34,23 +34,13 @@ import {
   updateTrackMetadata,
   type TrackMetadataPatch,
 } from "../../services/tracks/updateTrackMetadata.ts";
-import {
-  readDeliverySettings,
-  resolveDeliveryRoot,
-} from "../../services/delivery/deliverySettings.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
-import { renderManager } from "../services/renderManager.ts";
-import { toTrackDetailView, toTrackSummaryView } from "../views/trackView.ts";
-
-/**
- * The destination root for this response, or null when delivery is off.
- *
- * Resolved once per request: a listing then stats each export's destination at
- * most once, and with no destination configured it does no filesystem work at
- * all.
- */
-export const deliveryRootForView = async (): Promise<string | null> =>
-  resolveDeliveryRoot(await readDeliverySettings()).root;
+import { renderManager } from "../../services/workflows/renderManager.ts";
+import {
+  deliveryRootForView,
+  toTrackDetailView,
+  toTrackSummaryView,
+} from "../../services/workflows/trackView.ts";
 
 export const handleListTracks = async (
   _request: IncomingMessage,

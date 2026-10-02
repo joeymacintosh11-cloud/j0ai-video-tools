@@ -8,10 +8,10 @@ import { tmpdir } from "node:os";
 import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
-import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
-import { enrichDestinationHealthWithRenderContext } from "../server/services/destinationHealthRenderContext.ts";
-import { planDestinationFix } from "../server/services/destinationFixPlan.ts";
-import { RENDER_MANAGER_BOOT_ID } from "../server/services/renderJournal.ts";
+import { scanDestinationHealth } from "../services/workflows/destinationHealth.ts";
+import { enrichDestinationHealthWithRenderContext } from "../services/workflows/destinationHealthRenderContext.ts";
+import { planDestinationFix } from "../services/workflows/destinationFixPlan.ts";
+import { RENDER_MANAGER_BOOT_ID } from "../services/workflows/renderJournal.ts";
 import type { DestinationFinding } from "../core/domain/delivery/destinationHealth.ts";
 import {
   buildMostRecentJobIndex,
@@ -339,7 +339,7 @@ test("a live job for the exact target: no historical context, even with an older
     syncBuiltinESMExports();
   });
 
-  const { renderManager } = await import("../server/services/renderManager.ts");
+  const { renderManager } = await import("../services/workflows/renderManager.ts");
   renderManager.startRender(f.slug, "youtube-16x9");
   worker.emit("message", { type: "status", status: "rendering" });
   await new Promise((resolve) => setImmediate(resolve));

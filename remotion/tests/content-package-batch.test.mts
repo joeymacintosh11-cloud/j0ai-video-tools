@@ -22,7 +22,7 @@ import {
   loadContentPackageBatchContext,
   namedBatchSlugs,
   type ContentPackageBatchContext,
-} from "../server/services/contentPackagePlan.ts";
+} from "../services/workflows/contentPackagePlan.ts";
 import { TrackError } from "../core/domain/tracks/errors.ts";
 
 /**

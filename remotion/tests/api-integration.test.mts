@@ -398,7 +398,7 @@ test("freshness API reports stale reasons and all three plan modes without queue
 test("stale execution queues replacements once and exposes rendering over disk freshness", async (t) => {
   const childProcess = (await import("node:child_process")).default;
   const { Worker } = await import("./managerHarness.mts");
-  const { renderManager } = await import("../server/services/renderManager.ts");
+  const { renderManager } = await import("../services/workflows/renderManager.ts");
   const worker = new Worker();
   worker.pid = 12345;
   t.mock.method(childProcess, "fork", () => worker);
@@ -997,7 +997,7 @@ test("POST /api/content-package/batch/apply is a successful no-op when everythin
 test("POST /api/content-package/batch/apply queues missing targets through the existing render queue", async (t) => {
   const childProcess = (await import("node:child_process")).default;
   const { Worker } = await import("./managerHarness.mts");
-  const { renderManager } = await import("../server/services/renderManager.ts");
+  const { renderManager } = await import("../services/workflows/renderManager.ts");
   const worker = new Worker();
   worker.pid = 54321;
   t.mock.method(childProcess, "fork", () => worker);

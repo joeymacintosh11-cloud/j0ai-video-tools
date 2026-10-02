@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   planMissingExports,
   toRenderTargets,
-} from "../server/services/exportPlan.ts";
+} from "../services/workflows/exportPlan.ts";
 import {
   renderedPresetIds,
   trackExportCoverage,

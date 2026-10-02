@@ -14,9 +14,9 @@ import {
   resolveExportPresets,
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
-import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
-import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
-import { listTracks } from "../../services/tracks/listTracks.ts";
+import { trackExportCoverage } from "../tracks/exportCoverage.ts";
+import { inspectTrack } from "../tracks/inspectTrack.ts";
+import { listTracks } from "../tracks/listTracks.ts";
 
 /**
  * Plans missing and/or stale exports, defaulting to missing-only compatibility.

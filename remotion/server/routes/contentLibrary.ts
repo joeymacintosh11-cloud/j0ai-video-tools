@@ -19,8 +19,8 @@ import { sendOk } from "../http/json.ts";
 import {
   getContentLibraryRecord,
   queryContentLibrary,
-} from "../services/contentLibrary.ts";
-import { renderManager } from "../services/renderManager.ts";
+} from "../../services/workflows/contentLibrary.ts";
+import { renderManager } from "../../services/workflows/renderManager.ts";
 
 /**
  * The content library over HTTP.

@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import test, { type TestContext } from "node:test";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
+import { scanDestinationHealth } from "../services/workflows/destinationHealth.ts";
 import {
   looksLikeManagedExportFile,
   looksLikeManagedTrackFolder,

@@ -15,7 +15,7 @@ import type {
 import {
   inspectRenderTargetLock,
   type RenderLockState,
-} from "../../services/render/renderLock.ts";
+} from "../render/renderLock.ts";
 import {
   isTerminalStatus,
   type RenderJobError,
@@ -23,12 +23,11 @@ import {
   type RenderJobStatus,
   type RenderJobView,
   type WorkerEvent,
-} from "../types.ts";
+} from "./renderJobTypes.ts";
 import { recordRenderJournalEvent } from "./renderJournal.ts";
 
 const WORKER_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
-  "..",
   "render-worker.mts",
 );
 

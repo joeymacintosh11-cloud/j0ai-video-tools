@@ -9,11 +9,11 @@ import test, { type TestContext } from "node:test";
 import {
   applyDestinationFixPlan,
   planDestinationFix,
-} from "../server/services/destinationFixPlan.ts";
+} from "../services/workflows/destinationFixPlan.ts";
 import { deliverExport } from "../services/delivery/deliverExport.ts";
 import type { DeliverySettings } from "../services/delivery/deliverySettings.ts";
 import { generateReleaseBundle, releaseBundlePaths } from "../services/delivery/releaseBundle.ts";
-import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
+import { scanDestinationHealth } from "../services/workflows/destinationHealth.ts";
 import { publishExport } from "../services/render/publishExport.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { trackExportCoverage } from "../services/tracks/exportCoverage.ts";

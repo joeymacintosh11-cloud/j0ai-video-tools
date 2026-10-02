@@ -19,9 +19,9 @@ import {
   readBatchPlatforms,
   readBatchTracks,
   toRenderTargetsFromPlan,
-} from "../services/contentPackagePlan.ts";
-import { renderManager } from "../services/renderManager.ts";
-import type { RenderBatchEvent } from "../services/renderManager.ts";
+} from "../../services/workflows/contentPackagePlan.ts";
+import { renderManager } from "../../services/workflows/renderManager.ts";
+import type { RenderBatchEvent } from "../../services/workflows/renderManager.ts";
 
 /**
  * Batch Content Package Generation: select several tracks, inspect their

@@ -21,7 +21,7 @@ import {
 import {
   planMissingExports,
   toRenderTargets,
-} from "../server/services/exportPlan.ts";
+} from "../services/workflows/exportPlan.ts";
 
 const setup = async (t: TestContext, extra = {}) => {
   const f = await fixture(t, extra);

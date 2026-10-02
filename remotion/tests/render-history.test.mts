@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 import { syncBuiltinESMExports } from "node:module";
 import test, { type TestContext } from "node:test";
 import { handleRequest } from "../server/app.ts";
-import { RENDER_MANAGER_BOOT_ID } from "../server/services/renderJournal.ts";
+import { RENDER_MANAGER_BOOT_ID } from "../services/workflows/renderJournal.ts";
 import {
   RENDER_JOURNAL_SCHEMA_VERSION,
   type RenderJournalEvent,
@@ -409,7 +409,7 @@ test("an interrupted job from a dead process and a new live job for the same tra
   });
 
   const { base } = await api(t);
-  const { renderManager } = await import("../server/services/renderManager.ts");
+  const { renderManager } = await import("../services/workflows/renderManager.ts");
   const liveJob = renderManager.startRender(slug, "vertical-9x16");
   const liveJobId = liveJob.id;
   worker.emit("message", { type: "status", status: "rendering" });

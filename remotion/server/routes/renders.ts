@@ -3,9 +3,9 @@ import type { RenderJobView, RenderLogsView } from "../../core/domain/api/views.
 import { TrackError } from "../../core/domain/tracks/errors.ts";
 import { sendOk } from "../http/json.ts";
 import { openSseStream } from "../http/sse.ts";
-import { getHistoricalRenderJob } from "../services/renderJournal.ts";
-import { renderManager } from "../services/renderManager.ts";
-import { isTerminalStatus } from "../types.ts";
+import { getHistoricalRenderJob } from "../../services/workflows/renderJournal.ts";
+import { renderManager } from "../../services/workflows/renderManager.ts";
+import { isTerminalStatus } from "../../services/workflows/renderJobTypes.ts";
 
 /**
  * A view built from the durable journal rather than from a live job.

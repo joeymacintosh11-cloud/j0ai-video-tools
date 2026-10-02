@@ -38,7 +38,7 @@ import {
   deliveryIdForReceipt,
 } from "../services/delivery/deliveryHistory.ts";
 import { deliverExport } from "../services/delivery/deliverExport.ts";
-import { deliverPlanned, planDeliveries } from "../server/services/deliveryPlan.ts";
+import { deliverPlanned, planDeliveries } from "../services/workflows/deliveryPlan.ts";
 import {
   deliveryReceiptPath,
   readDeliveryReceipt,
@@ -47,7 +47,7 @@ import type { DeliverySettings } from "../services/delivery/deliverySettings.ts"
 import {
   queryDeliveryHistory,
   reconcileDeliveryHistory,
-} from "../server/services/deliveryHistory.ts";
+} from "../services/workflows/deliveryHistory.ts";
 import { generateReleaseBundle } from "../services/delivery/releaseBundle.ts";
 import { publishExport } from "../services/render/publishExport.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";

@@ -10,7 +10,7 @@ import { after } from "node:test";
  * never writes into this repository's real `out/.render-journal/`.
  *
  * File-scoped rather than per-test on purpose: `renderManager` fires journal
- * writes without awaiting them (see server/services/renderJournal.ts), so a
+ * writes without awaiting them (see services/workflows/renderJournal.ts), so a
  * write can still be in flight when one test ends. Removing the directory
  * only once, after every test in the file has finished, means there is
  * nothing to race.
@@ -31,7 +31,7 @@ export const isolateRenderJournalForThisFile = async (): Promise<void> => {
     // not reliable (see tests/managerHarness.mts's identical fix for why: an
     // in-flight write's own mkdirSync would silently recreate the directory
     // right after removal).
-    const { waitForRenderJournalIdle } = await import("../server/services/renderJournal.ts");
+    const { waitForRenderJournalIdle } = await import("../services/workflows/renderJournal.ts");
     await waitForRenderJournalIdle();
     if (previous === undefined) delete process.env.TOSHI_RENDER_JOURNAL_DIR;
     else process.env.TOSHI_RENDER_JOURNAL_DIR = previous;

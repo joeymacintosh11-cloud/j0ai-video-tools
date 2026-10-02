@@ -23,7 +23,7 @@ import { publishExport } from "../services/render/publishExport.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { fingerprintInputs, readExportManifest } from "../services/tracks/exportManifest.ts";
 import { trackOutputLocation } from "../services/tracks/trackLocations.ts";
-import { getContentLibraryRecord, queryContentLibrary } from "../server/services/contentLibrary.ts";
+import { getContentLibraryRecord, queryContentLibrary } from "../services/workflows/contentLibrary.ts";
 import { fixture } from "./fixtures.mts";
 
 /**

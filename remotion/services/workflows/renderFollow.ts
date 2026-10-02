@@ -1,5 +1,5 @@
 import type { RenderJobView } from "../../core/domain/api/views.ts";
-import { isTerminalStatus } from "../types.ts";
+import { isTerminalStatus } from "./renderJobTypes.ts";
 import { renderManager } from "./renderManager.ts";
 
 /**

@@ -20,17 +20,17 @@ import {
   RENDER_PRESET_LIST,
   isRenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
-import { readDeliveryLog } from "../../services/delivery/deliveryHistoryLog.ts";
+import { readDeliveryLog } from "../delivery/deliveryHistoryLog.ts";
 import {
   readDeliverySettings,
   resolveDeliveryRoot,
   type DeliverySettings,
-} from "../../services/delivery/deliverySettings.ts";
-import { readContentLibrary } from "../../services/library/contentLibraryLog.ts";
-import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
-import { readExportManifest } from "../../services/tracks/exportManifest.ts";
-import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
-import { trackOutputLocation } from "../../services/tracks/trackLocations.ts";
+} from "../delivery/deliverySettings.ts";
+import { readContentLibrary } from "../library/contentLibraryLog.ts";
+import { trackExportCoverage } from "../tracks/exportCoverage.ts";
+import { readExportManifest } from "../tracks/exportManifest.ts";
+import { inspectTrack } from "../tracks/inspectTrack.ts";
+import { trackOutputLocation } from "../tracks/trackLocations.ts";
 
 /**
  * Answers questions about the content library: what has been generated, which

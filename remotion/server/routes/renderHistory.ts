@@ -8,8 +8,8 @@ import {
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import { sendOk } from "../http/json.ts";
-import { renderManager } from "../services/renderManager.ts";
-import { getRecentRenderHistory } from "../services/renderJournal.ts";
+import { renderManager } from "../../services/workflows/renderManager.ts";
+import { getRecentRenderHistory } from "../../services/workflows/renderJournal.ts";
 
 /**
  * Read-only, journal-backed answer to "what happened to this track's most

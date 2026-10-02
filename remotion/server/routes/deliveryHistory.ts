@@ -17,7 +17,7 @@ import { sendOk } from "../http/json.ts";
 import {
   queryDeliveryHistory,
   reconcileDeliveryHistory,
-} from "../services/deliveryHistory.ts";
+} from "../../services/workflows/deliveryHistory.ts";
 
 /**
  * Reads the destination's append-only delivery history.

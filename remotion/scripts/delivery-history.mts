@@ -17,7 +17,7 @@ import { readDeliverySettings } from "../services/delivery/deliverySettings.ts";
 import {
   queryDeliveryHistory,
   reconcileDeliveryHistory,
-} from "../server/services/deliveryHistory.ts";
+} from "../services/workflows/deliveryHistory.ts";
 import {
   formatBundleTimestamp,
   formatBytes,
