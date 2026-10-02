@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   DELIVERY_LOG_SCHEMA_VERSION,
   type DeliveryLogEvent,
-} from "../src/domain/delivery/deliveryHistory.ts";
+} from "../core/domain/delivery/deliveryHistory.ts";
 import { appendDeliveryLogEvent } from "../services/delivery/deliveryHistoryLog.ts";
 
 /**

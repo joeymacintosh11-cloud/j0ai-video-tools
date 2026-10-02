@@ -4,13 +4,13 @@ import {
   deriveContentPackage,
   type ContentPackageInput,
   type PackageExportEntry,
-} from "../src/domain/content/contentPackage.ts";
-import { derivePublishReadiness } from "../src/domain/content/publishReadiness.ts";
+} from "../core/domain/content/contentPackage.ts";
+import { derivePublishReadiness } from "../core/domain/content/publishReadiness.ts";
 
 /**
- * "Is this track ready to publish?" — src/domain/content/publishReadiness.ts,
+ * "Is this track ready to publish?" — core/domain/content/publishReadiness.ts,
  * layered over an already-derived ContentPackageView
- * (src/domain/content/contentPackage.ts). Every test here builds a package
+ * (core/domain/content/contentPackage.ts). Every test here builds a package
  * the same way tests/content-package.test.mts's own domain tests already do
  * (hand-built PackageExportEntry[] through the real deriveContentPackage,
  * never a hand-built ContentPackageView) — this module never invents its own
@@ -417,7 +417,7 @@ test("an interrupted historical render never prevents a currently ready target f
  * Both scenarios are expressed the same way the underlying freshness system
  * already would: a copy-only (caption/template) change never touches
  * export.status, since it never touches the render fingerprint
- * (src/domain/tracks/exportManifest.ts fingerprints title/artist/key/bpm/
+ * (core/domain/tracks/exportManifest.ts fingerprints title/artist/key/bpm/
  * subtitle/cover/beat, never a metadata template); a rendered-field change
  * does. This module is not re-deriving that distinction — it is only
  * confirming it reads through correctly.

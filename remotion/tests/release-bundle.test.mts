@@ -28,9 +28,9 @@ import {
   RELEASE_JSON_FILENAME,
   RELEASE_MARKDOWN_FILENAME,
   type ReleaseBundle,
-} from "../src/domain/delivery/releaseBundle.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/delivery/releaseBundle.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { fixture } from "./fixtures.mts";
 
 /**

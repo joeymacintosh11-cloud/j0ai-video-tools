@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
-import type { HealthView } from "../src/domain/api/views.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
+import type { HealthView } from "../core/domain/api/views.ts";
 import { sendErrorForException, sendNotFound } from "./http/errors.ts";
 import { sendOk } from "./http/json.ts";
 import {

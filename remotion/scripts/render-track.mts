@@ -1,10 +1,10 @@
-import { trackDirLabel } from "../src/domain/tracks/paths.ts";
+import { trackDirLabel } from "../core/domain/tracks/paths.ts";
 import {
   assertRenderPresetId,
   RENDER_PRESET_IDS,
   renderPreset,
   type RenderPresetId,
-} from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/video/renderPresets.ts";
 import {
   COMPOSITION_ID,
   renderTrackVideo,

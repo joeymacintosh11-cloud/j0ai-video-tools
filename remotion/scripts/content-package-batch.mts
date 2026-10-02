@@ -3,9 +3,9 @@ import {
   planContentPackageBatch,
   type BatchContentPackageView,
   type ContentPackageBatchPlan,
-} from "../src/domain/content/contentPackageBatch.ts";
-import { assertPlatformId, type PlatformId } from "../src/domain/content/platformProfiles.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
+} from "../core/domain/content/contentPackageBatch.ts";
+import { assertPlatformId, type PlatformId } from "../core/domain/content/platformProfiles.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import {
   buildContentPackagesForSlugs,
   loadContentPackageBatchContext,

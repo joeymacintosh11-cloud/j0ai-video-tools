@@ -4,7 +4,7 @@ import {
   parseContentLibrary,
   type ContentLibraryRead,
   type ContentLibraryRecord,
-} from "../../src/domain/library/contentLibrary.ts";
+} from "../../core/domain/library/contentLibrary.ts";
 import {
   appendJsonlLine,
   readTextIfPresent,

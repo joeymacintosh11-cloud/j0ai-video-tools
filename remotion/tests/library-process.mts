@@ -1,7 +1,7 @@
 import {
   CONTENT_LIBRARY_SCHEMA_VERSION,
   type ContentLibraryRecord,
-} from "../src/domain/library/contentLibrary.ts";
+} from "../core/domain/library/contentLibrary.ts";
 import { appendContentLibraryRecord } from "../services/library/contentLibraryLog.ts";
 
 /**

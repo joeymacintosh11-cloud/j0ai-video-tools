@@ -2,8 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   CreateRenderBatchView,
   RenderTarget,
-} from "../../src/domain/api/views.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+} from "../../core/domain/api/views.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
 import { openSseStream } from "../http/sse.ts";
 import { renderManager } from "../services/renderManager.ts";

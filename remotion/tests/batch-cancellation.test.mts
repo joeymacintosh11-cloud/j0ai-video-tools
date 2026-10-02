@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deriveContentPackage, type ContentPackageView } from "../src/domain/content/contentPackage.ts";
-import { deriveBatchContentPackage } from "../src/domain/content/contentPackageBatch.ts";
-import type { RenderJobView } from "../src/domain/api/views.ts";
+import { deriveContentPackage, type ContentPackageView } from "../core/domain/content/contentPackage.ts";
+import { deriveBatchContentPackage } from "../core/domain/content/contentPackageBatch.ts";
+import type { RenderJobView } from "../core/domain/api/views.ts";
 import { ApiRequestError, cancelRender } from "../ui/api/client.ts";
 import {
   cancelBatchTargets,

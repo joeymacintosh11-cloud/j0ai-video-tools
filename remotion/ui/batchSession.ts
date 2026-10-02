@@ -1,11 +1,11 @@
-import type { ContentPackageBatchJobReferenceView, RenderJobView } from "../src/domain/api/views.ts";
+import type { ContentPackageBatchJobReferenceView, RenderJobView } from "../core/domain/api/views.ts";
 import {
   PLATFORM_IDS,
   PLATFORM_PROFILES,
   isPlatformId,
   type PlatformId,
-} from "../src/domain/content/platformProfiles.ts";
-import { isValidSlug } from "../src/domain/tracks/slug.ts";
+} from "../core/domain/content/platformProfiles.ts";
+import { isValidSlug } from "../core/domain/tracks/slug.ts";
 
 /** Browser-local reconstruction hints for the Batch Content Package panel. */
 export const BATCH_SESSION_STORAGE_KEY = "toshi.visualizer.batch-content-package.v1";

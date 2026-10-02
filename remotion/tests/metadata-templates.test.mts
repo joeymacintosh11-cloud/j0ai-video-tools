@@ -11,11 +11,11 @@ import {
   scanTemplatePlaceholders,
   validateTemplateString,
   type PartialMetadataTemplates,
-} from "../src/domain/content/metadataTemplates.ts";
+} from "../core/domain/content/metadataTemplates.ts";
 import {
   buildPlatformMetadata,
   type PlatformMetadataSubject,
-} from "../src/domain/content/platformMetadata.ts";
+} from "../core/domain/content/platformMetadata.ts";
 
 /**
  * The template renderer, the built-in defaults and the precedence chain

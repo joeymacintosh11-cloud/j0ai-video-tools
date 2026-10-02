@@ -2,26 +2,26 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { withFileMutation, writeAtomicFile } from "./atomicFile.ts";
 import { metadataRevision } from "./metadataRevision.ts";
-import { parseMetadataTemplates } from "../../src/domain/content/metadataTemplates.ts";
-import type { TrackMetadataPatch } from "../../src/domain/api/views.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+import { parseMetadataTemplates } from "../../core/domain/content/metadataTemplates.ts";
+import type { TrackMetadataPatch } from "../../core/domain/api/views.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import {
   coerceMetadataDraft,
   serializeTrackMetadata,
   validateTrackMetadata,
-} from "../../src/domain/tracks/metadata.ts";
+} from "../../core/domain/tracks/metadata.ts";
 import {
   publicLabel,
   trackAssetPaths,
-} from "../../src/domain/tracks/paths.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+} from "../../core/domain/tracks/paths.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import type {
   TrackMetadata,
   TrackMetadataDraft,
-} from "../../src/domain/tracks/types.ts";
+} from "../../core/domain/tracks/types.ts";
 import { trackLocations } from "./trackLocations.ts";
 
-/** Declared in src/domain/api/views.ts, since it is also the PATCH body. */
+/** Declared in core/domain/api/views.ts, since it is also the PATCH body. */
 export type { TrackMetadataPatch };
 
 export type UpdateTrackMetadataResult = {

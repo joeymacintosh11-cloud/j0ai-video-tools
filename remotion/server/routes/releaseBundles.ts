@@ -2,8 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   ReleaseBundlesView,
   ReleaseBundleTrackView,
-} from "../../src/domain/api/views.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+} from "../../core/domain/api/views.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { readDeliverySettings } from "../../services/delivery/deliverySettings.ts";
 import type { ReleaseBundleState } from "../../services/delivery/releaseBundle.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";

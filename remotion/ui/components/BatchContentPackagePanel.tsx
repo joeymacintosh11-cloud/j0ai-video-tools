@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { replaceBatchTrackPackage } from "../../src/domain/content/contentPackageBatch.ts";
-import { STALE_REASON_LABELS } from "../../src/domain/video/exportFreshness.ts";
+import { replaceBatchTrackPackage } from "../../core/domain/content/contentPackageBatch.ts";
+import { STALE_REASON_LABELS } from "../../core/domain/video/exportFreshness.ts";
 import type {
   BatchContentPackageView,
   ContentPackageBatchApplyView,
   ContentPackageActionKind,
   ContentPackageBatchPlanView,
   RenderJobView,
-} from "../../src/domain/api/views.ts";
+} from "../../core/domain/api/views.ts";
 import {
   PLATFORM_LIST,
   type PlatformId,
-} from "../../src/domain/content/platformProfiles.ts";
+} from "../../core/domain/content/platformProfiles.ts";
 import {
   ApiRequestError,
   applyContentPackageBatch,

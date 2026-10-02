@@ -7,7 +7,7 @@ import {
   selectRetainedEvents,
   type RenderJournalEvent,
   type RenderJournalRead,
-} from "../../src/domain/render/renderJournal.ts";
+} from "../../core/domain/render/renderJournal.ts";
 import { appendJsonlLine, withJsonlAppendLock } from "../storage/jsonlAppendLog.ts";
 import { withFileMutation, writeAtomicFile } from "../tracks/atomicFile.ts";
 import { OUT_DIR } from "../tracks/trackLocations.ts";

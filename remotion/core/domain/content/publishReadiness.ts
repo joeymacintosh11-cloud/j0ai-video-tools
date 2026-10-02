@@ -7,7 +7,7 @@ import type { PlatformId } from "./platformProfiles.ts";
 
 /**
  * "Is this track ready to publish?" — a thin, derived layer over an
- * already-computed ContentPackageView (src/domain/content/contentPackage.ts),
+ * already-computed ContentPackageView (core/domain/content/contentPackage.ts),
  * never a second source of truth. Everything here is a pure function of
  * fields that view already carries; nothing in this module reads a
  * filesystem, calls an API, or scans a destination. See that module's own

@@ -11,7 +11,7 @@ import { RENDER_MANAGER_BOOT_ID } from "../server/services/renderJournal.ts";
 import {
   RENDER_JOURNAL_SCHEMA_VERSION,
   type RenderJournalEvent,
-} from "../src/domain/render/renderJournal.ts";
+} from "../core/domain/render/renderJournal.ts";
 import { appendRenderJournalEvent } from "../services/render/renderJournalLog.ts";
 import { fixture } from "./fixtures.mts";
 import { Worker } from "./managerHarness.mts";
@@ -22,7 +22,7 @@ await isolateRenderJournalForThisFile();
 /**
  * What GET /api/renders/:id (and its neighbors, cancel and SSE) actually say
  * about a job the live render manager does not have — the observable surface
- * of the durable render journal (src/domain/render/renderJournal.ts,
+ * of the durable render journal (core/domain/render/renderJournal.ts,
  * services/render/renderJournalLog.ts, server/services/renderJournal.ts).
  *
  * Uses the real singleton `renderManager` behind the real HTTP routes, the

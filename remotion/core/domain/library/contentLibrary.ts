@@ -13,11 +13,11 @@ import {
  *
  * Three histories now exist, and each answers a different question:
  *
- * - the render journal (src/domain/render/renderJournal.ts) — "what happened
+ * - the render journal (core/domain/render/renderJournal.ts) — "what happened
  *   to render job X?" Lifecycle only, failures and cancellations included,
  *   bounded by retention and compaction, and deliberately free of content
  *   facts;
- * - the delivery log (src/domain/delivery/deliveryHistory.ts) — "what went out
+ * - the delivery log (core/domain/delivery/deliveryHistory.ts) — "what went out
  *   to this destination, and when?" It lives *at* a destination, so it only
  *   exists once one is configured;
  * - this library — "what content has been generated for this track, and which

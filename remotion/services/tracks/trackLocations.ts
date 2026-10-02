@@ -6,8 +6,8 @@ import {
   outputRelativePath,
   TRACKS_DIR_NAME,
   trackAssetPaths,
-} from "../../src/domain/tracks/paths.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/tracks/paths.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 
 /**
  * Resolves absolute filesystem paths from the public/-relative conventions in

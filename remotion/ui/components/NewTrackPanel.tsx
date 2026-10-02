@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { slugify } from "../../src/domain/tracks/slug.ts";
+import { slugify } from "../../core/domain/tracks/slug.ts";
 import {
   DEFAULT_RENDER_PRESET_ID,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { ApiRequestError, createTrack } from "../api/client.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 import { FormatPicker } from "./FormatPicker.tsx";

@@ -1,14 +1,14 @@
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
-import type { TrackInspection } from "../../src/domain/tracks/types.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
+import type { TrackInspection } from "../../core/domain/tracks/types.ts";
 import {
   deriveContentPackage,
   type ContentPackageInput,
   type ContentPackageMode,
-} from "../../src/domain/content/contentPackage.ts";
-import type { ContentPackageBatchTrack } from "../../src/domain/content/contentPackageBatch.ts";
-import { assertPlatformId, type PlatformId } from "../../src/domain/content/platformProfiles.ts";
-import type { PartialMetadataTemplates } from "../../src/domain/content/metadataTemplates.ts";
+} from "../../core/domain/content/contentPackage.ts";
+import type { ContentPackageBatchTrack } from "../../core/domain/content/contentPackageBatch.ts";
+import { assertPlatformId, type PlatformId } from "../../core/domain/content/platformProfiles.ts";
+import type { PartialMetadataTemplates } from "../../core/domain/content/metadataTemplates.ts";
 import { readContentMetadataSettings } from "../../services/content/metadataTemplateSettings.ts";
 import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
 import { deliveryRootForView } from "../routes/tracks.ts";
@@ -18,7 +18,7 @@ import { renderManager } from "./renderManager.ts";
 /**
  * The I/O half of Content Package batch planning. The pure half — turning
  * per-track packages into an aggregated view or an action plan — lives in
- * src/domain/content/contentPackageBatch.ts and is re-exported below so
+ * core/domain/content/contentPackageBatch.ts and is re-exported below so
  * routes and the CLI need one import.
  */
 export {
@@ -27,7 +27,7 @@ export {
   type ContentPackageActionKind,
   type ContentPackageBatchPlan,
   type ContentPackagePlannedAction,
-} from "../../src/domain/content/contentPackageBatch.ts";
+} from "../../core/domain/content/contentPackageBatch.ts";
 
 export const MAX_BATCH_TRACKS = 100;
 

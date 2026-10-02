@@ -1,11 +1,11 @@
 import { Player } from "@remotion/player";
 import { useState } from "react";
 import { BeatVisualizer } from "../../src/BeatVisualizer/BeatVisualizer.tsx";
-import { secondsToFrames } from "../../src/domain/video/compositionConfig.ts";
+import { secondsToFrames } from "../../core/domain/video/compositionConfig.ts";
 import {
   renderPreset,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { getTrackPreview } from "../api/client.ts";
 import { useAsync } from "../hooks/useAsync.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";

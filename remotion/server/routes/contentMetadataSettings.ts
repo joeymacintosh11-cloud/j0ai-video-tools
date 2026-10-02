@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { parseMetadataTemplatesResetPatch } from "../../src/domain/content/metadataTemplates.ts";
-import type { ContentMetadataSettingsView } from "../../src/domain/api/views.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { parseMetadataTemplatesResetPatch } from "../../core/domain/content/metadataTemplates.ts";
+import type { ContentMetadataSettingsView } from "../../core/domain/api/views.ts";
 import {
   CONTENT_METADATA_SETTINGS_FILE,
   readContentMetadataSettings,

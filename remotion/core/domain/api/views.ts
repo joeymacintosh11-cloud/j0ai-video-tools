@@ -56,7 +56,7 @@ import type { RenderPresetId } from "../video/renderPresets.ts";
  * The local API's wire format, declared once and shared by both ends.
  *
  * These are pure type declarations with no runtime code, so they live in
- * src/domain/ alongside the rest of the browser-safe layer: the server
+ * core/domain/ alongside the rest of the browser-safe layer: the server
  * implements them and the UI consumes them, and neither restates the other's
  * shape. All Node-specific implementation (serializers, path resolution, the
  * render manager, the worker IPC protocol) stays under server/.
@@ -334,7 +334,7 @@ export type CompositionConfigView = {
  * GET /api/tracks/:slug/preview
  *
  * Parameterized over the composition's props rather than importing them:
- * src/domain/ is the innermost layer and must not depend on the composition it
+ * core/domain/ is the innermost layer and must not depend on the composition it
  * describes. Both the server and the UI supply BeatVisualizerProps here, so the
  * contract stays checked at both ends without this file reaching outward.
  */
@@ -359,7 +359,7 @@ export type TrackPreviewView<TInputProps = unknown> = {
  * status transition. It exists purely as a recovered/historical answer: the
  * render journal's honest description of a job that was queued/preparing/
  * rendering the last time any process recorded it, and whose owning process
- * is not the one answering now (see src/domain/render/renderJournal.ts and
+ * is not the one answering now (see core/domain/render/renderJournal.ts and
  * server/services/renderJournal.ts). A client sees it only from
  * `GET /api/renders/:id` when `historical` is also true.
  */
@@ -763,7 +763,7 @@ export type ReleaseBundlesView = {
  *
  * A platform-facing view over state the app already computes — export
  * coverage/freshness, queue state and delivery state — never a second source
- * of truth. See src/domain/content/contentPackage.ts for the derivation and
+ * of truth. See core/domain/content/contentPackage.ts for the derivation and
  * the reasoning behind it.
  */
 export type ContentPackageQuery = {
@@ -782,7 +782,7 @@ export type ContentPackageQuery = {
  * exact function GET /api/content-package uses for one) and the existing
  * render queue (`renderManager`/render-batches) — this is orchestration and
  * aggregation on top of what already exists, not a second engine. See
- * src/domain/content/contentPackageBatch.ts for the derivation.
+ * core/domain/content/contentPackageBatch.ts for the derivation.
  * ------------------------------------------------------------------ */
 
 /** Shared by inspect/plan/apply. `tracks` is always explicit — never "the catalogue" by omission. */
@@ -1086,7 +1086,7 @@ export type DestinationFixApplyView = {
  * job the durable journal remembers, never a live one (a live job is
  * answered by `GET /api/renders/:id`/its SSE stream, not this endpoint).
  * Grouped by job: one entry per job's final reconstructed state, never one
- * per lifecycle event (src/domain/render/renderJournal.ts's
+ * per lifecycle event (core/domain/render/renderJournal.ts's
  * `recentRenderJobsForSlug`).
  *
  * Deliberately as narrow as `RenderJobView`'s own historical fields — no
@@ -1119,7 +1119,7 @@ export type RenderHistoryQuery = {
  *
  * Read-only summary of one track's most recent renders, sourced entirely
  * from the durable render journal (never from package readiness, delivery,
- * or the live render manager — see src/domain/render/renderJournal.ts).
+ * or the live render manager — see core/domain/render/renderJournal.ts).
  * Mirrors `DeliveryHistoryView`'s own status/statusNote split: a damaged
  * journal still reports whatever history could be read, with `status`/
  * `statusNote` saying so rather than the endpoint failing outright.

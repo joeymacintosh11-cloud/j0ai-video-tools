@@ -1,10 +1,10 @@
-import { trackDirLabel } from "../src/domain/tracks/paths.ts";
+import { trackDirLabel } from "../core/domain/tracks/paths.ts";
 import {
   parseExportPresetList,
   RENDER_PRESET_IDS,
   type RenderPresetId,
-} from "../src/domain/video/renderPresets.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
+} from "../core/domain/video/renderPresets.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import { createTrack } from "../services/tracks/createTrack.ts";
 import { runCli } from "./cli.ts";
 

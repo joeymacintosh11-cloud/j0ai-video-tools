@@ -2,18 +2,18 @@ import {
   deliveryFolderFor,
   type DeliveryReason,
   type DeliveryStatus,
-} from "../../src/domain/delivery/deliveryPaths.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import type { ExportFreshness } from "../../src/domain/video/exportFreshness.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
-import type { TrackInspection } from "../../src/domain/tracks/types.ts";
+} from "../../core/domain/delivery/deliveryPaths.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import type { ExportFreshness } from "../../core/domain/video/exportFreshness.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
+import type { TrackInspection } from "../../core/domain/tracks/types.ts";
 import {
   assertRenderPresetId,
   canonicalPresetOrder,
   RENDER_PRESETS,
   resolveExportPresets,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import {
   deliverExport,
   deliveryStateForTarget,

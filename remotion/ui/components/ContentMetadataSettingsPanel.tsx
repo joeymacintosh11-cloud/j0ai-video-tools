@@ -4,9 +4,9 @@ import {
   resolveMetadataTemplates,
   type MetadataTemplatesResetPatch,
   type PartialMetadataTemplates,
-} from "../../src/domain/content/metadataTemplates.ts";
-import { buildPlatformMetadata, type PlatformMetadataSubject } from "../../src/domain/content/platformMetadata.ts";
-import type { ContentMetadataSettingsView } from "../../src/domain/api/views.ts";
+} from "../../core/domain/content/metadataTemplates.ts";
+import { buildPlatformMetadata, type PlatformMetadataSubject } from "../../core/domain/content/platformMetadata.ts";
+import type { ContentMetadataSettingsView } from "../../core/domain/api/views.ts";
 import { ApiRequestError, updateContentMetadataSettings } from "../api/client.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 import {

@@ -1,7 +1,7 @@
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
-import type { TrackInspection } from "../../src/domain/tracks/types.ts";
-import type { ReleaseBundleFreshness } from "../../src/domain/delivery/releaseBundle.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
+import type { TrackInspection } from "../../core/domain/tracks/types.ts";
+import type { ReleaseBundleFreshness } from "../../core/domain/delivery/releaseBundle.ts";
 import {
   generateReleaseBundle,
   releaseBundleStateFor,

@@ -11,7 +11,7 @@ import { RENDER_MANAGER_BOOT_ID } from "../server/services/renderJournal.ts";
 import {
   RENDER_JOURNAL_SCHEMA_VERSION,
   type RenderJournalEvent,
-} from "../src/domain/render/renderJournal.ts";
+} from "../core/domain/render/renderJournal.ts";
 import { appendRenderJournalEvent } from "../services/render/renderJournalLog.ts";
 import { fixture } from "./fixtures.mts";
 import { Worker } from "./managerHarness.mts";

@@ -12,14 +12,14 @@ import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
 import { enrichDestinationHealthWithRenderContext } from "../server/services/destinationHealthRenderContext.ts";
 import { planDestinationFix } from "../server/services/destinationFixPlan.ts";
 import { RENDER_MANAGER_BOOT_ID } from "../server/services/renderJournal.ts";
-import type { DestinationFinding } from "../src/domain/delivery/destinationHealth.ts";
+import type { DestinationFinding } from "../core/domain/delivery/destinationHealth.ts";
 import {
   buildMostRecentJobIndex,
   reconstructRenderJournal,
   RENDER_JOURNAL_SCHEMA_VERSION,
   targetKey,
   type RenderJournalEvent,
-} from "../src/domain/render/renderJournal.ts";
+} from "../core/domain/render/renderJournal.ts";
 import { deliverExport } from "../services/delivery/deliverExport.ts";
 import type { DeliverySettings } from "../services/delivery/deliverySettings.ts";
 import { publishExport } from "../services/render/publishExport.ts";
@@ -30,8 +30,8 @@ import {
 } from "../services/render/renderJournalLog.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { fixture } from "./fixtures.mts";
 import { Worker } from "./managerHarness.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";

@@ -2,9 +2,9 @@ import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualize
 import {
   BRAND_ASSET_PATHS,
   trackAssetPaths,
-} from "../../src/domain/tracks/paths.ts";
-import type { TrackMetadata } from "../../src/domain/tracks/types.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/tracks/paths.ts";
+import type { TrackMetadata } from "../../core/domain/tracks/types.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 
 export type BuildTrackPropsInput = {
   readonly slug: string;

@@ -5,9 +5,9 @@ import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
-import { DELIVERY_LOG_SCHEMA_VERSION } from "../src/domain/delivery/deliveryHistory.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+import { DELIVERY_LOG_SCHEMA_VERSION } from "../core/domain/delivery/deliveryHistory.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { appendDeliveryLogEvent } from "../services/delivery/deliveryHistoryLog.ts";
 import type { DeliverySettings } from "../services/delivery/deliverySettings.ts";
 import { contentLibraryPath, readContentLibrary } from "../services/library/contentLibraryLog.ts";

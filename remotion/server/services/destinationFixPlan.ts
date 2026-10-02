@@ -12,14 +12,14 @@ import {
   type RemediationAction,
   type RemediationActionResult,
   type RemediationPlanSummary,
-} from "../../src/domain/delivery/destinationFixPlan.ts";
+} from "../../core/domain/delivery/destinationFixPlan.ts";
 import type {
   DestinationFinding,
   DestinationHealthStatus,
-} from "../../src/domain/delivery/destinationHealth.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
-import { RENDER_PRESETS, type RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/delivery/destinationHealth.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
+import { RENDER_PRESETS, type RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import {
   deliverExport,
   deliveryStateForTarget,

@@ -1,12 +1,12 @@
 import type {
   RenderJobError,
   RenderJobStatus,
-} from "../src/domain/api/views.ts";
+} from "../core/domain/api/views.ts";
 
 /**
  * Server-internal types.
  *
- * The API's wire format lives in src/domain/api/views.ts so the UI can share
+ * The API's wire format lives in core/domain/api/views.ts so the UI can share
  * it. What stays here is what only the server needs: the terminal-status
  * helpers and the parent/worker IPC protocol, which is not part of the API.
  */
@@ -16,7 +16,7 @@ export type {
   RenderJobLogEntry,
   RenderJobStatus,
   RenderJobView,
-} from "../src/domain/api/views.ts";
+} from "../core/domain/api/views.ts";
 
 export const TERMINAL_STATUSES: readonly RenderJobStatus[] = [
   "completed",

@@ -3,17 +3,17 @@ import type {
   ContentLibraryAdoptView,
   ContentLibraryRecordView,
   ContentLibraryView,
-} from "../../src/domain/api/views.ts";
-import { formatBundleTimestamp, formatBytes } from "../../src/domain/delivery/releaseBundle.ts";
+} from "../../core/domain/api/views.ts";
+import { formatBundleTimestamp, formatBytes } from "../../core/domain/delivery/releaseBundle.ts";
 import {
   CONTENT_LIBRARY_MAX_LIMIT,
   EXPORT_KIND_LABELS,
   LIBRARY_ENTRY_STATUSES,
   LIBRARY_ENTRY_STATUS_LABELS,
   type ContentLibraryEntry,
-} from "../../src/domain/library/contentLibrary.ts";
-import { STALE_REASON_LABELS } from "../../src/domain/video/exportFreshness.ts";
-import { isRenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/library/contentLibrary.ts";
+import { STALE_REASON_LABELS } from "../../core/domain/video/exportFreshness.ts";
+import { isRenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import {
   adoptExistingExports,
   ApiRequestError,

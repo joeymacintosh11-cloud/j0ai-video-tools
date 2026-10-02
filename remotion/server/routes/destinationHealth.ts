@@ -3,9 +3,9 @@ import type {
   DestinationFixApplyView,
   DestinationFixPlanView,
   DestinationHealthView,
-} from "../../src/domain/api/views.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+} from "../../core/domain/api/views.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { readDeliverySettings } from "../../services/delivery/deliverySettings.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
 import { scanDestinationHealth } from "../services/destinationHealth.ts";

@@ -10,7 +10,7 @@ import {
   trackExportCoverage,
 } from "../services/tracks/exportCoverage.ts";
 import { trackOutputLocation } from "../services/tracks/trackLocations.ts";
-import { RENDER_PRESET_IDS } from "../src/domain/video/renderPresets.ts";
+import { RENDER_PRESET_IDS } from "../core/domain/video/renderPresets.ts";
 import { fixture } from "./fixtures.mts";
 import type { TestContext } from "node:test";
 

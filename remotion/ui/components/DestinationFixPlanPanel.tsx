@@ -4,7 +4,7 @@ import type {
   DestinationFixPlanView,
   RemediationAction,
   RemediationActionResult,
-} from "../../src/domain/api/views.ts";
+} from "../../core/domain/api/views.ts";
 import { ApiRequestError, applyDestinationFix, planDestinationFix } from "../api/client.ts";
 import { useRenderJob } from "../hooks/useRenderJob.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";

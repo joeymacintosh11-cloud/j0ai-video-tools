@@ -1,9 +1,9 @@
 import type {
   BatchContentPackageView,
   RenderJobView,
-} from "../src/domain/api/views.ts";
-import type { PlatformId } from "../src/domain/content/platformProfiles.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/api/views.ts";
+import type { PlatformId } from "../core/domain/content/platformProfiles.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { ApiRequestError, cancelRender, getRender } from "./api/client.ts";
 import type { BatchSessionJobReference } from "./batchSession.ts";
 

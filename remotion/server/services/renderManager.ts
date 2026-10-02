@@ -2,16 +2,16 @@ import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import {
   assertRenderPresetId,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import type {
   RenderBatchView,
   RenderTarget,
-} from "../../src/domain/api/views.ts";
+} from "../../core/domain/api/views.ts";
 import {
   inspectRenderTargetLock,
   type RenderLockState,
@@ -741,7 +741,7 @@ class RenderManager {
       // Reconstructed, not `job.error` itself: the live error carries an
       // optional `details` (the raw Error#stack from a spawn/IPC failure,
       // see `onError` above), which `RenderJournalEvent`'s schema
-      // deliberately has no field for (src/domain/render/renderJournal.ts).
+      // deliberately has no field for (core/domain/render/renderJournal.ts).
       // `job.error` is a plain variable, not an object literal, so passing
       // it straight through would not have been caught by TypeScript's
       // excess-property check — any stray extra field survives a runtime

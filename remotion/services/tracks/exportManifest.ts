@@ -13,11 +13,11 @@ import {
   EXPORT_MANIFEST_VERSION,
   VISUALIZER_VERSION,
   type StaleReason,
-} from "../../src/domain/video/exportFreshness.ts";
+} from "../../core/domain/video/exportFreshness.ts";
 import {
   renderPreset,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { PUBLIC_DIR } from "./trackLocations.ts";
 
 export type ExportInputs = Readonly<

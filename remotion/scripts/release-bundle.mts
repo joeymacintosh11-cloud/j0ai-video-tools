@@ -4,7 +4,7 @@ import {
   type ReleaseBundlePlan,
 } from "../server/services/releaseBundlePlan.ts";
 import { readDeliverySettings } from "../services/delivery/deliverySettings.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import { runCli } from "./cli.ts";
 
 /**

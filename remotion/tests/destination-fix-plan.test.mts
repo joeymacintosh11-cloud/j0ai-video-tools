@@ -19,8 +19,8 @@ import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { trackExportCoverage } from "../services/tracks/exportCoverage.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
 import { trackOutputLocation } from "../services/tracks/trackLocations.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { fixture } from "./fixtures.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
 

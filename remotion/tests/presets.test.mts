@@ -4,7 +4,7 @@ import {
   legacyOutputLabel,
   outputLabel,
   outputRelativePath,
-} from "../src/domain/tracks/paths.ts";
+} from "../core/domain/tracks/paths.ts";
 import {
   assertRenderPresetId,
   DEFAULT_RENDER_PRESET_ID,
@@ -13,9 +13,9 @@ import {
   RENDER_PRESET_LIST,
   RENDER_PRESETS,
   renderPreset,
-} from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/video/renderPresets.ts";
 import { LAYOUTS } from "../src/BeatVisualizer/layouts.ts";
-import { COMPOSITION_CONFIG, secondsToFrames } from "../src/domain/video/compositionConfig.ts";
+import { COMPOSITION_CONFIG, secondsToFrames } from "../core/domain/video/compositionConfig.ts";
 import { trackOutputLocation } from "../services/tracks/trackLocations.ts";
 
 test("every preset is internally consistent", () => {

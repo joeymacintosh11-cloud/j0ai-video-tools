@@ -12,14 +12,14 @@ import {
   type ContentLibrarySummary,
   type LibraryFormatSummary,
   type LiveExportFacts,
-} from "../../src/domain/library/contentLibrary.ts";
-import type { DeliveryLogEvent } from "../../src/domain/delivery/deliveryHistory.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { isValidSlug } from "../../src/domain/tracks/slug.ts";
+} from "../../core/domain/library/contentLibrary.ts";
+import type { DeliveryLogEvent } from "../../core/domain/delivery/deliveryHistory.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { isValidSlug } from "../../core/domain/tracks/slug.ts";
 import {
   RENDER_PRESET_LIST,
   isRenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { readDeliveryLog } from "../../services/delivery/deliveryHistoryLog.ts";
 import {
   readDeliverySettings,

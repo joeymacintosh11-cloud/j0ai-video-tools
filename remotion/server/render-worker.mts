@@ -1,7 +1,7 @@
 import { makeCancelSignal } from "@remotion/renderer";
-import { TrackError } from "../src/domain/tracks/errors.ts";
-import { publicLabel } from "../src/domain/tracks/paths.ts";
-import { assertRenderPresetId } from "../src/domain/video/renderPresets.ts";
+import { TrackError } from "../core/domain/tracks/errors.ts";
+import { publicLabel } from "../core/domain/tracks/paths.ts";
+import { assertRenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
 import type { WorkerCommand, WorkerEvent } from "./types.ts";

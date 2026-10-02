@@ -1,7 +1,7 @@
-import { TrackError } from "../src/domain/tracks/errors.ts";
-import type { TrackMetadata } from "../src/domain/tracks/types.ts";
+import { TrackError } from "../core/domain/tracks/errors.ts";
+import type { TrackMetadata } from "../core/domain/tracks/types.ts";
 import type { AnalysisAudioResult } from "../services/tracks/prepareTrackAudio.ts";
-import { publicLabel } from "../src/domain/tracks/paths.ts";
+import { publicLabel } from "../core/domain/tracks/paths.ts";
 import type { AppendContentLibraryResult } from "../services/library/contentLibraryLog.ts";
 
 /**

@@ -8,19 +8,19 @@ import type {
   TrackPreviewView,
   UploadAssetView,
   ValidateTrackView,
-} from "../../src/domain/api/views.ts";
+} from "../../core/domain/api/views.ts";
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import {
   assertRenderPresetId,
   parseExportPresetList,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import {
   COMPOSITION_CONFIG,
   secondsToFrames,
-} from "../../src/domain/video/compositionConfig.ts";
+} from "../../core/domain/video/compositionConfig.ts";
 import { probeAudioDurationInSeconds } from "../../services/tracks/audioDuration.ts";
 import { buildTrackProps } from "../../services/tracks/buildTrackProps.ts";
 import { createTrack } from "../../services/tracks/createTrack.ts";

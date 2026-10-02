@@ -1,13 +1,13 @@
 import type {
   TrackDetailView,
   TrackSummaryView,
-} from "../../src/domain/api/views.ts";
-import { publicLabel } from "../../src/domain/tracks/paths.ts";
-import type { TrackInspection } from "../../src/domain/tracks/types.ts";
+} from "../../core/domain/api/views.ts";
+import { publicLabel } from "../../core/domain/tracks/paths.ts";
+import type { TrackInspection } from "../../core/domain/tracks/types.ts";
 import {
   DEFAULT_RENDER_PRESET_ID,
   resolveExportPresets,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { deliveryStateForTarget } from "../../services/delivery/deliverExport.ts";
 import { releaseBundleStateFor } from "../../services/delivery/releaseBundle.ts";
 import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
@@ -19,7 +19,7 @@ import {
 /**
  * Turns a TrackInspection into the API's wire shape.
  *
- * The view types themselves live in src/domain/api/views.ts, shared with the
+ * The view types themselves live in core/domain/api/views.ts, shared with the
  * UI; this module is only the Node-side mapping, because it needs
  * trackLocations() for absolute paths.
  */

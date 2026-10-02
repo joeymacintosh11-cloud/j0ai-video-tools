@@ -2,13 +2,13 @@ import {
   describeRenderContext,
   RENDER_CONTEXT_ELIGIBLE_CODES,
   type DestinationFinding,
-} from "../../src/domain/delivery/destinationHealth.ts";
+} from "../../core/domain/delivery/destinationHealth.ts";
 import {
   buildMostRecentJobIndex,
   reconstructRenderJournal,
   targetKey,
   type RecoveredRenderJob,
-} from "../../src/domain/render/renderJournal.ts";
+} from "../../core/domain/render/renderJournal.ts";
 import { readRenderJournal } from "../../services/render/renderJournalLog.ts";
 import type { DestinationHealthResult } from "./destinationHealth.ts";
 import { RENDER_MANAGER_BOOT_ID } from "./renderJournal.ts";
@@ -67,7 +67,7 @@ const attach = (
   const job = index.get(key);
   if (job === undefined) return finding;
 
-  // classifyRecoveredJob (src/domain/render/renderJournal.ts) never actually
+  // classifyRecoveredJob (core/domain/render/renderJournal.ts) never actually
   // produces "queued"/"preparing"/"rendering" — its own comment guarantees
   // every non-terminal record becomes "interrupted" instead — but its type
   // is the wider RenderJournalLifecycleState union rather than a narrowed

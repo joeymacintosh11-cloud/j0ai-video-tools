@@ -1,4 +1,4 @@
-import type { TrackStatus } from "../../src/domain/tracks/types.ts";
+import type { TrackStatus } from "../../core/domain/tracks/types.ts";
 
 /**
  * The four track statuses, worded so `draft` reads as an expected step rather

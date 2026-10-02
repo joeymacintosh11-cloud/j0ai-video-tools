@@ -4,8 +4,8 @@ import {
   DELIVERY_RECEIPT_VERSION,
   type DeliveryReason,
   type DeliveryStatus,
-} from "../../src/domain/delivery/deliveryPaths.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/delivery/deliveryPaths.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { writeAtomicFile } from "../tracks/atomicFile.ts";
 import type { ExportManifest } from "../tracks/exportManifest.ts";
 import { assertDeliveryDestination } from "./deliveryDestination.ts";

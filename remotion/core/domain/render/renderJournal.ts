@@ -8,7 +8,7 @@
  * the file it is read from, and server/services/renderJournal.ts for how the
  * server turns reconstructed history into a query answer.
  *
- * Pure and browser-safe, mirroring src/domain/delivery/deliveryHistory.ts:
+ * Pure and browser-safe, mirroring core/domain/delivery/deliveryHistory.ts:
  * the event shape, parsing and reconstruction rules live in one place so the
  * server and its tests agree on them without any I/O.
  *
@@ -680,7 +680,7 @@ export const buildMostRecentJobIndex = (
  * A short, human-friendly rendering of a recorded timestamp — "Today,
  * 14:32", "Yesterday, 18:04", "20 Sep, 13:10" — for operator scanning. Pure
  * and dependency-free like `formatBundleTimestamp`
- * (src/domain/delivery/releaseBundle.ts): `now` is a parameter rather than
+ * (core/domain/delivery/releaseBundle.ts): `now` is a parameter rather than
  * `new Date()` so the day boundary is deterministic in tests. The caller is
  * expected to also keep the exact ISO value available (e.g. as a `title`
  * attribute) — this is a display convenience, never the value compared or

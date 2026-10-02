@@ -1,14 +1,14 @@
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import {
   publicLabel,
   trackAssetPaths,
-} from "../../src/domain/tracks/paths.ts";
+} from "../../core/domain/tracks/paths.ts";
 import type {
   TrackInspection,
   TrackMetadata,
-} from "../../src/domain/tracks/types.ts";
-import { isAssetIssue } from "../../src/domain/tracks/validation.ts";
+} from "../../core/domain/tracks/types.ts";
+import { isAssetIssue } from "../../core/domain/tracks/validation.ts";
 import { buildTrackProps } from "./buildTrackProps.ts";
 import { inspectTrack } from "./inspectTrack.ts";
 import {

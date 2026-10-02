@@ -2,18 +2,18 @@ import {
   assertExportMode,
   type ExportMode,
   type StaleReason,
-} from "../../src/domain/video/exportFreshness.ts";
-import type { RenderTarget } from "../../src/domain/api/views.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
-import type { TrackInspection } from "../../src/domain/tracks/types.ts";
+} from "../../core/domain/video/exportFreshness.ts";
+import type { RenderTarget } from "../../core/domain/api/views.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
+import type { TrackInspection } from "../../core/domain/tracks/types.ts";
 import {
   assertRenderPresetId,
   canonicalPresetOrder,
   RENDER_PRESETS,
   resolveExportPresets,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { trackExportCoverage } from "../../services/tracks/exportCoverage.ts";
 import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
 import { listTracks } from "../../services/tracks/listTracks.ts";

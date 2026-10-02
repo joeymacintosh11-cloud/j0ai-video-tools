@@ -11,11 +11,11 @@ import {
   createDefaultMetadata,
   serializeTrackMetadata,
   validateTrackMetadata,
-} from "../src/domain/tracks/metadata.ts";
+} from "../core/domain/tracks/metadata.ts";
 import {
   RENDER_PRESET_IDS,
   resolveExportPresets,
-} from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/video/renderPresets.ts";
 import { fixture } from "./fixtures.mts";
 import type { TestContext } from "node:test";
 

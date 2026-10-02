@@ -1,5 +1,5 @@
-import { STALE_REASON_LABELS } from "../../src/domain/video/exportFreshness.ts";
-import type { TrackDetailView } from "../../src/domain/api/views.ts";
+import { STALE_REASON_LABELS } from "../../core/domain/video/exportFreshness.ts";
+import type { TrackDetailView } from "../../core/domain/api/views.ts";
 
 /**
  * "skipped" is not a problem: the file is absent because the track does not

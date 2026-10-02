@@ -24,18 +24,18 @@ import {
   type DestinationHealthCounts,
   type DestinationHealthStatus,
   type DestinationTrackHealth,
-} from "../../src/domain/delivery/destinationHealth.ts";
+} from "../../core/domain/delivery/destinationHealth.ts";
 import {
   readMarkdownBundleId,
   shortBundleId,
-} from "../../src/domain/delivery/releaseBundle.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
-import type { TrackInspection } from "../../src/domain/tracks/types.ts";
+} from "../../core/domain/delivery/releaseBundle.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
+import type { TrackInspection } from "../../core/domain/tracks/types.ts";
 import {
   deliveryFolderFor,
-} from "../../src/domain/delivery/deliveryPaths.ts";
-import { RENDER_PRESET_IDS } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/delivery/deliveryPaths.ts";
+import { RENDER_PRESET_IDS } from "../../core/domain/video/renderPresets.ts";
 import { deliveryStateForTarget } from "../../services/delivery/deliverExport.ts";
 import { readDeliveryReceipt } from "../../services/delivery/deliveryReceipt.ts";
 import {

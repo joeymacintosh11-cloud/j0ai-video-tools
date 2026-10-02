@@ -6,12 +6,12 @@ import {
   staticFile,
   useVideoConfig,
 } from "remotion";
-import { secondsToFrames } from "../domain/video/compositionConfig";
+import { secondsToFrames } from "../../core/domain/video/compositionConfig";
 import {
   DEFAULT_RENDER_PRESET_ID,
   renderPreset,
   type RenderPresetId,
-} from "../domain/video/renderPresets";
+} from "../../core/domain/video/renderPresets";
 import { Background } from "./Background";
 import { BrandMark } from "./BrandMark";
 import { CoverArt } from "./CoverArt";

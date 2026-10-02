@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import type {
   RenderJobStatus,
   TrackDetailView,
-} from "../../src/domain/api/views.ts";
+} from "../../core/domain/api/views.ts";
 import {
   DEFAULT_RENDER_PRESET_ID,
   RENDER_PRESETS,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import {
   ApiRequestError,
   cancelRender,

@@ -1,8 +1,8 @@
 import {
   resolveMetadataTemplates,
   type MetadataTemplatesResetPatch,
-} from "../src/domain/content/metadataTemplates.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
+} from "../core/domain/content/metadataTemplates.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import {
   CONTENT_METADATA_SETTINGS_FILE,
   readContentMetadataSettings,

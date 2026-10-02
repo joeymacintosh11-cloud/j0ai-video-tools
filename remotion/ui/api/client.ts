@@ -1,6 +1,6 @@
-import type { ExportMode } from "../../src/domain/video/exportFreshness.ts";
-import type { ContentPackageMode } from "../../src/domain/content/contentPackage.ts";
-import type { PlatformId } from "../../src/domain/content/platformProfiles.ts";
+import type { ExportMode } from "../../core/domain/video/exportFreshness.ts";
+import type { ContentPackageMode } from "../../core/domain/content/contentPackage.ts";
+import type { PlatformId } from "../../core/domain/content/platformProfiles.ts";
 import type {
   ApiError,
   ApiErrorCode,
@@ -52,8 +52,8 @@ import type {
   TrackSummaryView,
   UploadAssetView,
   ValidateTrackView,
-} from "../../src/domain/api/views.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/api/views.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
 
 /**
@@ -392,7 +392,7 @@ export const revealDelivery = (
 
 /**
  * A platform-facing view over one track's export/delivery state — see
- * src/domain/content/contentPackage.ts. Read-only: this never queues a render
+ * core/domain/content/contentPackage.ts. Read-only: this never queues a render
  * or a delivery by itself. `mode` "intent" (default) selects each platform
  * whose underlying preset the track's own exportPresets already intends;
  * "full" selects every platform regardless of intent.
@@ -468,7 +468,7 @@ export const applyContentPackageBatch = (
 /**
  * The global content-metadata template overrides — the layer between a
  * track's own overrides and the built-in defaults (BUILT_IN_DEFAULT_TEMPLATES,
- * imported directly from src/domain/content/metadataTemplates.ts, which is
+ * imported directly from core/domain/content/metadataTemplates.ts, which is
  * not sent over the wire since the UI already has it).
  */
 export const getContentMetadataSettings = (): Promise<ContentMetadataSettingsView> =>

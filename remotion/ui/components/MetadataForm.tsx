@@ -4,11 +4,11 @@ import type {
   PartialMetadataTemplates,
   TrackDetailView,
   TrackMetadataPatch,
-} from "../../src/domain/api/views.ts";
+} from "../../core/domain/api/views.ts";
 import {
   resolveExportPresets,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { ApiRequestError, updateTrackMetadata } from "../api/client.ts";
 import { useStillCurrent } from "../hooks/useStillCurrent.ts";
 import { ContentMetadataOverridesEditor } from "./ContentMetadataOverridesEditor.tsx";

@@ -36,7 +36,7 @@ import {
  */
 
 /**
- * The subset of a RenderOutputView (src/domain/api/views.ts) a package needs.
+ * The subset of a RenderOutputView (core/domain/api/views.ts) a package needs.
  * A structural subset rather than an import of that type, so this module has
  * no dependency on the API view layer — views.ts depends on this module, not
  * the reverse, exactly like every other domain/api relationship here.
@@ -52,7 +52,7 @@ export type PackageExportEntry = {
      * Optional: every real caller (server/routes/contentPackage.ts) passes a
      * TrackDetailView's own RenderOutputView[] straight through as this
      * type, and that view's own `delivery` already carries `reason` and
-     * `deliveredAt` (src/domain/api/views.ts's DeliveryTargetStateView) — this
+     * `deliveredAt` (core/domain/api/views.ts's DeliveryTargetStateView) — this
      * was simply never declared here before there was a reason to read it.
      * Optional rather than required so a caller that only ever had the
      * narrower shape (a hand-built test fixture, say) still type-checks.

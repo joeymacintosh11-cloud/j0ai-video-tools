@@ -1,11 +1,11 @@
-import { assertExportMode } from "../src/domain/video/exportFreshness.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
+import { assertExportMode } from "../core/domain/video/exportFreshness.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import {
   assertRenderPresetId,
   RENDER_PRESET_IDS,
   renderPreset,
   type RenderPresetId,
-} from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/video/renderPresets.ts";
 import {
   planMissingExports,
   type ExportPlan,

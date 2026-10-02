@@ -2,10 +2,10 @@ import { useState } from "react";
 import type {
   ContentMetadataSettingsView,
   TrackDetailView,
-} from "../../src/domain/api/views.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/api/views.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { publicAssetUrl } from "../api/assetUrl.ts";
-import { deliveryFolderFor } from "../../src/domain/delivery/deliveryPaths.ts";
+import { deliveryFolderFor } from "../../core/domain/delivery/deliveryPaths.ts";
 import { revealDelivery } from "../api/client.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
 import { ContentPackagePanel } from "./ContentPackagePanel.tsx";

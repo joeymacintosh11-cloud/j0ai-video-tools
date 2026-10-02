@@ -7,7 +7,7 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import {
   reconstructRenderJournal,
-} from "../src/domain/render/renderJournal.ts";
+} from "../core/domain/render/renderJournal.ts";
 import { readRenderJournal } from "../services/render/renderJournalLog.ts";
 
 /**

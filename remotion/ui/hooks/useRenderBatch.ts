@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { RenderBatchView } from "../../src/domain/api/views.ts";
+import type { RenderBatchView } from "../../core/domain/api/views.ts";
 import { getRenderBatch, renderBatchEventsUrl } from "../api/client.ts";
 
 /**

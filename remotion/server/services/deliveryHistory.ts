@@ -10,9 +10,9 @@ import {
   type DeliveryLogEvent,
   type DeliveryLogProblem,
   type DeliveryLogStatus,
-} from "../../src/domain/delivery/deliveryHistory.ts";
-import { isValidSlug } from "../../src/domain/tracks/slug.ts";
-import { RENDER_PRESET_IDS } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/delivery/deliveryHistory.ts";
+import { isValidSlug } from "../../core/domain/tracks/slug.ts";
+import { RENDER_PRESET_IDS } from "../../core/domain/video/renderPresets.ts";
 import {
   deliveryEventFor,
   deliveryIdForReceipt,

@@ -1,5 +1,5 @@
-import { STALE_REASON_LABELS } from "../../src/domain/video/exportFreshness.ts";
-import type { RenderOutputView } from "../../src/domain/api/views.ts";
+import { STALE_REASON_LABELS } from "../../core/domain/video/exportFreshness.ts";
+import type { RenderOutputView } from "../../core/domain/api/views.ts";
 
 /**
  * Per-format export state for one track, as a compact row of marks.

@@ -4,15 +4,15 @@ import type {
   ContentLibraryRecordView,
   ContentLibraryReexportView,
   ContentLibraryView,
-} from "../../src/domain/api/views.ts";
+} from "../../core/domain/api/views.ts";
 import {
   CONTENT_LIBRARY_RECORD_ID_PATTERN,
   CONTENT_LIBRARY_STATUS_NOTES,
   parseContentLibraryQuery,
-} from "../../src/domain/library/contentLibrary.ts";
-import { targetKey } from "../../src/domain/render/renderJournal.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertRenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/library/contentLibrary.ts";
+import { targetKey } from "../../core/domain/render/renderJournal.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertRenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { adoptExistingExports } from "../../services/library/recordExport.ts";
 import { inspectRenderTargetLock } from "../../services/render/renderLock.ts";
 import { sendOk } from "../http/json.ts";

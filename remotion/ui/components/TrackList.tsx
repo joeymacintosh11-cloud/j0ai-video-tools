@@ -2,8 +2,8 @@ import { useMemo } from "react";
 import type {
   DestinationHealthView,
   TrackSummaryView,
-} from "../../src/domain/api/views.ts";
-import { deriveContentPackage } from "../../src/domain/content/contentPackage.ts";
+} from "../../core/domain/api/views.ts";
+import { deriveContentPackage } from "../../core/domain/content/contentPackage.ts";
 import { PackageStatusBadge } from "./ContentPackagePanel.tsx";
 import { DeliverySummary } from "./DeliveryStatus.tsx";
 import { DestinationHealthBadge } from "./DestinationHealthPanel.tsx";

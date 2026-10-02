@@ -7,7 +7,7 @@ import test, { type TestContext } from "node:test";
 import {
   RENDER_JOURNAL_SCHEMA_VERSION,
   type RenderJournalEvent,
-} from "../src/domain/render/renderJournal.ts";
+} from "../core/domain/render/renderJournal.ts";
 import {
   appendRenderJournalEvent,
   compactRenderJournal,

@@ -14,11 +14,11 @@ import { publishRecordedExport, trackSnapshotFromProps } from "../library/record
 import { fingerprintInputs } from "../tracks/exportManifest.ts";
 import { withRenderTargetLock, type RenderTargetLock } from "./renderLock.ts";
 import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
-import { COMPOSITION_ID } from "../../src/domain/video/compositionConfig.ts";
+import { COMPOSITION_ID } from "../../core/domain/video/compositionConfig.ts";
 import {
   DEFAULT_RENDER_PRESET_ID,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import {
   REMOTION_ENTRY_POINT,
   trackOutputLocation,

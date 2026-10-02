@@ -18,7 +18,7 @@ import {
   type BatchSession,
   type StorageLike,
 } from "../ui/batchSession.ts";
-import type { RenderJobView } from "../src/domain/api/views.ts";
+import type { RenderJobView } from "../core/domain/api/views.ts";
 
 const NOW = Date.parse("2026-09-21T12:00:00.000Z");
 

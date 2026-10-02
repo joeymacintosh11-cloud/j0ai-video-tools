@@ -25,7 +25,7 @@ import {
   selectDeliveryHistory,
   summarizeDeliveryHistory,
   type DeliveryLogEvent,
-} from "../src/domain/delivery/deliveryHistory.ts";
+} from "../core/domain/delivery/deliveryHistory.ts";
 import {
   appendDeliveryLogEvent,
   deliveryLogPath,
@@ -53,10 +53,10 @@ import { publishExport } from "../services/render/publishExport.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { trackExportCoverage } from "../services/tracks/exportCoverage.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { promisify } from "node:util";
-import { redeliveredEventIds } from "../src/domain/delivery/deliveryHistory.ts";
+import { redeliveredEventIds } from "../core/domain/delivery/deliveryHistory.ts";
 import { fixture } from "./fixtures.mts";
 
 /**

@@ -21,8 +21,8 @@ import {
   type DeliveryLogEvent,
   type DeliveryLogRead,
   type DeliveryReportRange,
-} from "../../src/domain/delivery/deliveryHistory.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+} from "../../core/domain/delivery/deliveryHistory.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { withFileMutation, writeAtomicFile } from "../tracks/atomicFile.ts";
 import {
   assertDeliveryRootFile,

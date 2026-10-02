@@ -13,11 +13,11 @@ import {
 } from "../services/tracks/exportManifest.ts";
 import { trackOutputLocation } from "../services/tracks/trackLocations.ts";
 import { publishExport } from "../services/render/publishExport.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
 import {
   RENDER_PRESETS,
   type RenderPresetId,
-} from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/video/renderPresets.ts";
 import {
   planMissingExports,
   toRenderTargets,

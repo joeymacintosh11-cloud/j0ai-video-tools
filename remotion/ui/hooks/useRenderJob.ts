@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type {
   RenderJobLogEntry,
   RenderJobView,
-} from "../../src/domain/api/views.ts";
+} from "../../core/domain/api/views.ts";
 import { ApiRequestError, getRender, getRenderLogs, renderEventsUrl } from "../api/client.ts";
 
 /**

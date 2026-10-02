@@ -11,7 +11,7 @@ import { CONTENT_METADATA_SETTINGS_FILE } from "../services/content/metadataTemp
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { publishExport } from "../services/render/publishExport.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
 import { fixture, tempFiles } from "./fixtures.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
 

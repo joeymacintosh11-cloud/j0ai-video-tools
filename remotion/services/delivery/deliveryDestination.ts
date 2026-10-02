@@ -1,6 +1,6 @@
 import { lstatSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 
 /**
  * Identifies and fences a delivery destination.

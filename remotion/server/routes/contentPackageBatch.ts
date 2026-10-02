@@ -4,11 +4,11 @@ import type {
   ContentPackageBatchPlanView,
   ContentPackagePlannedActionView,
   ContentPackageBatchJobReferenceView,
-} from "../../src/domain/api/views.ts";
+} from "../../core/domain/api/views.ts";
 import {
   deriveBatchContentPackage,
   type ContentPackagePlannedAction,
-} from "../../src/domain/content/contentPackageBatch.ts";
+} from "../../core/domain/content/contentPackageBatch.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
 import {
   buildContentPackagesForSlugs,

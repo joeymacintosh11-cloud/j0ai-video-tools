@@ -5,7 +5,7 @@ import path from "node:path";
 import {
   deliveryFolderFor,
   type DeliveryReason,
-} from "../../src/domain/delivery/deliveryPaths.ts";
+} from "../../core/domain/delivery/deliveryPaths.ts";
 import {
   readMarkdownBundleId,
   RELEASE_BUNDLE_SCHEMA_VERSION,
@@ -20,16 +20,16 @@ import {
   type ReleaseBundleTrack,
   type ReleaseFormatEntry,
   type ReleaseFormatStatus,
-} from "../../src/domain/delivery/releaseBundle.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
-import type { TrackInspection } from "../../src/domain/tracks/types.ts";
-import { secondsToFrames } from "../../src/domain/video/compositionConfig.ts";
+} from "../../core/domain/delivery/releaseBundle.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
+import type { TrackInspection } from "../../core/domain/tracks/types.ts";
+import { secondsToFrames } from "../../core/domain/video/compositionConfig.ts";
 import {
   RENDER_PRESETS,
   resolveExportPresets,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { withFileMutation, writeAtomicFile } from "../tracks/atomicFile.ts";
 import { probeAudioDurationInSeconds } from "../tracks/audioDuration.ts";
 import {

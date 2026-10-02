@@ -7,7 +7,7 @@ import {
 } from "../tracks/exportManifest.ts";
 import { withRenderTargetLock, type RenderTargetLock } from "./renderLock.ts";
 import { trackOutputLocation } from "../tracks/trackLocations.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 
 /** Stage everything before replacing anything. A failed/cancelled producer
  * cannot touch the last successful pair. Publication has no await points;

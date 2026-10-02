@@ -1,4 +1,4 @@
-import { formatBundleTimestamp, formatBytes } from "../src/domain/delivery/releaseBundle.ts";
+import { formatBundleTimestamp, formatBytes } from "../core/domain/delivery/releaseBundle.ts";
 import {
   CONTENT_LIBRARY_MAX_LIMIT,
   CONTENT_LIBRARY_STATUS_NOTES,
@@ -7,10 +7,10 @@ import {
   LIBRARY_ENTRY_STATUS_LABELS,
   parseContentLibraryQuery,
   type ContentLibraryEntry,
-} from "../src/domain/library/contentLibrary.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
-import { STALE_REASON_LABELS } from "../src/domain/video/exportFreshness.ts";
-import { RENDER_PRESET_IDS } from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/library/contentLibrary.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
+import { STALE_REASON_LABELS } from "../core/domain/video/exportFreshness.ts";
+import { RENDER_PRESET_IDS } from "../core/domain/video/renderPresets.ts";
 import {
   contentLibraryPath,
   releaseContentLibraryLock,

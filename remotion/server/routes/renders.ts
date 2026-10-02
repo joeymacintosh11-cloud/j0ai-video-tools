@@ -1,6 +1,6 @@
 import type { ServerResponse } from "node:http";
-import type { RenderJobView, RenderLogsView } from "../../src/domain/api/views.ts";
-import { TrackError } from "../../src/domain/tracks/errors.ts";
+import type { RenderJobView, RenderLogsView } from "../../core/domain/api/views.ts";
+import { TrackError } from "../../core/domain/tracks/errors.ts";
 import { sendOk } from "../http/json.ts";
 import { openSseStream } from "../http/sse.ts";
 import { getHistoricalRenderJob } from "../services/renderJournal.ts";
@@ -12,7 +12,7 @@ import { isTerminalStatus } from "../types.ts";
  *
  * Deliberately sparse next to `renderManager.toView()`'s output: the journal
  * never recorded progress, frame counts, fps, timing detail or output paths
- * (see src/domain/render/renderJournal.ts's own comment on why it stays
+ * (see core/domain/render/renderJournal.ts's own comment on why it stays
  * narrow), so this reports only what is actually known rather than padding
  * the shape with fabricated zeros. `elapsedMs` is 0 for the same reason —
  * there is no live clock to measure against any more.
@@ -40,7 +40,7 @@ const historicalView = (jobId: string): RenderJobView | null => {
     // The journal only ever records what was already a real job.error at
     // write time, whose code was already a valid TrackErrorCode — the
     // domain journal type just does not import that whole union to stay
-    // decoupled from it (src/domain/render/renderJournal.ts).
+    // decoupled from it (core/domain/render/renderJournal.ts).
     error: recovered.error as RenderJobView["error"],
     historical: true,
     recoveredAfterRestart: recovered.recoveredAfterRestart,

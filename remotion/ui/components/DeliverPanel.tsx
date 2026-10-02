@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { DeliverView } from "../../src/domain/api/views.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+import type { DeliverView } from "../../core/domain/api/views.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { ApiRequestError, deliverExports } from "../api/client.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 

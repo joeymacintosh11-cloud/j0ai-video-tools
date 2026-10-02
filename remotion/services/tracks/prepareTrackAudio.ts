@@ -2,11 +2,11 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync, renameSync, rmSync } from "node:fs";
 import { promisify } from "node:util";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import {
   publicLabel,
   trackAssetPaths,
-} from "../../src/domain/tracks/paths.ts";
+} from "../../core/domain/tracks/paths.ts";
 import { trackLocations } from "./trackLocations.ts";
 
 const execFileAsync = promisify(execFile);

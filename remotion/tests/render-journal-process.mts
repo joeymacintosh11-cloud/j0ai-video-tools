@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   RENDER_JOURNAL_SCHEMA_VERSION,
   type RenderJournalEvent,
-} from "../src/domain/render/renderJournal.ts";
+} from "../core/domain/render/renderJournal.ts";
 import { appendRenderJournalEvent } from "../services/render/renderJournalLog.ts";
 
 /**

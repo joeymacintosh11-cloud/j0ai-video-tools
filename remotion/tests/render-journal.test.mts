@@ -15,7 +15,7 @@ import {
   targetKey,
   type RenderJournalEvent,
   type RenderJournalLifecycleState,
-} from "../src/domain/render/renderJournal.ts";
+} from "../core/domain/render/renderJournal.ts";
 
 const BOOT_A = "boot-a";
 const BOOT_B = "boot-b";

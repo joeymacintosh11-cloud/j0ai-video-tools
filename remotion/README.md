@@ -131,7 +131,7 @@ video's duration from `beat.wav` automatically, and writes the result to
 ### Export formats
 
 Three formats ship, all at 30fps, defined once in
-`src/domain/video/renderPresets.ts`:
+`core/domain/video/renderPresets.ts`:
 
 | Preset | Format | Size |
 | --- | --- | --- |
@@ -905,7 +905,7 @@ and anything added later (a local app, a batch script) can reuse the same
 code rather than re-implementing it.
 
 ```
-src/domain/             Pure, no filesystem. Safe to import anywhere, including
+core/domain/             Pure, no filesystem. Safe to import anywhere, including
                         the composition and browser code.
   tracks/               types · errors · paths · metadata · validation · slug
   video/                compositionConfig · renderPresets — the export formats,
@@ -943,14 +943,14 @@ vite.config.ts          Vite root is the project root, so publicDir defaults to
 
 Two conventions worth knowing before changing anything here:
 
-- **`src/domain/` never imports `node:*`.** It's part of the Remotion bundle's
+- **`core/domain/` never imports `node:*`.** It's part of the Remotion bundle's
   module graph (the composition imports it), so it has to stay browser-safe.
   Anything touching the filesystem belongs in `services/`.
-- **Paths have one owner.** `src/domain/tracks/paths.ts` defines every
+- **Paths have one owner.** `core/domain/tracks/paths.ts` defines every
   `public/`-relative path (`tracks/<slug>/cover.png` and friends);
   `services/tracks/trackLocations.ts` turns those into absolute paths. Don't
   hand-build these strings anywhere else.
-- **The API's wire format is declared once**, in `src/domain/api/views.ts`. The
+- **The API's wire format is declared once**, in `core/domain/api/views.ts`. The
   server implements those types and the UI consumes them, so a change that
   breaks one end fails to compile rather than failing in the browser.
 

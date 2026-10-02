@@ -1,14 +1,14 @@
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import {
   createDefaultMetadata,
   serializeTrackMetadata,
-} from "../../src/domain/tracks/metadata.ts";
-import { trackDirLabel } from "../../src/domain/tracks/paths.ts";
-import { slugify } from "../../src/domain/tracks/slug.ts";
-import type { TrackMetadataDraft } from "../../src/domain/tracks/types.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/tracks/metadata.ts";
+import { trackDirLabel } from "../../core/domain/tracks/paths.ts";
+import { slugify } from "../../core/domain/tracks/slug.ts";
+import type { TrackMetadataDraft } from "../../core/domain/tracks/types.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { trackLocations, type TrackLocations } from "./trackLocations.ts";
 
 export type CreateTrackResult = {

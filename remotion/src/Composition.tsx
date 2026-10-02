@@ -3,9 +3,9 @@ import {
   BeatVisualizer,
   calculateBeatVisualizerMetadata,
 } from "./BeatVisualizer/BeatVisualizer";
-import { parseTrackMetadata } from "./domain/tracks/metadata";
-import { BRAND_ASSET_PATHS, trackAssetPaths, publicLabel } from "./domain/tracks/paths";
-import { COMPOSITION_CONFIG } from "./domain/video/compositionConfig";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata";
+import { BRAND_ASSET_PATHS, trackAssetPaths, publicLabel } from "../core/domain/tracks/paths";
+import { COMPOSITION_CONFIG } from "../core/domain/video/compositionConfig";
 import previewTrackMetadataJson from "../public/tracks/ghetto-geek/metadata.json";
 
 // The Studio preview always shows one track by default. Any track in

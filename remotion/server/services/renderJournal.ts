@@ -12,10 +12,10 @@ import {
   type RecoveredRenderJob,
   type RenderJournalLifecycleState,
   type RenderJournalStatus,
-} from "../../src/domain/render/renderJournal.ts";
+} from "../../core/domain/render/renderJournal.ts";
 
 /**
- * Wires the pure journal model (src/domain/render/renderJournal.ts) and its
+ * Wires the pure journal model (core/domain/render/renderJournal.ts) and its
  * file I/O (services/render/renderJournalLog.ts) into the render manager.
  *
  * This module owns the one thing neither of those can: the running process's
@@ -142,7 +142,7 @@ export type RecentRenderHistoryResult = {
  * benchmark test extends to this function). `status` is returned alongside
  * the jobs — a track's history can still be reported even when the journal is
  * damaged elsewhere, exactly like the delivery log's own `status`/`events`
- * split (src/domain/delivery/deliveryHistory.ts).
+ * split (core/domain/delivery/deliveryHistory.ts).
  */
 export const getRecentRenderHistory = (
   slug: string,
