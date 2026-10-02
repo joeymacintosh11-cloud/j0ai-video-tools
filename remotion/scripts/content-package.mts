@@ -25,6 +25,7 @@ import {
   ENGINE_FLAG_USAGE,
   isEngineFlagValue,
   printLibraryOutcome,
+  assertPlanningEngine,
   readEngineFlag,
   runCli,
 } from "./cli.ts";
@@ -187,6 +188,7 @@ const describeBuildPlan = (plan: ExportPlan): void => {
 
 runCli("inspecting content package", async () => {
   const { slug, mode, platforms, json, apply, engineId } = parseArgs(process.argv.slice(2));
+  assertPlanningEngine(engineId, "content-package");
 
   if (!slug) {
     printUsage();

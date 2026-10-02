@@ -16,7 +16,13 @@ import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
 import { listTracks } from "../services/tracks/listTracks.ts";
 import type { VisualizerProps } from "../core/domain/video/visualizerProps.ts";
-import { ENGINE_FLAG_USAGE, printLibraryOutcome, readEngineFlag, runCli } from "./cli.ts";
+import {
+  assertPlanningEngine,
+  ENGINE_FLAG_USAGE,
+  printLibraryOutcome,
+  readEngineFlag,
+  runCli,
+} from "./cli.ts";
 
 /**
  * Inspects, plans, and optionally builds Content Packages for several tracks
@@ -166,6 +172,7 @@ const describePlan = (plan: ContentPackageBatchPlan): void => {
 runCli("inspecting content package batch", async () => {
   const { tracks, catalogue, mode, platforms, plan: wantsPlan, apply, json, engineId } =
     parseArgs(process.argv.slice(2));
+  assertPlanningEngine(engineId, "content-package-batch");
 
   if (tracks.length === 0 && !catalogue) {
     printUsage();

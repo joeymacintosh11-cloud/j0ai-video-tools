@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { chmodSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { buildAerenderArgs, parseAerenderProgressFrame } from "../adapters/after-effects/aerenderCommand.mts";
 import {
   describeAerenderNotFound,
@@ -41,6 +43,7 @@ import { fixture } from "./fixtures.mts";
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FAKE_AERENDER = path.join(PROJECT_ROOT, "tests", "fake-aerender.mjs");
 chmodSync(FAKE_AERENDER, 0o755);
+const run = promisify(execFile);
 
 const libraryDir = await mkdtemp(path.join(tmpdir(), "toshi-ae-library-"));
 process.env.TOSHI_CONTENT_LIBRARY_DIR = libraryDir;
@@ -399,4 +402,80 @@ test("the engine refuses to start without aerender or without a template", async
     discover: () => ({ found: true, path: FAKE_AERENDER, source: "env" }),
   });
   await assert.rejects(noTemplate.open(), trackErrorCode("RENDERER_NOT_CONFIGURED", /needs a template/));
+});
+
+/* ------------------------------------------------------------------ *
+ * The CLI, end to end, with the fake aerender
+ * ------------------------------------------------------------------ */
+
+const runScript = async (script: string, args: readonly string[], env: Record<string, string>) => {
+  try {
+    const { stdout, stderr } = await run(process.execPath, [`scripts/${script}.mts`, ...args], {
+      cwd: PROJECT_ROOT,
+      env: { ...process.env, ...env },
+    });
+    return { code: 0, output: stdout + stderr };
+  } catch (error) {
+    const failed = error as { code: number; stdout: string; stderr: string };
+    return { code: failed.code, output: failed.stdout + failed.stderr };
+  }
+};
+const cli = (args: readonly string[], env: Record<string, string>) => runScript("render-track", args, env);
+
+test("render-track --engine after-effects: unavailable, then unconfigured, then a real run through aerender", async (t) => {
+  const f = await fixture(t);
+  await writeFile(f.cover, "cover");
+  await run("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=1", "-ac", "2", "-ar", "44100", "-c:a", "pcm_s24le", "-y", f.beat]);
+  t.after(() => rm(f.outputDir, { recursive: true, force: true }));
+  t.after(() => rm(f.analysis, { force: true }));
+  const tpl = await template(t);
+
+  const unavailable = await cli([f.slug, "--engine", "after-effects"], { TOSHI_AERENDER_PATH: "/nonexistent/aerender" });
+  assert.equal(unavailable.code, 1);
+  assert.match(unavailable.output, /"after-effects" render engine is not available: TOSHI_AERENDER_PATH points to/);
+  assert.doesNotMatch(unavailable.output, /Preparing track|Bundling Remotion/);
+
+  const unconfigured = await cli([f.slug, "--engine", "after-effects", "--preset", "square-1x1"], {
+    TOSHI_AERENDER_PATH: FAKE_AERENDER,
+    TOSHI_AE_CONFIG: path.join(tpl.dir, "absent.json"),
+  });
+  assert.equal(unconfigured.code, 1);
+  assert.match(unconfigured.output, /After Effects rendering needs a template/);
+  assert.doesNotMatch(unconfigured.output, /Bundling Remotion/);
+
+  const rendered = await cli([f.slug, "--engine", "after-effects", "--preset", "square-1x1"], {
+    TOSHI_AERENDER_PATH: FAKE_AERENDER,
+    TOSHI_AE_CONFIG: tpl.file,
+    FAKE_AERENDER_MODE: "success",
+  });
+  assert.equal(rendered.code, 0, rendered.output);
+  for (const expected of [
+    "Render engine: after-effects",
+    "Opening the after-effects render engine",
+    "Resolving the after-effects template",
+    `aerender ${FAKE_AERENDER} (found via env)`,
+    `project ${tpl.project}`,
+    `composition "Toshi Visualizer", 30 frames @ 30fps`,
+    `out/${f.slug}/after-effects/square-1x1.mp4`,
+  ]) {
+    assert.ok(rendered.output.includes(expected), `output mentions ${expected}\n${rendered.output}`);
+  }
+  assert.doesNotMatch(rendered.output, /Bundling Remotion/);
+  assert.equal(
+    await readFile(trackOutputLocation(f.slug, "square-1x1", "after-effects").path, "utf8"),
+    "fake after effects video",
+  );
+});
+
+test("planning commands refuse another engine instead of re-rendering forever", async () => {
+  for (const [script, args] of [
+    ["render-missing", ["--all-tracks", "--dry-run"]],
+    ["content-package", ["ghetto-geek"]],
+    ["content-package-batch", ["--track", "ghetto-geek"]],
+  ] as const) {
+    const result = await runScript(script, [...args, "--engine", "after-effects"], { TOSHI_AERENDER_PATH: FAKE_AERENDER });
+    assert.equal(result.code, 1, script);
+    assert.match(result.output, new RegExp(`${script} plans against remotion exports and cannot render with "after-effects" yet`), script);
+    assert.match(result.output, /npm run render-track -- <track-slug> --engine after-effects/, script);
+  }
 });
