@@ -128,6 +128,14 @@ This prepares the track (see above), bundles the project, resolves the
 video's duration from `beat.wav` automatically, and writes the result to
 `out/<track-slug>/<preset>.mp4` (e.g. `out/ghetto-geek/youtube-16x9.mp4`).
 
+Rendering uses the Remotion engine. `render-track`, `render-missing`,
+`content-package` and `content-package-batch` also take an optional
+`--engine <id>` (e.g. `--engine remotion`). Leaving it out means Remotion, as
+before. Remotion is the only engine installed today. `premiere` and
+`after-effects` are reserved names that are refused with a "not available"
+error, and anything else is an unknown engine. Each export records the engine
+that made it; see [ARCHITECTURE.md](ARCHITECTURE.md#choosing-the-engine-per-job).
+
 ### Export formats
 
 Three formats ship, all at 30fps, defined once in
@@ -996,7 +1004,7 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | POST | `/api/tracks/:slug/validate` | Structured validation result |
 | POST | `/api/tracks/:slug/prepare` | Validate + refresh `analysis.wav` |
 | GET | `/api/tracks/:slug/preview` | Composition config + `inputProps` + duration |
-| POST | `/api/tracks/:slug/render` | Start a render, returns a job id immediately; optional `{"preset":"..."}` |
+| POST | `/api/tracks/:slug/render` | Start a render, returns a job id immediately; optional `{"preset":"...","engine":"remotion"}` |
 | POST | `/api/tracks/:slug/reveal` | Show the selected format in Finder (macOS) |
 | GET | `/api/renders` | All render jobs, newest first |
 | GET | `/api/renders/:jobId` | Job status and progress |
@@ -1004,7 +1012,7 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | GET | `/api/renders/:jobId/logs` | Recent log lines for the job |
 | POST | `/api/renders/:jobId/cancel` | Cancel a queued or running render |
 | POST | `/api/export-missing` | Plan/queue missing or stale intended exports (optional `mode`) |
-| POST | `/api/render-batches` | Queue many track/format pairs at once |
+| POST | `/api/render-batches` | Queue many track/format pairs at once; each target may name an `engine` |
 | GET | `/api/render-batches` | All batches, newest first |
 | GET | `/api/render-batches/:batchId` | Batch totals, progress and member jobs |
 | GET | `/api/render-batches/:batchId/events` | Live batch aggregate (Server-Sent Events) |
@@ -1067,7 +1075,9 @@ queued -> preparing -> rendering -> completed
 ```
 
 Starting a render returns immediately; the render itself runs in a separate
-process. **Only one render runs at a time** — a render already uses three
+process. Every job reports its `engine` (default `remotion`). Naming an engine
+that is unknown (`INVALID_RENDERER`) or not installed (`RENDERER_UNAVAILABLE`)
+is a 400, and nothing is queued. **Only one render runs at a time** — a render already uses three
 Chromium tabs, and running two at once would thrash rather than finish sooner.
 Further requests queue.
 
