@@ -7,6 +7,7 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import vm from "node:vm";
 import { buildAerenderArgs, parseAerenderProgressFrame } from "../adapters/after-effects/aerenderCommand.mts";
 import {
   describeAerenderNotFound,
@@ -19,7 +20,7 @@ import {
   createAfterEffectsRenderEngine,
   probeStreamTypesWithFfprobe,
 } from "../adapters/after-effects/afterEffectsRenderEngine.mts";
-import { REQUIRED_TEMPLATE_FILES } from "../adapters/after-effects/templateContract.mts";
+import { REQUIRED_TEMPLATE_FILES, TEMPLATE_EXPRESSIONS } from "../adapters/after-effects/templateContract.mts";
 import { renderEngines } from "../adapters/renderEngines.mts";
 import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
 import { TrackError } from "../core/domain/tracks/errors.ts";
@@ -568,4 +569,52 @@ test("a rendered video with picture and sound is published (real ffprobe)", asyn
   const output = trackOutputLocation(ctx.f.slug, "youtube-16x9", "after-effects").path;
   assert.deepEqual((await probeStreamTypesWithFfprobe(output)).sort(), ["audio", "video"]);
   assert.equal(libraryFor(ctx.f.slug).length, 1);
+});
+
+/* ------------------------------------------------------------------ *
+ * The sidecar the engine writes, read the way the template reads it
+ * ------------------------------------------------------------------ */
+
+test("the text expressions render the track from the very sidecar the engine wrote", async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  await renderTrackVideo({ engine: ctx.engine, slug: ctx.f.slug, props: ctx.props, presetId: "youtube-16x9" });
+
+  const written = await readFile(ctx.tpl.dataFile, "utf8");
+  const text = (expression: string, footageItem: Record<string, unknown>) =>
+    vm.runInNewContext(expression, { footage: () => footageItem });
+  for (const footageItem of [{ sourceData: JSON.parse(written) }, { sourceData: [JSON.parse(written)] }, { sourceText: written }]) {
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(TEMPLATE_EXPRESSIONS).map(([layer, expression]) => [layer, text(expression, footageItem)])),
+      { Title: "Fixture", Artist: "Toshi", "Key BPM": "F Minor · 100 BPM" },
+    );
+  }
+});
+
+test("a template without the composition name or a waveform effect renders, with warnings in the log", async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  await renderTrackVideo({
+    engine: ctx.engine,
+    slug: ctx.f.slug,
+    props: ctx.props,
+    presetId: "square-1x1",
+    onEngineLog: (message) => ctx.logs.push(message),
+  });
+  const warnings = ctx.logs.filter((message) => message.includes("warning:"));
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /composition "Toshi Visualizer" was not found in the project file/);
+  assert.match(warnings[1], /no Audio Waveform effect/);
+
+  // A project mentioning both draws no warnings.
+  const quiet = await setup(t, {}, { references: [...REQUIRED_TEMPLATE_FILES, "Toshi Visualizer", "ADBE AudWave"] });
+  if (!quiet) return;
+  await renderTrackVideo({
+    engine: quiet.engine,
+    slug: quiet.f.slug,
+    props: quiet.props,
+    presetId: "square-1x1",
+    onEngineLog: (message) => quiet.logs.push(message),
+  });
+  assert.deepEqual(quiet.logs.filter((message) => message.includes("warning:")), []);
 });

@@ -43,15 +43,52 @@ export const REQUIRED_TEMPLATE_FILES = [
 ] as const;
 
 /**
- * The expressions a template's text layers use, keyed by the layer names the
- * bootstrap script (template/create-toshi-template.jsx) creates. Each reads
- * a field of TemplateData; tests check every path exists, so renaming a
- * field cannot silently blank a template.
+ * How every text expression reads the template data, whatever shape After
+ * Effects hands it over in.
+ *
+ * `footage(...).sourceData` is documented as returning a JSON file's data "as
+ * an array of sourceData objects", and versions differ on whether a top-level
+ * object arrives as itself or wrapped in an array. A plain
+ * `sourceData.track.title` then throws, After Effects disables the expression
+ * and the layer silently shows its placeholder text. So the loader accepts
+ * either shape, falls back to parsing the file's text (`sourceText`) itself,
+ * and works on both the JavaScript and the legacy ExtendScript expression
+ * engines (no JSON object there, hence eval).
+ */
+export const TEMPLATE_DATA_LOADER = [
+  `var TOSHI_DATA = "${TEMPLATE_DATA_FILE_NAME}";`,
+  `function toshiTrack() {`,
+  `  var data = null;`,
+  `  try { data = footage(TOSHI_DATA).sourceData; } catch (err) { data = null; }`,
+  `  if (data && !data.track && data.length > 0) { data = data[0]; }`,
+  `  if (!data || !data.track) {`,
+  `    var text = footage(TOSHI_DATA).sourceText;`,
+  `    data = typeof JSON !== "undefined" ? JSON.parse(text) : eval("(" + text + ")");`,
+  `  }`,
+  `  return data.track;`,
+  `}`,
+].join("\n");
+
+/**
+ * A text expression: the loader, then `body`. If the data cannot be read at
+ * all, the layer shows "[toshi-render-data.json: <reason>]" instead of
+ * silently keeping its placeholder, so a broken template is obvious in the
+ * very first frame.
+ */
+export const templateTextExpression = (body: string): string =>
+  `${TEMPLATE_DATA_LOADER}\ntry {\n  ${body}\n} catch (err) {\n  "[" + TOSHI_DATA + ": " + err.message + "]";\n}`;
+
+/**
+ * The text layers' expressions, keyed by the layer names the bootstrap script
+ * (template/create-toshi-template.jsx) creates. Optional fields left out of
+ * the data render as nothing rather than "undefined".
  */
 export const TEMPLATE_EXPRESSIONS = {
-  Title: `footage("${TEMPLATE_DATA_FILE_NAME}").sourceData.track.title`,
-  Artist: `footage("${TEMPLATE_DATA_FILE_NAME}").sourceData.track.artist`,
-  "Key BPM": `var t = footage("${TEMPLATE_DATA_FILE_NAME}").sourceData.track; t.key + "  \\u00b7  " + t.bpm + " BPM"`,
+  Title: templateTextExpression(`var t = toshiTrack(); t.title ? String(t.title) : "";`),
+  Artist: templateTextExpression(`var t = toshiTrack(); t.artist ? String(t.artist) : "";`),
+  "Key BPM": templateTextExpression(
+    `var t = toshiTrack(); var parts = []; if (t.key) { parts.push(String(t.key)); } if (t.bpm) { parts.push(t.bpm + " BPM"); } parts.join(" \\u00b7 ");`,
+  ),
 } as const;
 
 /** The TemplateData fields TEMPLATE_EXPRESSIONS read, as paths. */
@@ -61,6 +98,25 @@ export const TEMPLATE_DATA_FIELDS_READ = [
   ["track", "key"],
   ["track", "bpm"],
 ] as const;
+
+/**
+ * The bootstrap's layers, top to bottom as the Timeline shows them. Names are
+ * part of the contract: documentation and tests refer to them.
+ */
+export const TEMPLATE_LAYERS = [
+  "Audio",
+  "Brand Logo",
+  "Waveform",
+  "Accent",
+  "Key BPM",
+  "Artist",
+  "Title",
+  "Cover",
+  "Background",
+] as const;
+
+/** Names After Effects stores for its native Audio Waveform effect (match name, display name). */
+export const AUDIO_WAVEFORM_EFFECT_NAMES = ["ADBE AudWave", "Audio Waveform"] as const;
 
 const encodings = (text: string): Uint8Array[] => {
   const utf8 = new TextEncoder().encode(text);
@@ -105,4 +161,20 @@ export const missingTemplateFiles = (
 export const renderedMediaProblems = (streamTypes: readonly string[]): string[] => [
   ...(streamTypes.includes("video") ? [] : ["no video stream"]),
   ...(streamTypes.includes("audio") ? [] : ["no audio stream"]),
+];
+
+/**
+ * Things worth saying about a template that are not worth refusing it for:
+ * the composition name not found in the project's bytes (aerender reports a
+ * missing composition itself, within seconds), or no Audio Waveform effect
+ * (a template may simply not want one). Logged, never fatal, so an unusual
+ * but valid project is never rejected.
+ */
+export const templateWarnings = (project: Uint8Array, composition: string): string[] => [
+  ...(missingTemplateFiles(project, [composition]).length > 0
+    ? [`composition "${composition}" was not found in the project file; aerender will stop if it really is missing.`]
+    : []),
+  ...(AUDIO_WAVEFORM_EFFECT_NAMES.every((name) => missingTemplateFiles(project, [name]).length > 0)
+    ? [`the project has no Audio Waveform effect, so the video will have no waveform.`]
+    : []),
 ];

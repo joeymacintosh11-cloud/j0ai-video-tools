@@ -24,6 +24,7 @@ import {
   missingTemplateFiles,
   renderedMediaProblems,
   STAGED_ASSET_NAMES,
+  templateWarnings,
 } from "./templateContract.mts";
 
 export { STAGED_ASSET_NAMES };
@@ -217,6 +218,9 @@ export const createAfterEffectsRenderEngine = (
               );
             }
             log(`After Effects: template uses the staged data, cover and audio.`);
+            for (const warning of templateWarnings(projectBytes, composition)) {
+              log(`After Effects: warning: ${warning}`);
+            }
           }
 
           resolved = { composition, durationInFrames, fps: preset.fps };
