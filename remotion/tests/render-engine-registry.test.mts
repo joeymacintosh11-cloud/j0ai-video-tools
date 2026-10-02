@@ -12,6 +12,10 @@ import {
 import type { RenderEngine } from "../core/ports/renderEngine.ts";
 import { createRenderEngineRegistry } from "../core/ports/renderEngineRegistry.ts";
 
+// These tests mean "After Effects is not installed" whatever this machine has:
+// an explicit aerender path that does not exist makes discovery report that.
+process.env.TOSHI_AERENDER_PATH = "/nonexistent/toshi-test/aerender";
+
 /**
  * Renderer ids (core/domain/video/renderers.ts) and the engine registry
  * (core/ports/renderEngineRegistry.ts, adapters/renderEngines.mts): callers
