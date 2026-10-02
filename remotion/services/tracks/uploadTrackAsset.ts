@@ -2,12 +2,12 @@ import { existsSync } from "node:fs";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { writeAtomicFile } from "./atomicFile.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import {
   publicLabel,
   trackAssetPaths,
-} from "../../src/domain/tracks/paths.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+} from "../../core/domain/tracks/paths.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import { trackLocations } from "./trackLocations.ts";
 
 /**

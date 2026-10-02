@@ -1,4 +1,4 @@
-import type { PartialMetadataTemplates } from "../../src/domain/api/views.ts";
+import type { PartialMetadataTemplates } from "../../core/domain/api/views.ts";
 
 /**
  * The seven editable template fields, shared by the global settings panel

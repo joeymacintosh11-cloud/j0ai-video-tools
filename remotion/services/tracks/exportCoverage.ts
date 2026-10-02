@@ -1,10 +1,10 @@
 import { readFileSync, statSync } from "node:fs";
-import { parseTrackMetadata } from "../../src/domain/tracks/metadata.ts";
-import type { TrackMetadata } from "../../src/domain/tracks/types.ts";
+import { parseTrackMetadata } from "../../core/domain/tracks/metadata.ts";
+import type { TrackMetadata } from "../../core/domain/tracks/types.ts";
 import type {
   ExportFreshness,
   StaleReason,
-} from "../../src/domain/video/exportFreshness.ts";
+} from "../../core/domain/video/exportFreshness.ts";
 import { buildTrackProps } from "./buildTrackProps.ts";
 import {
   compareInputs,
@@ -15,7 +15,7 @@ import {
 import {
   RENDER_PRESET_LIST,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { trackLocations, trackOutputLocation } from "./trackLocations.ts";
 
 /**

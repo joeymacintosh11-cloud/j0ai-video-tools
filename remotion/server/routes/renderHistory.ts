@@ -1,20 +1,20 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { RenderHistoryJobView, RenderHistoryView } from "../../src/domain/api/views.ts";
+import type { RenderHistoryJobView, RenderHistoryView } from "../../core/domain/api/views.ts";
 import {
   RENDER_HISTORY_DEFAULT_LIMIT,
   RENDER_HISTORY_MAX_LIMIT,
   RENDER_JOURNAL_STATUS_NOTES,
-} from "../../src/domain/render/renderJournal.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+} from "../../core/domain/render/renderJournal.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import { sendOk } from "../http/json.ts";
-import { renderManager } from "../services/renderManager.ts";
-import { getRecentRenderHistory } from "../services/renderJournal.ts";
+import { renderManager } from "../../services/workflows/renderManager.ts";
+import { getRecentRenderHistory } from "../../services/workflows/renderJournal.ts";
 
 /**
  * Read-only, journal-backed answer to "what happened to this track's most
  * recent renders?" — the operator-facing surface over the durable render
- * journal (src/domain/render/renderJournal.ts). Never a second readiness or
+ * journal (core/domain/render/renderJournal.ts). Never a second readiness or
  * queue authority: this endpoint only ever reports what the journal already
  * recorded, grouped by job, newest first. It does not accept a job id (that
  * is `GET /api/renders/:id`) and it never mutates the journal.
@@ -70,7 +70,7 @@ export const handleGetRenderHistory = (
     jobId: job.jobId,
     slug: job.slug,
     // classifyRecoveredJob never returns queued/preparing/rendering — see
-    // its own comment in src/domain/render/renderJournal.ts.
+    // its own comment in core/domain/render/renderJournal.ts.
     presetId: job.presetId as RenderHistoryJobView["presetId"],
     status: job.status as RenderHistoryJobView["status"],
     recordedAt: job.recordedAt,

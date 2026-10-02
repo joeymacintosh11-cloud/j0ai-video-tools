@@ -12,9 +12,9 @@ import test, { type TestContext } from "node:test";
 import {
   applyDestinationFixPlan,
   planDestinationFix,
-} from "../server/services/destinationFixPlan.ts";
-import { renderManager } from "../server/services/renderManager.ts";
-import { followRenderJob } from "../server/services/renderFollow.ts";
+} from "../services/workflows/destinationFixPlan.ts";
+import { renderManager } from "../services/workflows/renderManager.ts";
+import { followRenderJob } from "../services/workflows/renderFollow.ts";
 import { handleRenderEvents } from "../server/routes/renders.ts";
 import { deliverExport } from "../services/delivery/deliverExport.ts";
 import { DELIVERY_SETTINGS_FILE, type DeliverySettings } from "../services/delivery/deliverySettings.ts";
@@ -22,8 +22,8 @@ import { publishExport } from "../services/render/publishExport.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
 import { trackOutputLocation } from "../services/tracks/trackLocations.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import { scanDestinationHealth } from "../services/workflows/destinationHealth.ts";
 import { Worker } from "./managerHarness.mts";
 import { fixture } from "./fixtures.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";

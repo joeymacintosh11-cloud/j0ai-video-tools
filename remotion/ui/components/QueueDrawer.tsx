@@ -2,8 +2,8 @@ import { useState } from "react";
 import type {
   RenderBatchView,
   RenderJobView,
-} from "../../src/domain/api/views.ts";
-import { RENDER_PRESETS } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/api/views.ts";
+import { RENDER_PRESETS } from "../../core/domain/video/renderPresets.ts";
 import {
   ApiRequestError,
   cancelRender,

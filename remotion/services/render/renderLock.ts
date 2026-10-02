@@ -5,9 +5,9 @@ import {
 } from "node:fs";
 import { hostname as osHostname } from "node:os";
 import path from "node:path";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug, isValidSlug } from "../../src/domain/tracks/slug.ts";
-import { assertRenderPresetId, isRenderPresetId, type RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug, isValidSlug } from "../../core/domain/tracks/slug.ts";
+import { assertRenderPresetId, isRenderPresetId, type RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { OUT_DIR } from "../tracks/trackLocations.ts";
 
 export const RENDER_LOCK_SCHEMA_VERSION = 1;

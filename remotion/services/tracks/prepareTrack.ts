@@ -1,14 +1,14 @@
-import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import {
   publicLabel,
   trackAssetPaths,
-} from "../../src/domain/tracks/paths.ts";
+} from "../../core/domain/tracks/paths.ts";
 import type {
   TrackInspection,
   TrackMetadata,
-} from "../../src/domain/tracks/types.ts";
-import { isAssetIssue } from "../../src/domain/tracks/validation.ts";
+} from "../../core/domain/tracks/types.ts";
+import { isAssetIssue } from "../../core/domain/tracks/validation.ts";
 import { buildTrackProps } from "./buildTrackProps.ts";
 import { inspectTrack } from "./inspectTrack.ts";
 import {
@@ -19,7 +19,7 @@ import {
 export type PrepareTrackResult = {
   readonly slug: string;
   readonly metadata: TrackMetadata;
-  readonly props: BeatVisualizerProps;
+  readonly props: VisualizerProps;
   readonly analysis: AnalysisAudioResult;
   /** State observed before preparation ran. */
   readonly inspection: TrackInspection;

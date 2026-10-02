@@ -6,28 +6,28 @@ import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { publishExport } from "../services/render/publishExport.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
 import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
 import {
   deriveContentPackage,
   type ContentPackageView,
-} from "../src/domain/content/contentPackage.ts";
+} from "../core/domain/content/contentPackage.ts";
 import {
   deriveBatchContentPackage,
   planContentPackageBatch,
   toRenderTargetsFromPlan,
   type ContentPackageBatchTrack,
-} from "../src/domain/content/contentPackageBatch.ts";
+} from "../core/domain/content/contentPackageBatch.ts";
 import {
   buildContentPackagesForSlugs,
   loadContentPackageBatchContext,
   namedBatchSlugs,
   type ContentPackageBatchContext,
-} from "../server/services/contentPackagePlan.ts";
-import { TrackError } from "../src/domain/tracks/errors.ts";
+} from "../services/workflows/contentPackagePlan.ts";
+import { TrackError } from "../core/domain/tracks/errors.ts";
 
 /**
  * Batch Content Package Generation: aggregation and planning across several
- * tracks — see src/domain/content/contentPackageBatch.ts.
+ * tracks — see core/domain/content/contentPackageBatch.ts.
  *
  * Most of this file is pure domain-level: aggregation and planning are both
  * pure functions of already-derived ContentPackageView objects, hand-built

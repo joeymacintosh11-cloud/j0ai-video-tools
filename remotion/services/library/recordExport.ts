@@ -6,17 +6,17 @@ import {
   type ContentLibraryRecord,
   type LibraryRecordIdentity,
   type LibraryTrackSnapshot,
-} from "../../src/domain/library/contentLibrary.ts";
-import { outputLabel } from "../../src/domain/tracks/paths.ts";
-import { isValidSlug } from "../../src/domain/tracks/slug.ts";
-import type { TrackMetadata } from "../../src/domain/tracks/types.ts";
-import { COMPOSITION_ID } from "../../src/domain/video/compositionConfig.ts";
-import { VISUALIZER_VERSION } from "../../src/domain/video/exportFreshness.ts";
+} from "../../core/domain/library/contentLibrary.ts";
+import { outputLabel } from "../../core/domain/tracks/paths.ts";
+import { isValidSlug } from "../../core/domain/tracks/slug.ts";
+import type { TrackMetadata } from "../../core/domain/tracks/types.ts";
+import { COMPOSITION_ID } from "../../core/domain/video/compositionConfig.ts";
+import { VISUALIZER_VERSION } from "../../core/domain/video/exportFreshness.ts";
 import {
   RENDER_PRESET_LIST,
   renderPreset,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { publishExport } from "../render/publishExport.ts";
 import { withRenderTargetLock, type RenderTargetLock } from "../render/renderLock.ts";
 import { trackExportCoverage } from "../tracks/exportCoverage.ts";

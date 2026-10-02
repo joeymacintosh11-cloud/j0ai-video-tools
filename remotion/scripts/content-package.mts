@@ -1,15 +1,16 @@
+import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.mts";
 import {
   deriveContentPackage,
   type ContentPackageInput,
   type ContentPackageView,
-} from "../src/domain/content/contentPackage.ts";
-import { assertPlatformId, type PlatformId } from "../src/domain/content/platformProfiles.ts";
-import { canonicalPresetOrder, resolveExportPresets } from "../src/domain/video/renderPresets.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
+} from "../core/domain/content/contentPackage.ts";
+import { assertPlatformId, type PlatformId } from "../core/domain/content/platformProfiles.ts";
+import { canonicalPresetOrder, resolveExportPresets } from "../core/domain/video/renderPresets.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import {
   planMissingExports,
   type ExportPlan,
-} from "../server/services/exportPlan.ts";
+} from "../services/workflows/exportPlan.ts";
 import {
   readDeliverySettings,
   resolveDeliveryRoot,
@@ -226,6 +227,7 @@ runCli("inspecting content package", async () => {
     let lastLoggedPercentage = -1;
 
     const { outputLabel } = await renderTrackVideo({
+      engine: remotionRenderEngine,
       slug: target.slug,
       props,
       onRecorded: printLibraryOutcome,

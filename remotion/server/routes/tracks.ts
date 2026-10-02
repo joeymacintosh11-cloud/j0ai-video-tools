@@ -8,19 +8,19 @@ import type {
   TrackPreviewView,
   UploadAssetView,
   ValidateTrackView,
-} from "../../src/domain/api/views.ts";
-import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+} from "../../core/domain/api/views.ts";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import {
   assertRenderPresetId,
   parseExportPresetList,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import {
   COMPOSITION_CONFIG,
   secondsToFrames,
-} from "../../src/domain/video/compositionConfig.ts";
+} from "../../core/domain/video/compositionConfig.ts";
 import { probeAudioDurationInSeconds } from "../../services/tracks/audioDuration.ts";
 import { buildTrackProps } from "../../services/tracks/buildTrackProps.ts";
 import { createTrack } from "../../services/tracks/createTrack.ts";
@@ -34,23 +34,13 @@ import {
   updateTrackMetadata,
   type TrackMetadataPatch,
 } from "../../services/tracks/updateTrackMetadata.ts";
-import {
-  readDeliverySettings,
-  resolveDeliveryRoot,
-} from "../../services/delivery/deliverySettings.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
-import { renderManager } from "../services/renderManager.ts";
-import { toTrackDetailView, toTrackSummaryView } from "../views/trackView.ts";
-
-/**
- * The destination root for this response, or null when delivery is off.
- *
- * Resolved once per request: a listing then stats each export's destination at
- * most once, and with no destination configured it does no filesystem work at
- * all.
- */
-export const deliveryRootForView = async (): Promise<string | null> =>
-  resolveDeliveryRoot(await readDeliverySettings()).root;
+import { renderManager } from "../../services/workflows/renderManager.ts";
+import {
+  deliveryRootForView,
+  toTrackDetailView,
+  toTrackSummaryView,
+} from "../../services/workflows/trackView.ts";
 
 export const handleListTracks = async (
   _request: IncomingMessage,
@@ -371,7 +361,7 @@ export const handleTrackPreview = async (
     trackLocations(slug).beat,
   );
 
-  const payload: TrackPreviewView<BeatVisualizerProps> = {
+  const payload: TrackPreviewView<VisualizerProps> = {
     slug,
     composition: COMPOSITION_CONFIG,
     durationInFrames: secondsToFrames(durationInSeconds),

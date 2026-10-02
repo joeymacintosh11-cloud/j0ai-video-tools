@@ -10,7 +10,7 @@ import {
   CONTENT_LIBRARY_SCHEMA_VERSION,
   parseContentLibrary,
   type ContentLibraryRecord,
-} from "../src/domain/library/contentLibrary.ts";
+} from "../core/domain/library/contentLibrary.ts";
 import {
   appendContentLibraryRecord,
   contentLibraryPath,

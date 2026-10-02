@@ -27,7 +27,7 @@ import {
   parseDeliveryLog,
   selectDeliveryHistory,
   type DeliveryLogEvent,
-} from "../src/domain/delivery/deliveryHistory.ts";
+} from "../core/domain/delivery/deliveryHistory.ts";
 import {
   appendDeliveryLogEvent,
   deliveryLogPath,

@@ -1,8 +1,8 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { DELIVERY_SETTINGS_VERSION } from "../../src/domain/delivery/deliveryPaths.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+import { DELIVERY_SETTINGS_VERSION } from "../../core/domain/delivery/deliveryPaths.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { withFileMutation, writeAtomicFile } from "../tracks/atomicFile.ts";
 import { PROJECT_ROOT } from "../tracks/trackLocations.ts";
 

@@ -6,8 +6,8 @@ import {
   outputRelativePath,
   TRACKS_DIR_NAME,
   trackAssetPaths,
-} from "../../src/domain/tracks/paths.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/tracks/paths.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 
 /**
  * Resolves absolute filesystem paths from the public/-relative conventions in
@@ -20,7 +20,6 @@ export const PROJECT_ROOT = path.join(servicesTracksDir, "..", "..");
 export const PUBLIC_DIR = path.join(PROJECT_ROOT, "public");
 export const TRACKS_DIR = path.join(PUBLIC_DIR, TRACKS_DIR_NAME);
 export const OUT_DIR = path.join(PROJECT_ROOT, "out");
-export const REMOTION_ENTRY_POINT = path.join(PROJECT_ROOT, "src", "index.ts");
 
 export type TrackLocations = {
   readonly trackDir: string;

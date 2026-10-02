@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { DeliveryLogEvent } from "../src/domain/delivery/deliveryHistory.ts";
+import type { DeliveryLogEvent } from "../core/domain/delivery/deliveryHistory.ts";
 import {
   buildLibraryEntries,
   CONTENT_LIBRARY_DEFAULT_LIMIT,
@@ -16,12 +16,12 @@ import {
   summarizeTrackFormats,
   type ContentLibraryRecord,
   type LiveExportFacts,
-} from "../src/domain/library/contentLibrary.ts";
-import { TrackError } from "../src/domain/tracks/errors.ts";
+} from "../core/domain/library/contentLibrary.ts";
+import { TrackError } from "../core/domain/tracks/errors.ts";
 
 /**
  * The content library's pure domain: record shape, parsing, derived status,
- * querying and summaries (src/domain/library/contentLibrary.ts). No
+ * querying and summaries (core/domain/library/contentLibrary.ts). No
  * filesystem — every input is hand-built, so each rule is pinned on its own.
  */
 

@@ -1,7 +1,7 @@
 import {
   PLATFORM_LIST,
   type PlatformId,
-} from "../../src/domain/content/platformProfiles.ts";
+} from "../../core/domain/content/platformProfiles.ts";
 
 /**
  * Which platforms belong to the current Custom Content Package scope.

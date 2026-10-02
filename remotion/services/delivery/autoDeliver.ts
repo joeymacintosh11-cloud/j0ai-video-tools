@@ -1,4 +1,4 @@
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { updateReleaseBundleAfterDelivery } from "./autoReleaseBundle.ts";
 import { deliverExport, type DeliveryOutcome } from "./deliverExport.ts";
 import { readDeliverySettings } from "./deliverySettings.ts";

@@ -1,12 +1,12 @@
-import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
-import { enrichDestinationHealthWithRenderContext } from "../server/services/destinationHealthRenderContext.ts";
+import { scanDestinationHealth } from "../services/workflows/destinationHealth.ts";
+import { enrichDestinationHealthWithRenderContext } from "../services/workflows/destinationHealthRenderContext.ts";
 import { readDeliverySettings } from "../services/delivery/deliverySettings.ts";
-import { formatBundleTimestamp } from "../src/domain/delivery/releaseBundle.ts";
+import { formatBundleTimestamp } from "../core/domain/delivery/releaseBundle.ts";
 import type {
   DestinationFinding,
   DestinationHealthStatus,
-} from "../src/domain/delivery/destinationHealth.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
+} from "../core/domain/delivery/destinationHealth.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import { runCli } from "./cli.ts";
 
 /**

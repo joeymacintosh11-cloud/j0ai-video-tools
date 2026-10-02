@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { handleRequest } from "./app.ts";
-import { renderManager } from "./services/renderManager.ts";
+import { renderManager } from "../services/workflows/renderManager.ts";
 
 /**
  * Local-only API server for the Toshi visualizer.

@@ -8,12 +8,12 @@ import { promisify } from "node:util";
 import test, { type TestContext } from "node:test";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
+import { scanDestinationHealth } from "../services/workflows/destinationHealth.ts";
 import {
   looksLikeManagedExportFile,
   looksLikeManagedTrackFolder,
   managedExportFilename,
-} from "../src/domain/delivery/destinationHealth.ts";
+} from "../core/domain/delivery/destinationHealth.ts";
 import { deliverExport } from "../services/delivery/deliverExport.ts";
 import { deliveryReceiptPath } from "../services/delivery/deliveryReceipt.ts";
 import type { DeliverySettings } from "../services/delivery/deliverySettings.ts";
@@ -22,8 +22,8 @@ import { publishExport } from "../services/render/publishExport.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { trackExportCoverage } from "../services/tracks/exportCoverage.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { fixture } from "./fixtures.mts";
 
 /**
@@ -833,7 +833,7 @@ test("a delivery folder cannot be steered outside the destination root", async (
 
   // The scanner's own defence is real, not merely unreachable: a folder value
   // that skips metadata's validation cannot skip this one too.
-  const { deliveryFolderFor } = await import("../src/domain/delivery/deliveryPaths.ts");
+  const { deliveryFolderFor } = await import("../core/domain/delivery/deliveryPaths.ts");
   assert.throws(() => deliveryFolderFor(f.slug, "../../etc"), { code: "METADATA_INVALID" });
 });
 

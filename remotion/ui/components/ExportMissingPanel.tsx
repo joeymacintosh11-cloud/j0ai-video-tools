@@ -1,10 +1,10 @@
 import {
   STALE_REASON_LABELS,
   type ExportMode,
-} from "../../src/domain/video/exportFreshness.ts";
+} from "../../core/domain/video/exportFreshness.ts";
 import { useEffect, useRef, useState } from "react";
-import type { ExportMissingView } from "../../src/domain/api/views.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+import type { ExportMissingView } from "../../core/domain/api/views.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { ApiRequestError, exportMissing } from "../api/client.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 

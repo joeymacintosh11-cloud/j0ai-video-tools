@@ -3,12 +3,12 @@ import type {
   DeliveryHistoryReconcileView,
   DeliveryHistoryView,
   DeliveryLogEvent,
-} from "../../src/domain/api/views.ts";
-import { DELIVERY_LOG_STATUS_NOTES } from "../../src/domain/delivery/deliveryHistory.ts";
+} from "../../core/domain/api/views.ts";
+import { DELIVERY_LOG_STATUS_NOTES } from "../../core/domain/delivery/deliveryHistory.ts";
 import {
   formatBundleTimestamp,
   formatBytes,
-} from "../../src/domain/delivery/releaseBundle.ts";
+} from "../../core/domain/delivery/releaseBundle.ts";
 import {
   ApiRequestError,
   getDeliveryHistory,

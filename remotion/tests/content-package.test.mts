@@ -8,11 +8,11 @@ import { publishExport } from "../services/render/publishExport.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
 import { metadataRevision } from "../services/tracks/metadataRevision.ts";
 import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import { toTrackDetailView } from "../server/views/trackView.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import { toTrackDetailView } from "../services/workflows/trackView.ts";
 import {
   TrackError,
-} from "../src/domain/tracks/errors.ts";
+} from "../core/domain/tracks/errors.ts";
 import {
   deriveContentPackage,
   formatPackageCopyForClipboard,
@@ -20,14 +20,14 @@ import {
   type ContentPackageInput,
   type ContentPackageOptions,
   type PackageExportEntry,
-} from "../src/domain/content/contentPackage.ts";
+} from "../core/domain/content/contentPackage.ts";
 import {
   assertPlatformId,
   canonicalPlatformOrder,
   platformFilename,
   platformsForPreset,
-} from "../src/domain/content/platformProfiles.ts";
-import { buildPlatformMetadata } from "../src/domain/content/platformMetadata.ts";
+} from "../core/domain/content/platformProfiles.ts";
+import { buildPlatformMetadata } from "../core/domain/content/platformMetadata.ts";
 
 /**
  * The content package: a platform-facing view derived from the same export

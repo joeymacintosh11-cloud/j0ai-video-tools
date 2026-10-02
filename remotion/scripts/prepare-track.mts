@@ -1,4 +1,4 @@
-import { trackDirLabel } from "../src/domain/tracks/paths.ts";
+import { trackDirLabel } from "../core/domain/tracks/paths.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
 import { describeAnalysis, printMetadataSummary, runCli } from "./cli.ts";
 

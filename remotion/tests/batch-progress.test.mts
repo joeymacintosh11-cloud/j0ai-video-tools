@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deriveContentPackage, type ContentPackageView } from "../src/domain/content/contentPackage.ts";
-import { deriveBatchContentPackage, replaceBatchTrackPackage } from "../src/domain/content/contentPackageBatch.ts";
-import type { ContentPackageBatchJobReferenceView, RenderJobView } from "../src/domain/api/views.ts";
+import { deriveContentPackage, type ContentPackageView } from "../core/domain/content/contentPackage.ts";
+import { deriveBatchContentPackage, replaceBatchTrackPackage } from "../core/domain/content/contentPackageBatch.ts";
+import type { ContentPackageBatchJobReferenceView, RenderJobView } from "../core/domain/api/views.ts";
 import { deriveLiveBatchProgress } from "../ui/components/batchProgressModel.ts";
 
 const pkg = (slug: string, statuses: readonly ("current" | "missing" | "stale")[], mode: "intent" | "full" = "full"): ContentPackageView =>

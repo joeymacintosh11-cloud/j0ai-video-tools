@@ -1,25 +1,25 @@
 import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { trackIssue, type TrackIssue } from "../../src/domain/tracks/errors.ts";
+import { trackIssue, type TrackIssue } from "../../core/domain/tracks/errors.ts";
 import {
   coerceMetadataDraft,
   isDraftMetadata,
   validateTrackMetadata,
-} from "../../src/domain/tracks/metadata.ts";
+} from "../../core/domain/tracks/metadata.ts";
 import {
   publicLabel,
   trackAssetPaths,
-} from "../../src/domain/tracks/paths.ts";
+} from "../../core/domain/tracks/paths.ts";
 import type {
   TrackAssetFacts,
   TrackInspection,
-} from "../../src/domain/tracks/types.ts";
+} from "../../core/domain/tracks/types.ts";
 import {
   buildValidationResult,
   collectTrackWarnings,
   deriveTrackStatus,
   validateTrackAssets,
-} from "../../src/domain/tracks/validation.ts";
+} from "../../core/domain/tracks/validation.ts";
 import { renderedPresetIds } from "./exportCoverage.ts";
 import { metadataRevision } from "./metadataRevision.ts";
 import { trackLocations } from "./trackLocations.ts";

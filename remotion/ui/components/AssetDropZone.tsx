@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { TrackAssetKind } from "../../src/domain/api/views.ts";
+import type { TrackAssetKind } from "../../core/domain/api/views.ts";
 import { ApiRequestError, uploadTrackAsset } from "../api/client.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 

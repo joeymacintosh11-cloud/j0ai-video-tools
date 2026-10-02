@@ -29,7 +29,7 @@ export class Worker extends EventEmitter {
 }
 
 export type Manager =
-  typeof import("../server/services/renderManager.ts").renderManager;
+  typeof import("../services/workflows/renderManager.ts").renderManager;
 
 /**
  * A render manager with fork() replaced, on a fresh module instance.
@@ -53,7 +53,7 @@ export const manager = async (
   });
 
   // renderManager journals every lifecycle transition (see
-  // server/services/renderJournal.ts). Redirecting it to a throwaway temp
+  // services/workflows/renderJournal.ts). Redirecting it to a throwaway temp
   // directory means these tests — which use a fake worker and never touch a
   // real render — never write into this repository's real
   // out/.render-journal/, and never race each other over a shared file.
@@ -62,14 +62,14 @@ export const manager = async (
   process.env.TOSHI_RENDER_JOURNAL_DIR = journalDir;
   t.after(async () => {
     // renderManager fires journal writes without awaiting them (deliberately
-    // — see server/services/renderJournal.ts), so one can still be mid-flight
+    // — see services/workflows/renderJournal.ts), so one can still be mid-flight
     // when the test function itself returns. Waiting for the journal to go
     // idle *before* touching env or the directory is what makes this
     // deterministic: a fixed delay was tried first and was not reliable — an
     // in-flight write's own `mkdirSync(root, { recursive: true })` would
     // silently recreate the directory this was about to remove, once, right
     // after removal, with no error on either side.
-    const { waitForRenderJournalIdle } = await import("../server/services/renderJournal.ts");
+    const { waitForRenderJournalIdle } = await import("../services/workflows/renderJournal.ts");
     await waitForRenderJournalIdle();
     if (previousJournalDir === undefined) delete process.env.TOSHI_RENDER_JOURNAL_DIR;
     else process.env.TOSHI_RENDER_JOURNAL_DIR = previousJournalDir;
@@ -78,7 +78,7 @@ export const manager = async (
 
   const module = (await import(
     new URL(
-      `../server/services/renderManager.ts?test=${randomUUID()}`,
+      `../services/workflows/renderManager.ts?test=${randomUUID()}`,
       import.meta.url,
     ).href
   )) as { renderManager: Manager };

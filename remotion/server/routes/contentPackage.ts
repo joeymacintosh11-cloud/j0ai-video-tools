@@ -2,21 +2,21 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   deriveContentPackage,
   type ContentPackageInput,
-} from "../../src/domain/content/contentPackage.ts";
-import { assertPlatformId, type PlatformId } from "../../src/domain/content/platformProfiles.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+} from "../../core/domain/content/contentPackage.ts";
+import { assertPlatformId, type PlatformId } from "../../core/domain/content/platformProfiles.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import { readContentMetadataSettings } from "../../services/content/metadataTemplateSettings.ts";
 import { inspectTrack } from "../../services/tracks/inspectTrack.ts";
 import { sendOk } from "../http/json.ts";
-import { renderManager } from "../services/renderManager.ts";
-import { deliveryRootForView } from "./tracks.ts";
-import { toTrackDetailView } from "../views/trackView.ts";
+import { renderManager } from "../../services/workflows/renderManager.ts";
+import { deliveryRootForView } from "../../services/workflows/trackView.ts";
+import { toTrackDetailView } from "../../services/workflows/trackView.ts";
 
 /**
  * GET /api/content-package?track=<slug>&mode=intent|full&platform=<id>...
  *
- * A read-only, derived view — see src/domain/content/contentPackage.ts. It
+ * A read-only, derived view — see core/domain/content/contentPackage.ts. It
  * reuses exactly the state `GET /api/tracks/:slug` already gathers (export
  * coverage/freshness, queue state, delivery state) rather than scanning
  * anything a second time, so this costs one track inspection, not a new

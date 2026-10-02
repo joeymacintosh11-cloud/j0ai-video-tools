@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { TrackDetailView } from "../../src/domain/api/views.ts";
+import type { TrackDetailView } from "../../core/domain/api/views.ts";
 import { ApiRequestError, prepareTrack, validateTrack } from "../api/client.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 

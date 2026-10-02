@@ -34,18 +34,18 @@ import { trackOutputLocation } from "../services/tracks/trackLocations.ts";
 import {
   planDeliveries,
   deliverPlanned,
-} from "../server/services/deliveryPlan.ts";
+} from "../services/workflows/deliveryPlan.ts";
 import {
   assertDeliveryFolder,
   deliveryRelativePath,
-} from "../src/domain/delivery/deliveryPaths.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/delivery/deliveryPaths.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { stageDelivery } from "../services/delivery/stageDelivery.ts";
 import { deliveryStateForTarget } from "../services/delivery/deliverExport.ts";
 import { acquireRenderTargetLock, inspectRenderTargetLock } from "../services/render/renderLock.ts";
 import { inspectTrack } from "../services/tracks/inspectTrack.ts";
-import { toTrackSummaryView } from "../server/views/trackView.ts";
+import { toTrackSummaryView } from "../services/workflows/trackView.ts";
 import { fixture } from "./fixtures.mts";
 
 /**

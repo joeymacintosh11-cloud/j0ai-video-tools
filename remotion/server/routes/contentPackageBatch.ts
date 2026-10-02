@@ -4,11 +4,11 @@ import type {
   ContentPackageBatchPlanView,
   ContentPackagePlannedActionView,
   ContentPackageBatchJobReferenceView,
-} from "../../src/domain/api/views.ts";
+} from "../../core/domain/api/views.ts";
 import {
   deriveBatchContentPackage,
   type ContentPackagePlannedAction,
-} from "../../src/domain/content/contentPackageBatch.ts";
+} from "../../core/domain/content/contentPackageBatch.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
 import {
   buildContentPackagesForSlugs,
@@ -19,9 +19,9 @@ import {
   readBatchPlatforms,
   readBatchTracks,
   toRenderTargetsFromPlan,
-} from "../services/contentPackagePlan.ts";
-import { renderManager } from "../services/renderManager.ts";
-import type { RenderBatchEvent } from "../services/renderManager.ts";
+} from "../../services/workflows/contentPackagePlan.ts";
+import { renderManager } from "../../services/workflows/renderManager.ts";
+import type { RenderBatchEvent } from "../../services/workflows/renderManager.ts";
 
 /**
  * Batch Content Package Generation: select several tracks, inspect their

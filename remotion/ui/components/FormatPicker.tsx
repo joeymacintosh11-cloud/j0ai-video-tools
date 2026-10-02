@@ -1,7 +1,7 @@
 import {
   RENDER_PRESET_LIST,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 
 /**
  * Which export formats to render.

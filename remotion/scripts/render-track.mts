@@ -1,10 +1,11 @@
-import { trackDirLabel } from "../src/domain/tracks/paths.ts";
+import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.mts";
+import { trackDirLabel } from "../core/domain/tracks/paths.ts";
 import {
   assertRenderPresetId,
   RENDER_PRESET_IDS,
   renderPreset,
   type RenderPresetId,
-} from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/video/renderPresets.ts";
 import {
   COMPOSITION_ID,
   renderTrackVideo,
@@ -92,6 +93,7 @@ runCli("rendering track", async () => {
     console.log(`\n→ ${preset.label} (${preset.width}x${preset.height})`);
 
     const { outputLabel } = await renderTrackVideo({
+      engine: remotionRenderEngine,
       slug,
       props,
       onRecorded: printLibraryOutcome,

@@ -3,9 +3,9 @@ import {
   releaseRenderTargetLock,
   RENDER_LOCK_DIR,
 } from "../services/render/renderLock.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
-import { assertRenderPresetId } from "../src/domain/video/renderPresets.ts";
-import { assertValidSlug } from "../src/domain/tracks/slug.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
+import { assertRenderPresetId } from "../core/domain/video/renderPresets.ts";
+import { assertValidSlug } from "../core/domain/tracks/slug.ts";
 import { runCli } from "./cli.ts";
 
 /**

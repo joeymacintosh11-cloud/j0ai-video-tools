@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_RENDER_PRESET_ID,
   type RenderPresetId,
-} from "../src/domain/video/renderPresets.ts";
-import type { ContentPackageBatchApplyView, DestinationHealthView } from "../src/domain/api/views.ts";
-import { PLATFORM_LIST, type PlatformId } from "../src/domain/content/platformProfiles.ts";
+} from "../core/domain/video/renderPresets.ts";
+import type { ContentPackageBatchApplyView, DestinationHealthView } from "../core/domain/api/views.ts";
+import { PLATFORM_LIST, type PlatformId } from "../core/domain/content/platformProfiles.ts";
 import {
   createRenderBatch,
   getContentMetadataSettings,

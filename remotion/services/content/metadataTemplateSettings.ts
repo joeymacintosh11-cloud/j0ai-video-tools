@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import {
   applyMetadataTemplatesResetPatch,
   assertNoTemplateProblems,
@@ -10,7 +10,7 @@ import {
   parseMetadataTemplatesResetPatch,
   type MetadataTemplatesResetPatch,
   type PartialMetadataTemplates,
-} from "../../src/domain/content/metadataTemplates.ts";
+} from "../../core/domain/content/metadataTemplates.ts";
 import { PROJECT_ROOT } from "../tracks/trackLocations.ts";
 import { withFileMutation, writeAtomicFile } from "../tracks/atomicFile.ts";
 

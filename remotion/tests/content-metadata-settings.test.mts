@@ -9,7 +9,7 @@ import {
   readContentMetadataSettings,
   writeContentMetadataSettingsPatch,
 } from "../services/content/metadataTemplateSettings.ts";
-import { TrackError } from "../src/domain/tracks/errors.ts";
+import { TrackError } from "../core/domain/tracks/errors.ts";
 
 /**
  * The global content-metadata settings file, tested entirely against a

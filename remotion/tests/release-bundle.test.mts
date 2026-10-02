@@ -28,9 +28,9 @@ import {
   RELEASE_JSON_FILENAME,
   RELEASE_MARKDOWN_FILENAME,
   type ReleaseBundle,
-} from "../src/domain/delivery/releaseBundle.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/delivery/releaseBundle.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { fixture } from "./fixtures.mts";
 
 /**
@@ -722,7 +722,7 @@ test("neither file is ever observed partially written", async (t) => {
 
 test("a catalogue run writes only what is missing or outdated", async (t) => {
   const { planReleaseBundles, generatePlannedBundles } = await import(
-    "../server/services/releaseBundlePlan.ts"
+    "../services/workflows/releaseBundlePlan.ts"
   );
   const settled = await setup(t, { exportPresets: ["youtube-16x9"] });
   const fresh = await setup(t, { exportPresets: ["youtube-16x9"] });
@@ -773,7 +773,7 @@ test("a catalogue run writes only what is missing or outdated", async (t) => {
 
 test("one track failing does not stop the rest of the catalogue", async (t) => {
   const { planReleaseBundles, generatePlannedBundles } = await import(
-    "../server/services/releaseBundlePlan.ts"
+    "../services/workflows/releaseBundlePlan.ts"
   );
   const broken = await setup(t, { exportPresets: ["youtube-16x9"] });
   const fine = await setup(t, { exportPresets: ["youtube-16x9"] });
@@ -810,7 +810,7 @@ test("one track failing does not stop the rest of the catalogue", async (t) => {
 
 test("a track with no destination is set aside, not counted as work", async (t) => {
   const { planReleaseBundles } = await import(
-    "../server/services/releaseBundlePlan.ts"
+    "../services/workflows/releaseBundlePlan.ts"
   );
   const f = await setup(t);
 
@@ -831,7 +831,7 @@ test("a track with no destination is set aside, not counted as work", async (t) 
 
 test("a catalogue run covers every track and contains what it cannot describe", async (t) => {
   const { planReleaseBundles } = await import(
-    "../server/services/releaseBundlePlan.ts"
+    "../services/workflows/releaseBundlePlan.ts"
   );
   const ready = await setup(t, { exportPresets: ["youtube-16x9"] });
   const root = await destination(t);

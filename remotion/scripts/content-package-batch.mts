@@ -1,20 +1,21 @@
+import { remotionRenderEngine } from "../adapters/remotion/remotionRenderEngine.mts";
 import {
   deriveBatchContentPackage,
   planContentPackageBatch,
   type BatchContentPackageView,
   type ContentPackageBatchPlan,
-} from "../src/domain/content/contentPackageBatch.ts";
-import { assertPlatformId, type PlatformId } from "../src/domain/content/platformProfiles.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
+} from "../core/domain/content/contentPackageBatch.ts";
+import { assertPlatformId, type PlatformId } from "../core/domain/content/platformProfiles.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import {
   buildContentPackagesForSlugs,
   loadContentPackageBatchContext,
   namedBatchSlugs,
-} from "../server/services/contentPackagePlan.ts";
+} from "../services/workflows/contentPackagePlan.ts";
 import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
 import { listTracks } from "../services/tracks/listTracks.ts";
-import type { BeatVisualizerProps } from "../src/BeatVisualizer/BeatVisualizer.ts";
+import type { VisualizerProps } from "../core/domain/video/visualizerProps.ts";
 import { runCli, printLibraryOutcome } from "./cli.ts";
 
 /**
@@ -227,7 +228,7 @@ runCli("inspecting content package batch", async () => {
 
   // One preparation per track, reused by each of its own selected formats —
   // exactly render-missing.mts's own memoization, extended across tracks.
-  const prepared = new Map<string, BeatVisualizerProps>();
+  const prepared = new Map<string, VisualizerProps>();
 
   for (const [index, action] of plan.renderable.entries()) {
     let props = prepared.get(action.slug);
@@ -244,6 +245,7 @@ runCli("inspecting content package batch", async () => {
     let lastLoggedPercentage = -1;
 
     const { outputLabel } = await renderTrackVideo({
+      engine: remotionRenderEngine,
       slug: action.slug,
       props,
       onRecorded: printLibraryOutcome,

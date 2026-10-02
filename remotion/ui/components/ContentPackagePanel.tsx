@@ -6,20 +6,20 @@ import {
   type ContentPackageInput,
   type ContentPackageMode,
   type ContentPackageStatus,
-} from "../../src/domain/content/contentPackage.ts";
+} from "../../core/domain/content/contentPackage.ts";
 import {
   derivePublishReadiness,
   type PublishPackageStatus,
   type PublishPlatformEntry,
-} from "../../src/domain/content/publishReadiness.ts";
-import { initialCustomPlatforms } from "../../src/domain/content/packageScope.ts";
-import { PLATFORM_LIST, type PlatformId } from "../../src/domain/content/platformProfiles.ts";
-import { STALE_REASON_LABELS } from "../../src/domain/video/exportFreshness.ts";
-import { canonicalPresetOrder } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/content/publishReadiness.ts";
+import { initialCustomPlatforms } from "../../core/domain/content/packageScope.ts";
+import { PLATFORM_LIST, type PlatformId } from "../../core/domain/content/platformProfiles.ts";
+import { STALE_REASON_LABELS } from "../../core/domain/video/exportFreshness.ts";
+import { canonicalPresetOrder } from "../../core/domain/video/renderPresets.ts";
 import type {
   PartialMetadataTemplates,
   TrackDetailView,
-} from "../../src/domain/api/views.ts";
+} from "../../core/domain/api/views.ts";
 import { copyToClipboard } from "../api/clipboard.ts";
 import { revealTrackOutput } from "../api/client.ts";
 import { DeliverPanel } from "./DeliverPanel.tsx";

@@ -205,7 +205,7 @@ test("a spawn/IPC error's stack trace reaches the live view but never the durabl
   // this is the one surface RenderJobError's own `details` field exists for.
   assert.ok(live.error?.details);
 
-  const { waitForRenderJournalIdle } = await import("../server/services/renderJournal.ts");
+  const { waitForRenderJournalIdle } = await import("../services/workflows/renderJournal.ts");
   await waitForRenderJournalIdle();
   const { readRenderJournal } = await import("../services/render/renderJournalLog.ts");
   const read = readRenderJournal();

@@ -5,10 +5,10 @@ import {
   formatPackageCopyForClipboard,
   type ContentPackageInput,
   type PackageExportEntry,
-} from "../src/domain/content/contentPackage.ts";
-import { derivePublishReadiness } from "../src/domain/content/publishReadiness.ts";
-import { initialCustomPlatforms } from "../src/domain/content/packageScope.ts";
-import { PLATFORM_LIST, type PlatformId } from "../src/domain/content/platformProfiles.ts";
+} from "../core/domain/content/contentPackage.ts";
+import { derivePublishReadiness } from "../core/domain/content/publishReadiness.ts";
+import { initialCustomPlatforms } from "../core/domain/content/packageScope.ts";
+import { PLATFORM_LIST, type PlatformId } from "../core/domain/content/platformProfiles.ts";
 
 /**
  * The Single-Track Custom Platforms Picker: making the Content Package's
@@ -17,7 +17,7 @@ import { PLATFORM_LIST, type PlatformId } from "../src/domain/content/platformPr
  * ui/components/PlatformPicker.tsx).
  *
  * This file covers only what is genuinely new for this milestone:
- *   - initialCustomPlatforms (src/domain/content/packageScope.ts), the pure
+ *   - initialCustomPlatforms (core/domain/content/packageScope.ts), the pure
  *     rule for what Custom starts checked with the first time an operator
  *     switches into it.
  *   - that a Custom scope excludes/includes exactly the platforms it names

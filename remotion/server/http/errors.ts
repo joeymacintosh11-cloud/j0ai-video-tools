@@ -3,7 +3,7 @@ import {
   TrackError,
   type TrackErrorCode,
   type TrackIssue,
-} from "../../src/domain/tracks/errors.ts";
+} from "../../core/domain/tracks/errors.ts";
 import { sendJson } from "./json.ts";
 
 const STATUS_BY_CODE: Record<TrackErrorCode, number> = {

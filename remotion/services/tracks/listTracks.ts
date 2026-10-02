@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import type { TrackInspection } from "../../src/domain/tracks/types.ts";
+import type { TrackInspection } from "../../core/domain/tracks/types.ts";
 import { inspectTrack } from "./inspectTrack.ts";
 import { TRACKS_DIR } from "./trackLocations.ts";
 

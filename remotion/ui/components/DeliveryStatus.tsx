@@ -1,8 +1,8 @@
 import {
   DELIVERY_REASON_LABELS,
   type DeliveryStatus as Status,
-} from "../../src/domain/delivery/deliveryPaths.ts";
-import type { RenderOutputView } from "../../src/domain/api/views.ts";
+} from "../../core/domain/delivery/deliveryPaths.ts";
+import type { RenderOutputView } from "../../core/domain/api/views.ts";
 
 /**
  * Where each export stands at the destination.

@@ -3,14 +3,14 @@ import {
   deliveryRelativePath,
   type DeliveryReason,
   type DeliveryStatus,
-} from "../../src/domain/delivery/deliveryPaths.ts";
-import { TrackError } from "../../src/domain/tracks/errors.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+} from "../../core/domain/delivery/deliveryPaths.ts";
+import { TrackError } from "../../core/domain/tracks/errors.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import {
   assertRenderPresetId,
   RENDER_PRESETS,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { trackExportCoverage } from "../tracks/exportCoverage.ts";
 import { outputIdentity } from "../tracks/exportManifest.ts";
 import { inspectTrack } from "../tracks/inspectTrack.ts";
@@ -18,7 +18,7 @@ import { withRenderTargetLock, type RenderTargetLock } from "../render/renderLoc
 import { assertDeliveryDestination } from "./deliveryDestination.ts";
 import { recordDelivery } from "./deliveryHistory.ts";
 import { stageDelivery } from "./stageDelivery.ts";
-import { DELIVERY_RECEIPT_VERSION } from "../../src/domain/delivery/deliveryPaths.ts";
+import { DELIVERY_RECEIPT_VERSION } from "../../core/domain/delivery/deliveryPaths.ts";
 import {
   deliveryStateFor,
   readDeliveryReceipt,

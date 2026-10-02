@@ -6,7 +6,7 @@ import {
   appendDeliveryLogEvent,
   repairDeliveryLogTail,
 } from "../services/delivery/deliveryHistoryLog.ts";
-import { DELIVERY_LOG_SCHEMA_VERSION } from "../src/domain/delivery/deliveryHistory.ts";
+import { DELIVERY_LOG_SCHEMA_VERSION } from "../core/domain/delivery/deliveryHistory.ts";
 
 /**
  * A separate process that contends for the delivery log's append lock.

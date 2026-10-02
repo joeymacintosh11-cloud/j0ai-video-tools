@@ -2,15 +2,15 @@ import {
   classifyRecoveredJob,
   isSeriousJournalDamage,
   reconstructRenderJournal,
-} from "../src/domain/render/renderJournal.ts";
+} from "../core/domain/render/renderJournal.ts";
 import {
   compactRenderJournal,
   readRenderJournal,
   RENDER_JOURNAL_DIR,
   repairRenderJournalTail,
 } from "../services/render/renderJournalLog.ts";
-import { RENDER_MANAGER_BOOT_ID } from "../server/services/renderJournal.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
+import { RENDER_MANAGER_BOOT_ID } from "../services/workflows/renderJournal.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import { runCli } from "./cli.ts";
 
 /**

@@ -1,13 +1,13 @@
 import {
   applyDestinationFixPlan,
   planDestinationFix,
-} from "../server/services/destinationFixPlan.ts";
-import { renderManager } from "../server/services/renderManager.ts";
-import { isTerminalStatus } from "../server/types.ts";
+} from "../services/workflows/destinationFixPlan.ts";
+import { renderManager } from "../services/workflows/renderManager.ts";
+import { isTerminalStatus } from "../services/workflows/renderJobTypes.ts";
 import { readDeliverySettings } from "../services/delivery/deliverySettings.ts";
-import type { RemediationAction, RemediationActionResult } from "../src/domain/delivery/destinationFixPlan.ts";
-import type { DestinationHealthStatus } from "../src/domain/delivery/destinationHealth.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
+import type { RemediationAction, RemediationActionResult } from "../core/domain/delivery/destinationFixPlan.ts";
+import type { DestinationHealthStatus } from "../core/domain/delivery/destinationHealth.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import { runCli } from "./cli.ts";
 
 /**

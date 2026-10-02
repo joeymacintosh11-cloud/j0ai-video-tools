@@ -2,8 +2,8 @@ import type {
   BatchContentPackageView,
   ContentPackageBatchJobReferenceView,
   RenderJobView,
-} from "../../src/domain/api/views.ts";
-import type { ContentPackagePlatformEntry } from "../../src/domain/content/contentPackage.ts";
+} from "../../core/domain/api/views.ts";
+import type { ContentPackagePlatformEntry } from "../../core/domain/content/contentPackage.ts";
 
 export type LiveTargetState =
   | "ready" | "missing" | "stale" | "blocked" | "queued" | "preparing" | "rendering" | "cancelling" | "checking";

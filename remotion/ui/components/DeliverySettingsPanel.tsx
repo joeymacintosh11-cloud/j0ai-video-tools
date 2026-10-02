@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { DeliverySettingsView } from "../../src/domain/api/views.ts";
+import type { DeliverySettingsView } from "../../core/domain/api/views.ts";
 import {
   ApiRequestError,
   revealDelivery,

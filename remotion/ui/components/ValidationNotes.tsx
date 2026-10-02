@@ -1,4 +1,4 @@
-import type { ValidationResult } from "../../src/domain/tracks/types.ts";
+import type { ValidationResult } from "../../core/domain/tracks/types.ts";
 
 /**
  * Renders the server's own validation result verbatim.

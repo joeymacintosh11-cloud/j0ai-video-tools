@@ -8,8 +8,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after, type TestContext } from "node:test";
 import { handleRequest } from "../server/app.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { contentLibraryPath, readContentLibrary } from "../services/library/contentLibraryLog.ts";
 import { publishRecordedExport, trackSnapshotFromProps } from "../services/library/recordExport.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
@@ -158,7 +158,7 @@ test("a superseded version refuses to re-export, and changes nothing", async (t)
 test("re-exporting the current version queues exactly one normal render, and never touches the original record", async (t) => {
   const childProcess = (await import("node:child_process")).default;
   const { Worker } = await import("./managerHarness.mts");
-  const { renderManager } = await import("../server/services/renderManager.ts");
+  const { renderManager } = await import("../services/workflows/renderManager.ts");
   const worker = new Worker();
   worker.pid = 4242;
   t.mock.method(childProcess, "fork", () => worker);

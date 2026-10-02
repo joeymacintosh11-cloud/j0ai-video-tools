@@ -2,18 +2,18 @@ import {
   deliverPlanned,
   planDeliveries,
   type DeliveryPlan,
-} from "../server/services/deliveryPlan.ts";
+} from "../services/workflows/deliveryPlan.ts";
 import {
   DELIVERY_SETTINGS_FILE,
   readDeliverySettings,
   writeDeliverySettings,
 } from "../services/delivery/deliverySettings.ts";
-import { TrackError, trackIssue } from "../src/domain/tracks/errors.ts";
+import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import {
   assertRenderPresetId,
   RENDER_PRESET_IDS,
   type RenderPresetId,
-} from "../src/domain/video/renderPresets.ts";
+} from "../core/domain/video/renderPresets.ts";
 import { runCli } from "./cli.ts";
 
 /**

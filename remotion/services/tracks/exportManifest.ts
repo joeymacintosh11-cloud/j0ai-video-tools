@@ -8,16 +8,16 @@ import {
   statSync,
 } from "node:fs";
 import path from "node:path";
-import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
 import {
   EXPORT_MANIFEST_VERSION,
   VISUALIZER_VERSION,
   type StaleReason,
-} from "../../src/domain/video/exportFreshness.ts";
+} from "../../core/domain/video/exportFreshness.ts";
 import {
   renderPreset,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { PUBLIC_DIR } from "./trackLocations.ts";
 
 export type ExportInputs = Readonly<
@@ -88,7 +88,7 @@ export const fileContentHash = (file: string): string => {
 
 /** publicRoot is the immutable bundle copy when recording a real render. */
 export const fingerprintInputs = (
-  props: BeatVisualizerProps,
+  props: VisualizerProps,
   presetId: RenderPresetId,
   publicRoot = PUBLIC_DIR,
 ): ExportInputs => {

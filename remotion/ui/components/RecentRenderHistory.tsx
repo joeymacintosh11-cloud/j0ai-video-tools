@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
-import type { RenderHistoryJobView, RenderHistoryView } from "../../src/domain/api/views.ts";
-import { formatRecentRenderTimestamp } from "../../src/domain/render/renderJournal.ts";
-import { RENDER_PRESETS } from "../../src/domain/video/renderPresets.ts";
+import type { RenderHistoryJobView, RenderHistoryView } from "../../core/domain/api/views.ts";
+import { formatRecentRenderTimestamp } from "../../core/domain/render/renderJournal.ts";
+import { RENDER_PRESETS } from "../../core/domain/video/renderPresets.ts";
 import { getRenderHistory } from "../api/client.ts";
 
 /**
  * "What happened to this track's most recent renders?" — a small,
  * observation-only surface over the durable render journal
- * (src/domain/render/renderJournal.ts), for one track's own TrackDetail.
+ * (core/domain/render/renderJournal.ts), for one track's own TrackDetail.
  *
  * Deliberately narrow, per the milestone brief this implements: no history
  * page, no job management, no cancel/retry, nothing that could be mistaken

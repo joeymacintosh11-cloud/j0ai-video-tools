@@ -4,9 +4,9 @@ import type {
   DeliveryRevealView,
   DeliverySettingsView,
   DeliveryTargetView,
-} from "../../src/domain/api/views.ts";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/api/views.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { revealDeliveryDestination } from "../../services/delivery/revealDelivery.ts";
 import {
   DELIVERY_SETTINGS_FILE,
@@ -15,7 +15,7 @@ import {
   writeDeliverySettings,
 } from "../../services/delivery/deliverySettings.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
-import { deliverPlanned, planDeliveries } from "../services/deliveryPlan.ts";
+import { deliverPlanned, planDeliveries } from "../../services/workflows/deliveryPlan.ts";
 
 /**
  * Local delivery: settings, and copying finished exports to them.

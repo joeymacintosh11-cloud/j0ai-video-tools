@@ -1,7 +1,7 @@
 /*
  * Toshi brand tokens for the local app.
  *
- * The palette mirrors src/BeatVisualizer/theme.ts, which stays the brand's
+ * The palette mirrors adapters/remotion/BeatVisualizer/theme.ts, which stays the brand's
  * source of truth for the video itself. It is restated here as CSS variables
  * rather than imported, so the UI does not pull the composition's font-loading
  * side effects into its bundle. If the palette changes there, change it here.

@@ -3,8 +3,8 @@ import type {
   DestinationFinding,
   DestinationHealthStatus,
   DestinationHealthView,
-} from "../../src/domain/api/views.ts";
-import { formatBundleTimestamp } from "../../src/domain/delivery/releaseBundle.ts";
+} from "../../core/domain/api/views.ts";
+import { formatBundleTimestamp } from "../../core/domain/delivery/releaseBundle.ts";
 import { ApiRequestError, scanDestinationHealth } from "../api/client.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 

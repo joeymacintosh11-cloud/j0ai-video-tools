@@ -1,5 +1,5 @@
 import { fork } from "node:child_process";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { directoryIdentity } from "./deliveryDestination.ts";
 
 /**

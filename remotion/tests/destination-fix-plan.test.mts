@@ -9,18 +9,18 @@ import test, { type TestContext } from "node:test";
 import {
   applyDestinationFixPlan,
   planDestinationFix,
-} from "../server/services/destinationFixPlan.ts";
+} from "../services/workflows/destinationFixPlan.ts";
 import { deliverExport } from "../services/delivery/deliverExport.ts";
 import type { DeliverySettings } from "../services/delivery/deliverySettings.ts";
 import { generateReleaseBundle, releaseBundlePaths } from "../services/delivery/releaseBundle.ts";
-import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
+import { scanDestinationHealth } from "../services/workflows/destinationHealth.ts";
 import { publishExport } from "../services/render/publishExport.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { trackExportCoverage } from "../services/tracks/exportCoverage.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
 import { trackOutputLocation } from "../services/tracks/trackLocations.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { fixture } from "./fixtures.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
 

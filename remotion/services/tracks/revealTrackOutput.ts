@@ -1,13 +1,13 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
-import { TrackError, trackIssue } from "../../src/domain/tracks/errors.ts";
-import { legacyOutputLabel } from "../../src/domain/tracks/paths.ts";
-import { assertValidSlug } from "../../src/domain/tracks/slug.ts";
+import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
+import { legacyOutputLabel } from "../../core/domain/tracks/paths.ts";
+import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import {
   assertRenderPresetId,
   type RenderPresetId,
-} from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/video/renderPresets.ts";
 import { trackLocations, trackOutputLocation } from "./trackLocations.ts";
 
 const run = promisify(execFile);

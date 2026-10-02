@@ -8,18 +8,18 @@ import { tmpdir } from "node:os";
 import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
-import { scanDestinationHealth } from "../server/services/destinationHealth.ts";
-import { enrichDestinationHealthWithRenderContext } from "../server/services/destinationHealthRenderContext.ts";
-import { planDestinationFix } from "../server/services/destinationFixPlan.ts";
-import { RENDER_MANAGER_BOOT_ID } from "../server/services/renderJournal.ts";
-import type { DestinationFinding } from "../src/domain/delivery/destinationHealth.ts";
+import { scanDestinationHealth } from "../services/workflows/destinationHealth.ts";
+import { enrichDestinationHealthWithRenderContext } from "../services/workflows/destinationHealthRenderContext.ts";
+import { planDestinationFix } from "../services/workflows/destinationFixPlan.ts";
+import { RENDER_MANAGER_BOOT_ID } from "../services/workflows/renderJournal.ts";
+import type { DestinationFinding } from "../core/domain/delivery/destinationHealth.ts";
 import {
   buildMostRecentJobIndex,
   reconstructRenderJournal,
   RENDER_JOURNAL_SCHEMA_VERSION,
   targetKey,
   type RenderJournalEvent,
-} from "../src/domain/render/renderJournal.ts";
+} from "../core/domain/render/renderJournal.ts";
 import { deliverExport } from "../services/delivery/deliverExport.ts";
 import type { DeliverySettings } from "../services/delivery/deliverySettings.ts";
 import { publishExport } from "../services/render/publishExport.ts";
@@ -30,8 +30,8 @@ import {
 } from "../services/render/renderJournalLog.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
-import { parseTrackMetadata } from "../src/domain/tracks/metadata.ts";
-import type { RenderPresetId } from "../src/domain/video/renderPresets.ts";
+import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
 import { fixture } from "./fixtures.mts";
 import { Worker } from "./managerHarness.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
@@ -339,7 +339,7 @@ test("a live job for the exact target: no historical context, even with an older
     syncBuiltinESMExports();
   });
 
-  const { renderManager } = await import("../server/services/renderManager.ts");
+  const { renderManager } = await import("../services/workflows/renderManager.ts");
   renderManager.startRender(f.slug, "youtube-16x9");
   worker.emit("message", { type: "status", status: "rendering" });
   await new Promise((resolve) => setImmediate(resolve));

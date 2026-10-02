@@ -5,9 +5,9 @@ import {
   type DeliveryLogEvent,
   type DeliveryLogEventSource,
   type DeliveryLogTrack,
-} from "../../src/domain/delivery/deliveryHistory.ts";
-import type { TrackMetadata } from "../../src/domain/tracks/types.ts";
-import { RENDER_PRESETS } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/delivery/deliveryHistory.ts";
+import type { TrackMetadata } from "../../core/domain/tracks/types.ts";
+import { RENDER_PRESETS } from "../../core/domain/video/renderPresets.ts";
 import { appendDeliveryLogEvent } from "./deliveryHistoryLog.ts";
 import type { DeliveryReceipt } from "./deliveryReceipt.ts";
 

@@ -1,10 +1,10 @@
-import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
 import {
   BRAND_ASSET_PATHS,
   trackAssetPaths,
-} from "../../src/domain/tracks/paths.ts";
-import type { TrackMetadata } from "../../src/domain/tracks/types.ts";
-import type { RenderPresetId } from "../../src/domain/video/renderPresets.ts";
+} from "../../core/domain/tracks/paths.ts";
+import type { TrackMetadata } from "../../core/domain/tracks/types.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 
 export type BuildTrackPropsInput = {
   readonly slug: string;
@@ -30,7 +30,7 @@ export const buildTrackProps = ({
   metadata,
   analysisAvailable,
   presetId,
-}: BuildTrackPropsInput): BeatVisualizerProps => {
+}: BuildTrackPropsInput): VisualizerProps => {
   const paths = trackAssetPaths(slug);
 
   return {
