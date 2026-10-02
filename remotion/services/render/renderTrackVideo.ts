@@ -13,7 +13,7 @@ import type { AppendContentLibraryResult } from "../library/contentLibraryLog.ts
 import { publishRecordedExport, trackSnapshotFromProps } from "../library/recordExport.ts";
 import { fingerprintInputs } from "../tracks/exportManifest.ts";
 import { withRenderTargetLock, type RenderTargetLock } from "./renderLock.ts";
-import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
 import { COMPOSITION_ID } from "../../core/domain/video/compositionConfig.ts";
 import {
   DEFAULT_RENDER_PRESET_ID,
@@ -46,7 +46,7 @@ export type RenderResolvedInfo = {
 
 export type RenderTrackVideoOptions = {
   readonly slug: string;
-  readonly props: BeatVisualizerProps;
+  readonly props: VisualizerProps;
   /** Format to render; defaults to 16:9, matching the pre-preset behaviour. */
   readonly presetId?: RenderPresetId;
   readonly cancelSignal?: CancelSignal;
@@ -95,7 +95,7 @@ const renderToTarget = async ({
   // is more reliable than letting each API launch (and tear down) its own.
   try {
     checkCancelled();
-    const inputProps: BeatVisualizerProps = { ...props, presetId };
+    const inputProps: VisualizerProps = { ...props, presetId };
     // Fingerprint the copied assets the browser actually consumes, not live
     // source files that can change while this render is running.
     const inputs = fingerprintInputs(

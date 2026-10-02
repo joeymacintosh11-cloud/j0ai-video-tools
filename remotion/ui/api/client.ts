@@ -54,7 +54,7 @@ import type {
   ValidateTrackView,
 } from "../../core/domain/api/views.ts";
 import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
-import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
 
 /**
  * Typed client for the local API.
@@ -210,8 +210,8 @@ export const uploadTrackAsset = (
 
 export const getTrackPreview = (
   slug: string,
-): Promise<TrackPreviewView<BeatVisualizerProps>> =>
-  request<TrackPreviewView<BeatVisualizerProps>>(
+): Promise<TrackPreviewView<VisualizerProps>> =>
+  request<TrackPreviewView<VisualizerProps>>(
     `/api/tracks/${encodeURIComponent(slug)}/preview`,
   );
 

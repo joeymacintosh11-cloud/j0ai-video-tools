@@ -8,7 +8,7 @@ import {
   statSync,
 } from "node:fs";
 import path from "node:path";
-import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
 import {
   EXPORT_MANIFEST_VERSION,
   VISUALIZER_VERSION,
@@ -88,7 +88,7 @@ export const fileContentHash = (file: string): string => {
 
 /** publicRoot is the immutable bundle copy when recording a real render. */
 export const fingerprintInputs = (
-  props: BeatVisualizerProps,
+  props: VisualizerProps,
   presetId: RenderPresetId,
   publicRoot = PUBLIC_DIR,
 ): ExportInputs => {

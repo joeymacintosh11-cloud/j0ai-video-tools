@@ -10,8 +10,8 @@ import { secondsToFrames } from "../../core/domain/video/compositionConfig";
 import {
   DEFAULT_RENDER_PRESET_ID,
   renderPreset,
-  type RenderPresetId,
 } from "../../core/domain/video/renderPresets";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps";
 import { Background } from "./Background";
 import { BrandMark } from "./BrandMark";
 import { CoverArt } from "./CoverArt";
@@ -19,25 +19,12 @@ import { LAYOUTS, type BeatVisualizerLayout } from "./layouts";
 import { TrackInfo } from "./TrackInfo";
 import { Waveform } from "./Waveform";
 
-export type BeatVisualizerProps = {
-  readonly title: string;
-  readonly artist: string;
-  readonly musicalKey: string;
-  readonly bpm: number;
-  readonly subtitle?: string;
-  /** All *Src fields are paths relative to public/, e.g. "tracks/x/cover.png" */
-  readonly coverSrc: string;
-  readonly audioSrc: string;
-  /** Lightweight audio used for the waveform only; falls back to audioSrc */
-  readonly waveformAudioSrc?: string;
-  readonly brandLogoSrc: string;
-  readonly brandBadgeSrc: string;
-  /**
-   * Which export format to draw. Absent means the default (16:9), so props
-   * written before presets existed still render exactly as they did.
-   */
-  readonly presetId?: RenderPresetId;
-};
+/**
+ * The composition's props are the core render contract, unchanged — see
+ * core/domain/video/visualizerProps.ts. The alias keeps the composition's own
+ * name for them.
+ */
+export type BeatVisualizerProps = VisualizerProps;
 
 /**
  * Resolves duration from the audio and canvas size from the preset.

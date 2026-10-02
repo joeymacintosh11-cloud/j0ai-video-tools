@@ -9,7 +9,7 @@ import type {
   UploadAssetView,
   ValidateTrackView,
 } from "../../core/domain/api/views.ts";
-import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import {
@@ -371,7 +371,7 @@ export const handleTrackPreview = async (
     trackLocations(slug).beat,
   );
 
-  const payload: TrackPreviewView<BeatVisualizerProps> = {
+  const payload: TrackPreviewView<VisualizerProps> = {
     slug,
     composition: COMPOSITION_CONFIG,
     durationInFrames: secondsToFrames(durationInSeconds),

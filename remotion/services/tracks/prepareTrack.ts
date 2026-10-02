@@ -1,4 +1,4 @@
-import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import {
   publicLabel,
@@ -19,7 +19,7 @@ import {
 export type PrepareTrackResult = {
   readonly slug: string;
   readonly metadata: TrackMetadata;
-  readonly props: BeatVisualizerProps;
+  readonly props: VisualizerProps;
   readonly analysis: AnalysisAudioResult;
   /** State observed before preparation ran. */
   readonly inspection: TrackInspection;

@@ -335,7 +335,7 @@ export type CompositionConfigView = {
  *
  * Parameterized over the composition's props rather than importing them:
  * core/domain/ is the innermost layer and must not depend on the composition it
- * describes. Both the server and the UI supply BeatVisualizerProps here, so the
+ * describes. Both the server and the UI supply VisualizerProps here, so the
  * contract stays checked at both ends without this file reaching outward.
  */
 export type TrackPreviewView<TInputProps = unknown> = {

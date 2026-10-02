@@ -1,4 +1,4 @@
-import type { BeatVisualizerProps } from "../../src/BeatVisualizer/BeatVisualizer.ts";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
 import {
   BRAND_ASSET_PATHS,
   trackAssetPaths,
@@ -30,7 +30,7 @@ export const buildTrackProps = ({
   metadata,
   analysisAvailable,
   presetId,
-}: BuildTrackPropsInput): BeatVisualizerProps => {
+}: BuildTrackPropsInput): VisualizerProps => {
   const paths = trackAssetPaths(slug);
 
   return {

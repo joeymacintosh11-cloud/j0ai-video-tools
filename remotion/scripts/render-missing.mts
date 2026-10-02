@@ -12,7 +12,7 @@ import {
 } from "../server/services/exportPlan.ts";
 import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
-import type { BeatVisualizerProps } from "../src/BeatVisualizer/BeatVisualizer.ts";
+import type { VisualizerProps } from "../core/domain/video/visualizerProps.ts";
 import { runCli, printLibraryOutcome } from "./cli.ts";
 
 /**
@@ -164,7 +164,7 @@ runCli("rendering missing exports", async () => {
   // One preparation per track, reused by each of its formats. Prepared lazily
   // so a catalogue run does not rebuild analysis audio for tracks that turn out
   // to need no renders.
-  const prepared = new Map<string, BeatVisualizerProps>();
+  const prepared = new Map<string, VisualizerProps>();
 
   for (const [index, target] of plan.selected.entries()) {
     const preset = renderPreset(target.presetId);
