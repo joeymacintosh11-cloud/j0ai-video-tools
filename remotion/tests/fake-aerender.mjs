@@ -8,8 +8,11 @@
 //   mov      write a .mov beside -output instead (a non-MP4 output module)
 //   silent   exit 0 without writing anything
 //   hang     print one PROGRESS line, then wait to be killed
+//   mp4      like success, but a real MP4 with video and audio (needs ffmpeg)
+//   mp4-silent  a real MP4 with video and no audio, like an empty template
 //
 // FAKE_AERENDER_ARGS_FILE, when set, receives the argv it was given as JSON.
+import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import process from "node:process";
 import { setInterval } from "node:timers";
@@ -38,6 +41,18 @@ switch (process.env.FAKE_AERENDER_MODE ?? "success") {
     writeFileSync(output, "fake after effects video");
     process.stdout.write("PROGRESS:  Total Time Elapsed: 1 Seconds\n");
     break;
+  case "mp4":
+  case "mp4-silent": {
+    for (let frame = first; frame <= last; frame++) progress(frame);
+    const audio = process.env.FAKE_AERENDER_MODE === "mp4"
+      ? ["-f", "lavfi", "-i", "sine=frequency=220:duration=1", "-c:a", "aac"]
+      : [];
+    execFileSync("ffmpeg", [
+      "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=64x36:d=1:r=30",
+      ...audio, "-c:v", "mpeg4", "-shortest", "-y", output,
+    ]);
+    break;
+  }
   case "fail":
     process.stderr.write(`aerender ERROR: No comp was found with the given name.\n`);
     process.exit(3);

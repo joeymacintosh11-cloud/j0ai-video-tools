@@ -1,10 +1,11 @@
-import { spawn as nodeSpawn } from "node:child_process";
+import { execFile, spawn as nodeSpawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants, createReadStream, existsSync, readdirSync, statSync } from "node:fs";
-import { copyFile, rename, writeFile } from "node:fs/promises";
+import { constants, existsSync, readdirSync, statSync } from "node:fs";
+import { copyFile, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { secondsToFrames } from "../../core/domain/video/compositionConfig.ts";
 import { DEFAULT_RENDER_PRESET_ID, renderPreset } from "../../core/domain/video/renderPresets.ts";
@@ -19,6 +20,13 @@ import {
   type AerenderDiscovery,
 } from "./aerenderDiscovery.mts";
 import { readAfterEffectsConfig, type AfterEffectsConfig } from "./afterEffectsConfig.mts";
+import {
+  missingTemplateFiles,
+  renderedMediaProblems,
+  STAGED_ASSET_NAMES,
+} from "./templateContract.mts";
+
+export { STAGED_ASSET_NAMES };
 
 /**
  * The After Effects implementation of the RenderEngine port — a proof of
@@ -34,10 +42,14 @@ import { readAfterEffectsConfig, type AfterEffectsConfig } from "./afterEffectsC
  *             from the track's audio, copies the track's images and audio
  *             to fixed names beside the configured dataFile, and writes the
  *             template-data sidecar (core/domain/video/templateData.ts)
- *             there; the project imports all of them as footage.
+ *             there; the project imports all of them as footage. A
+ *             project that never mentions the data, cover or audio file is
+ *             RENDERER_NOT_CONFIGURED before aerender starts — it would
+ *             render black and silent (templateContract.mts).
  *  render()   runs aerender for exactly those frames into a sibling of the
  *             staging path, reports its PROGRESS lines, and moves the file
- *             into place. A non-zero exit, a missing file or an output
+ *             into place once ffprobe sees video and audio in it. A
+ *             non-zero exit, a missing file, a file without audio or an output
  *             module that is not MP4 is a RENDER_FAILED with the reason.
  *  close()    stops aerender if it is still running.
  *
@@ -58,39 +70,39 @@ export type AfterEffectsEngineDeps = {
   readonly readConfig: () => AfterEffectsConfig;
   readonly discover: () => AerenderDiscovery;
   readonly probeAudioDurationInSeconds: (file: string) => Promise<number>;
+  /** The stream types ("video", "audio") in a rendered file. */
+  readonly probeStreamTypes: (file: string) => Promise<string[]>;
   readonly spawn: typeof nodeSpawn;
   readonly publicDir: string;
+};
+
+const execFileAsync = promisify(execFile);
+
+/** ffprobe's list of a file's stream types; empty when it cannot read one. */
+export const probeStreamTypesWithFfprobe = async (file: string): Promise<string[]> => {
+  try {
+    const { stdout } = await execFileAsync("ffprobe", [
+      "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", file,
+    ]);
+    const streams = (JSON.parse(stdout) as { streams?: { codec_type?: unknown }[] }).streams ?? [];
+    return streams.map((stream) => String(stream.codec_type));
+  } catch {
+    return [];
+  }
 };
 
 const defaultDeps: AfterEffectsEngineDeps = {
   readConfig: () => readAfterEffectsConfig(),
   discover: discoverInstalledAerender,
   probeAudioDurationInSeconds,
+  probeStreamTypes: probeStreamTypesWithFfprobe,
   spawn: nodeSpawn,
   publicDir: PUBLIC_DIR,
 };
 
 /** A content hash of the project, so editing the template stales its exports. */
-const projectVersion = (file: string): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const hash = createHash("sha256");
-    createReadStream(file)
-      .on("data", (chunk) => hash.update(chunk))
-      .on("error", reject)
-      .on("end", () => resolve(`aep-sha256:${hash.digest("hex").slice(0, 16)}`));
-  });
-
-/**
- * The fixed file names a template imports, beside the data file. Each keeps
- * its source's extension (toshi-cover.png, toshi-audio.wav, ...).
- */
-export const STAGED_ASSET_NAMES = {
-  cover: "toshi-cover",
-  audio: "toshi-audio",
-  waveformAudio: "toshi-waveform-audio",
-  brandLogo: "toshi-brand-logo",
-  brandBadge: "toshi-brand-badge",
-} as const;
+const projectVersion = (bytes: Uint8Array): string =>
+  `aep-sha256:${createHash("sha256").update(bytes).digest("hex").slice(0, 16)}`;
 
 /** Written beside its destination and renamed over it, so a reader never sees half a file. */
 const writeAtomically = async (destination: string, content: string | null, copyFrom?: string): Promise<void> => {
@@ -121,6 +133,15 @@ const stageAssets = async (
   return staged;
 };
 
+const describeMissing = (missing: readonly string[]): string => {
+  const parts = [
+    ...(missing.some((name) => name.endsWith(".json")) ? ["title, artist, key and BPM"] : []),
+    ...(missing.some((name) => name.endsWith(".png")) ? ["cover"] : []),
+    ...(missing.some((name) => name.endsWith(".wav")) ? ["audio"] : []),
+  ];
+  return parts.length > 1 ? `${parts.slice(0, -1).join("; ")}; or ${parts.at(-1)}` : parts.join("");
+};
+
 const renderFailed = (message: string): TrackError =>
   new TrackError(trackIssue("RENDER_FAILED", message));
 
@@ -145,7 +166,10 @@ export const createAfterEffectsRenderEngine = (
 
       log(`After Effects: aerender ${discovery.path} (found via ${discovery.source}).`);
       log(`After Effects: project ${config.project}.`);
-      const version = await projectVersion(config.project);
+      // Read once: hashed as the template's version, and searched for the
+      // staged files it must use (templateContract.mts).
+      const projectBytes = await readFile(config.project);
+      const version = projectVersion(projectBytes);
 
       let resolved: { composition: string; durationInFrames: number; fps: number } | null = null;
       let child: ReturnType<typeof nodeSpawn> | null = null;
@@ -175,6 +199,25 @@ export const createAfterEffectsRenderEngine = (
 
           log(`After Effects: composition "${composition}", ${durationInFrames} frames @ ${preset.fps}fps.`);
           log(`After Effects: template data and assets staged in ${path.dirname(config.dataFile)}.`);
+
+          // Checked after staging, so the files a template needs are already
+          // there to import when this says they are not being used.
+          if (config.templateCheck) {
+            const missing = missingTemplateFiles(projectBytes);
+            if (missing.length > 0) {
+              throw new TrackError(
+                trackIssue(
+                  "RENDERER_NOT_CONFIGURED",
+                  `The After Effects template ${path.basename(config.project)} does not use ${missing.join(", ")}, ` +
+                    `so it would render without the track's ${describeMissing(missing)}. The files are staged in ` +
+                    `${path.dirname(config.dataFile)}: build the template with adapters/after-effects/template/create-toshi-template.jsx ` +
+                    `(After Effects: File > Scripts > Run Script File...) or import them by hand as the README describes, then save the project. ` +
+                    `If your template really does not need them, set "templateCheck": false in after-effects.local.json.`,
+                ),
+              );
+            }
+            log(`After Effects: template uses the staged data, cover and audio.`);
+          }
 
           resolved = { composition, durationInFrames, fps: preset.fps };
           return {
@@ -284,10 +327,27 @@ export const createAfterEffectsRenderEngine = (
                 return;
               }
 
-              rename(target, outputPath).then(
-                () => settle(null),
-                (error: Error) => settle(renderFailed(`Could not move aerender's output into place: ${error.message}`)),
-              );
+              // A silent or picture-less file is a failed render, never an
+              // export: audio is part of every Toshi video.
+              deps
+                .probeStreamTypes(target)
+                .then((streams) => {
+                  const problems = renderedMediaProblems(streams);
+                  if (problems.length > 0) {
+                    throw renderFailed(
+                      `aerender's video has ${problems.join(" and ")}. ` +
+                        (problems.includes("no audio stream")
+                          ? `Check that composition "${composition}" has a toshi-audio.wav layer that is switched on and lasts the whole track, and that the output module's Audio Output is On or Auto.`
+                          : `Check the output module writes H.264 video.`),
+                    );
+                  }
+                  return rename(target, outputPath);
+                })
+                .then(
+                  () => settle(null),
+                  (error: Error) =>
+                    settle(error instanceof TrackError ? error : renderFailed(`Could not move aerender's output into place: ${error.message}`)),
+                );
             });
           });
         },

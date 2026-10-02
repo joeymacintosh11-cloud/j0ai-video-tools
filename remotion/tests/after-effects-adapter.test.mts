@@ -17,7 +17,9 @@ import { readAfterEffectsConfig } from "../adapters/after-effects/afterEffectsCo
 import {
   afterEffectsRenderEngine,
   createAfterEffectsRenderEngine,
+  probeStreamTypesWithFfprobe,
 } from "../adapters/after-effects/afterEffectsRenderEngine.mts";
+import { REQUIRED_TEMPLATE_FILES } from "../adapters/after-effects/templateContract.mts";
 import { renderEngines } from "../adapters/renderEngines.mts";
 import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
 import { TrackError } from "../core/domain/tracks/errors.ts";
@@ -65,12 +67,23 @@ const withEnv = (t: TestContext, values: Record<string, string | undefined>) => 
   }
 };
 
-/** A temp "template" folder: a placeholder project file (not a real .aep) and a config pointing at it. */
-const template = async (t: TestContext, config: Record<string, unknown> = {}) => {
+/**
+ * A temp "template" folder: a placeholder project file (not a real .aep) and a
+ * config pointing at it. The placeholder mentions the staged files the way a
+ * real project's footage paths do, unless `references` says otherwise.
+ */
+const template = async (
+  t: TestContext,
+  config: Record<string, unknown> = {},
+  references: readonly string[] = REQUIRED_TEMPLATE_FILES,
+) => {
   const dir = await mkdtemp(path.join(tmpdir(), "toshi-ae-template-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const project = path.join(dir, "ToshiVisualizer.aep");
-  await writeFile(project, "placeholder project bytes — not an After Effects file");
+  await writeFile(
+    project,
+    `placeholder project bytes, not an After Effects file\0${references.map((name) => `{"fullpath":"${dir}/${name}"}`).join("\0")}`,
+  );
   const file = path.join(dir, "after-effects.local.json");
   await writeFile(file, JSON.stringify({ project: "ToshiVisualizer.aep", composition: "Toshi Visualizer", ...config }));
   return { dir, project, file, dataFile: path.join(dir, "toshi-render-data.json") };
@@ -155,6 +168,7 @@ test("the config resolves paths relative to itself and fills in defaults", async
     outputModule: null,
     dataFile,
     aerenderPath: null,
+    templateCheck: true,
   });
 });
 
@@ -237,7 +251,11 @@ test("after-effects is registered, available exactly when aerender is found, and
  * Rendering through the engine path, with the fake aerender
  * ------------------------------------------------------------------ */
 
-const setup = async (t: TestContext, config: Record<string, unknown> = {}) => {
+const setup = async (
+  t: TestContext,
+  config: Record<string, unknown> = {},
+  options: { references?: readonly string[]; probeStreamTypes?: (file: string) => Promise<string[]> } = {},
+) => {
   const settings = await readDeliverySettings();
   if (settings.autoDeliver && settings.root !== null) {
     t.skip("auto-delivery is switched on in delivery.local.json");
@@ -252,7 +270,7 @@ const setup = async (t: TestContext, config: Record<string, unknown> = {}) => {
     metadata: parseTrackMetadata(JSON.parse(await readFile(f.metadata, "utf8")), "fixture"),
     analysisAvailable: false,
   });
-  const tpl = await template(t, config);
+  const tpl = await template(t, config, options.references);
   const argsFile = path.join(tpl.dir, "argv.json");
   withEnv(t, { FAKE_AERENDER_ARGS_FILE: argsFile, FAKE_AERENDER_MODE: undefined });
   const logs: string[] = [];
@@ -260,6 +278,9 @@ const setup = async (t: TestContext, config: Record<string, unknown> = {}) => {
     readConfig: () => readAfterEffectsConfig(tpl.file),
     discover: () => ({ found: true, path: FAKE_AERENDER, source: "env" }),
     probeAudioDurationInSeconds: async () => 2,
+    // The fake's default output is a text file; tests of the real ffprobe
+    // check pass probeStreamTypesWithFfprobe and a real-MP4 fake mode.
+    probeStreamTypes: options.probeStreamTypes ?? (async () => ["video", "audio"]),
   });
   return { f, props, tpl, argsFile, logs, engine };
 };
@@ -351,7 +372,7 @@ test("editing the After Effects project changes the template version", async (t)
   const ctx = await setup(t);
   if (!ctx) return;
   await renderTrackVideo({ engine: ctx.engine, slug: ctx.f.slug, props: ctx.props, presetId: "square-1x1" });
-  await writeFile(ctx.tpl.project, "an edited project");
+  await writeFile(ctx.tpl.project, `${await readFile(ctx.tpl.project, "utf8")} — edited`);
   await renderTrackVideo({ engine: ctx.engine, slug: ctx.f.slug, props: ctx.props, presetId: "square-1x1" });
 
   const [first, second] = libraryFor(ctx.f.slug);
@@ -461,7 +482,7 @@ test("render-track --engine after-effects: unavailable, then unconfigured, then 
   const rendered = await cli([f.slug, "--engine", "after-effects", "--preset", "square-1x1"], {
     TOSHI_AERENDER_PATH: FAKE_AERENDER,
     TOSHI_AE_CONFIG: tpl.file,
-    FAKE_AERENDER_MODE: "success",
+    FAKE_AERENDER_MODE: "mp4",
   });
   assert.equal(rendered.code, 0, rendered.output);
   for (const expected of [
@@ -476,9 +497,9 @@ test("render-track --engine after-effects: unavailable, then unconfigured, then 
     assert.ok(rendered.output.includes(expected), `output mentions ${expected}\n${rendered.output}`);
   }
   assert.doesNotMatch(rendered.output, /Bundling Remotion/);
-  assert.equal(
-    await readFile(trackOutputLocation(f.slug, "square-1x1", "after-effects").path, "utf8"),
-    "fake after effects video",
+  assert.deepEqual(
+    (await probeStreamTypesWithFfprobe(trackOutputLocation(f.slug, "square-1x1", "after-effects").path)).sort(),
+    ["audio", "video"],
   );
 });
 
@@ -493,4 +514,58 @@ test("planning commands refuse another engine instead of re-rendering forever", 
     assert.match(result.output, new RegExp(`${script} plans against remotion exports and cannot render with "after-effects" yet`), script);
     assert.match(result.output, /npm run render-track -- <track-slug> --engine after-effects/, script);
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Catching a template that would render black and silent
+ * ------------------------------------------------------------------ */
+
+test("a project that does not use the staged files stops before aerender runs, with the files staged to import", async (t) => {
+  // The project from the first real render: right composition, no layers using Toshi's files.
+  const ctx = await setup(t, {}, { references: [] });
+  if (!ctx) return;
+
+  await assert.rejects(
+    renderTrackVideo({ engine: ctx.engine, slug: ctx.f.slug, props: ctx.props, presetId: "youtube-16x9" }),
+    trackErrorCode(
+      "RENDERER_NOT_CONFIGURED",
+      /does not use toshi-render-data\.json, toshi-cover\.png, toshi-audio\.wav, so it would render without the track's title, artist, key and BPM; cover; or audio\. The files are staged in .*create-toshi-template\.jsx/,
+    ),
+  );
+  await assert.rejects(readFile(ctx.argsFile), "aerender never ran");
+  for (const name of ["toshi-render-data.json", "toshi-cover.png", "toshi-audio.wav", "toshi-brand-logo.png"]) {
+    await readFile(path.join(ctx.tpl.dir, name));
+  }
+  assert.deepEqual(libraryFor(ctx.f.slug), []);
+});
+
+test("templateCheck: false skips the reference check for a template that does not need the files", async (t) => {
+  const ctx = await setup(t, { templateCheck: false }, { references: [] });
+  if (!ctx) return;
+  const result = await renderTrackVideo({ engine: ctx.engine, slug: ctx.f.slug, props: ctx.props, presetId: "square-1x1" });
+  assert.equal(result.outputLabel, `out/${ctx.f.slug}/after-effects/square-1x1.mp4`);
+});
+
+test("a rendered video without audio is a failed render, never an export (real ffprobe)", async (t) => {
+  const ctx = await setup(t, {}, { probeStreamTypes: probeStreamTypesWithFfprobe });
+  if (!ctx) return;
+  process.env.FAKE_AERENDER_MODE = "mp4-silent";
+
+  await assert.rejects(
+    renderTrackVideo({ engine: ctx.engine, slug: ctx.f.slug, props: ctx.props, presetId: "youtube-16x9" }),
+    trackErrorCode("RENDER_FAILED", /aerender's video has no audio stream\. Check that composition "Toshi Visualizer" has a toshi-audio\.wav layer .* Audio Output is On or Auto/),
+  );
+  await assert.rejects(readFile(trackOutputLocation(ctx.f.slug, "youtube-16x9", "after-effects").path));
+  assert.deepEqual(libraryFor(ctx.f.slug), []);
+});
+
+test("a rendered video with picture and sound is published (real ffprobe)", async (t) => {
+  const ctx = await setup(t, {}, { probeStreamTypes: probeStreamTypesWithFfprobe });
+  if (!ctx) return;
+  process.env.FAKE_AERENDER_MODE = "mp4";
+
+  await renderTrackVideo({ engine: ctx.engine, slug: ctx.f.slug, props: ctx.props, presetId: "youtube-16x9" });
+  const output = trackOutputLocation(ctx.f.slug, "youtube-16x9", "after-effects").path;
+  assert.deepEqual((await probeStreamTypesWithFfprobe(output)).sort(), ["audio", "video"]);
+  assert.equal(libraryFor(ctx.f.slug).length, 1);
 });

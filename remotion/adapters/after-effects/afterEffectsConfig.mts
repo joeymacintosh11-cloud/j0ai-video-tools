@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { isRenderPresetId, type RenderPresetId } from "../../core/domain/video/renderPresets.ts";
+import { TEMPLATE_DATA_FILE_NAME } from "./templateContract.mts";
 
 /**
  * Which After Effects project renders Toshi videos, and how.
@@ -17,7 +18,8 @@ import { isRenderPresetId, type RenderPresetId } from "../../core/domain/video/r
  *     "compositions": { "vertical-9x16": "Toshi Visualizer 9x16" },
  *     "outputModule": "H.264 - Match Render Settings - 15 Mbps",
  *     "dataFile": "/Users/me/Toshi/toshi-render-data.json",
- *     "aerenderPath": "/Applications/Adobe After Effects 2025/aerender"
+ *     "aerenderPath": "/Applications/Adobe After Effects 2025/aerender",
+ *     "templateCheck": true
  *   }
  *
  * Only "project" and "composition" are required. Anything wrong is a
@@ -28,7 +30,6 @@ const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 
 export const AFTER_EFFECTS_CONFIG_FILE = path.join(PROJECT_ROOT, "after-effects.local.json");
 export const AFTER_EFFECTS_CONFIG_ENV = "TOSHI_AE_CONFIG";
-export const DEFAULT_DATA_FILE_NAME = "toshi-render-data.json";
 
 export type AfterEffectsConfig = {
   /** Absolute path of the .aep/.aepx project. */
@@ -42,6 +43,11 @@ export type AfterEffectsConfig = {
   /** Where the template-data sidecar is written; the project imports this file. */
   readonly dataFile: string;
   readonly aerenderPath: string | null;
+  /**
+   * Whether to refuse a project that never mentions the staged data, cover
+   * and audio files (templateContract.mts). On unless set to false.
+   */
+  readonly templateCheck: boolean;
 };
 
 export const afterEffectsConfigFile = (
@@ -118,6 +124,10 @@ export const readAfterEffectsConfig = (file: string = afterEffectsConfigFile()):
     }
   }
 
+  if (value.templateCheck !== undefined && typeof value.templateCheck !== "boolean") {
+    throw notConfigured(`${where} "templateCheck" must be true or false.`);
+  }
+
   for (const key of ["outputModule", "dataFile", "aerenderPath"] as const) {
     if (value[key] !== undefined && (typeof value[key] !== "string" || value[key] === "")) {
       throw notConfigured(`${where} "${key}" must be a non-empty string when present.`);
@@ -131,8 +141,9 @@ export const readAfterEffectsConfig = (file: string = afterEffectsConfigFile()):
     outputModule: (value.outputModule as string | undefined) ?? null,
     dataFile:
       value.dataFile === undefined
-        ? path.join(path.dirname(project), DEFAULT_DATA_FILE_NAME)
+        ? path.join(path.dirname(project), TEMPLATE_DATA_FILE_NAME)
         : resolve(value.dataFile as string),
     aerenderPath: value.aerenderPath === undefined ? null : resolve(value.aerenderPath as string),
+    templateCheck: value.templateCheck !== false,
   };
 };
