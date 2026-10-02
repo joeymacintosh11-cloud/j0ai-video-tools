@@ -202,9 +202,13 @@ Two checks stop a broken template from wasting a render:
   template that genuinely does not need them.
 - **After rendering:** a video with no audio (or no picture) is a failed
   render. It is never published or recorded.
+- **Warnings (never fatal):** the render log says so if the project file
+  doesn't seem to contain the composition's name, or has no Audio Waveform
+  effect.
 
 **Building the template: the quick way.** `adapters/after-effects/template/create-toshi-template.jsx`
-builds the minimal template for you:
+builds the complete minimal template for you, using only native After Effects
+features (no plugins, nothing `aerender` can't render):
 
 1. Stage the files once:
    `npm run render-track -- ghetto-geek --engine after-effects`. On a new or
@@ -212,9 +216,15 @@ builds the minimal template for you:
    are now in the data folder.
 2. In After Effects, **File > New > New Project**, then **File > Scripts > Run
    Script File...** and choose `create-toshi-template.jsx`. When asked, pick the
-   folder with `toshi-render-data.json`.
+   folder with `toshi-render-data.json`. If an effect couldn't be set up, the
+   final message lists it under "Check by hand".
 3. **File > Save As** the `"project"` from `after-effects.local.json`, in that
-   same folder (replacing the empty one), and render again.
+   same folder (replacing the old one), and render again.
+
+**Rebuilding.** The template is built once and kept. Run the script again
+(steps 2–3, in a new project) whenever this script changes, as it did when the
+metadata, background and waveform were added (template contract 2). The
+composition's comment shows which contract built it.
 
 It creates composition **Toshi Visualizer** (1920×1080, 30fps, 10 minutes)
 with these layers, top to bottom:
@@ -223,22 +233,65 @@ with these layers, top to bottom:
 | --- | --- | --- |
 | `Audio` | `toshi-audio.wav` | Time Remapping on; Time Remap expression `time - thisLayer.inPoint`; layer extended to the end of the composition |
 | `Brand Logo` | `toshi-brand-logo.png` | Bottom right; Scale expression fits it into 240 px |
-| `Key BPM` | Text | Source Text expression `var t = footage("toshi-render-data.json").sourceData.track; t.key + "  \u00b7  " + t.bpm + " BPM"` |
-| `Artist` | Text | Source Text expression `footage("toshi-render-data.json").sourceData.track.artist` |
-| `Title` | Text | Source Text expression `footage("toshi-render-data.json").sourceData.track.title` |
+| `Waveform` | Solid + **Audio Waveform** effect | Audio Layer: `Audio`; Start Point 960,860; End Point 1780,860; Displayed Samples 220; Maximum Height 140; Audio Duration 400 ms; Thickness 3; Softness 15%; Inside Color `#b8860b`; Outside Color `#f4e8d0` |
+| `Accent` | Solid 160×4 `#b8860b` | Thin gold rule under the track details |
+| `Key BPM` | Text, `#f4e8d0`, 80% opacity | Source Text expression (below): `F Minor · 100 BPM` |
+| `Artist` | Text, `#b8860b` | Source Text expression (below): `Toshi` |
+| `Title` | Text, `#f4e8d0` | Source Text expression (below): `Ghetto Geek` |
 | `Cover` | `toshi-cover.png` | Left; Scale expression `var s = 640 / Math.max(thisLayer.source.width, thisLayer.source.height) * 100; [s, s]` |
-| `Background` | Solid | Dark (RGB 11, 11, 16), full frame |
+| `Background` | Solid `#0b0b0b` + **Gradient Ramp** effect | Ramp Shape Radial; Start of Ramp 576,486, Start Color `#2a1e10` (warm amber charcoal); End of Ramp 2016,1242, End Color `#0b0b0b` |
+
+The colours are the Remotion visualizer's (`adapters/remotion/BeatVisualizer/theme.ts`):
+off-black `#0b0b0b`, warm cream `#f4e8d0` and vintage gold `#b8860b`.
+
+**The metadata expressions.** Every text layer starts with the same loader and
+then reads one field. This is the `Title` expression in full:
+
+```js
+var TOSHI_DATA = "toshi-render-data.json";
+function toshiTrack() {
+  var data = null;
+  try { data = footage(TOSHI_DATA).sourceData; } catch (err) { data = null; }
+  if (data && !data.track && data.length > 0) { data = data[0]; }
+  if (!data || !data.track) {
+    var text = footage(TOSHI_DATA).sourceText;
+    data = typeof JSON !== "undefined" ? JSON.parse(text) : eval("(" + text + ")");
+  }
+  return data.track;
+}
+try {
+  var t = toshiTrack(); t.title ? String(t.title) : "";
+} catch (err) {
+  "[" + TOSHI_DATA + ": " + err.message + "]";
+}
+```
+
+`Artist` is the same with `var t = toshiTrack(); t.artist ? String(t.artist) : "";`.
+`Key BPM` uses `var t = toshiTrack(); var parts = []; if (t.key) { parts.push(String(t.key)); } if (t.bpm) { parts.push(t.bpm + " BPM"); } parts.join(" \u00b7 ");`.
+The loader accepts the data however After Effects delivers it: as an object, as
+an array wrapping it, or only as text, on both the JavaScript and the legacy
+expression engines. A field that is missing renders as nothing. If the data
+can't be read at all, the layer shows `[toshi-render-data.json: <reason>]`
+instead of a silent placeholder. The definitive copies are `TEMPLATE_EXPRESSIONS`
+in `adapters/after-effects/templateContract.mts`, and a test keeps the script
+identical to them.
+
+**The waveform.** The native **Audio Waveform** effect draws from the `Audio`
+layer's sound at render time, so it always follows the staged
+`toshi-audio.wav`, whatever the track and its length, with no per-track setup.
+The effect sits on its own full-frame solid, which it doesn't show (Composite On
+Original is off).
 
 **Building it by hand** instead: create the same composition and layers. Import
 the files from the data folder (**File > Import > File...**, including the
-`.json`), drag them in, and paste the expressions above (Alt/Option-click a
-property's stopwatch to add one). The `Audio` layer's time remapping matters.
-A footage layer keeps the length its file had when you added it, so without
-remapping, a longer track's audio would stop early. Enable it with
-**Layer > Time > Enable Time Remapping**, add the expression, and drag the
-layer's end to the end of the composition. Font, sizes, positions and
-animation are yours to change; the file names and the `.json` expressions are
-the contract.
+`.json`), drag them in, add the effects from **Effect > Generate**, and paste the
+expressions (Alt/Option-click a property's stopwatch to add one). The `Audio`
+layer's time remapping matters. A footage layer keeps the length its file had
+when you added it, so without remapping, a longer track's audio would stop
+early. Enable it with **Layer > Time > Enable Time Remapping**, add the
+expression, and drag the layer's end to the end of the composition. Fonts,
+sizes, positions and animation are yours to change; the file names and the
+`.json` expressions are the contract.
 
 **Output and formats.** The output module (`"outputModule"`, or the project's
 default) must write **H.264 / MP4 with audio**: its *Audio Output* must be **On**
@@ -260,7 +313,8 @@ used, whether the template uses the staged files, and why a render failed
 - Nothing checks that a composition's canvas, frame rate or length matches the
   format, or what is visible in the picture. The checks prove the template
   references the staged files and that the video has picture and sound.
-- `create-toshi-template.jsx` builds the 16:9 composition only.
+- `create-toshi-template.jsx` builds the 16:9 composition only, uses After
+  Effects' default font, and has no animation beyond the waveform.
 - The UI does not offer engine selection yet.
 
 ### Export formats

@@ -213,14 +213,21 @@ next to the data file (by default the project's folder):
 `toshi-render-data.json`, `toshi-cover.png`, `toshi-audio.wav`,
 `toshi-waveform-audio.wav`, `toshi-brand-logo.png` and `toshi-brand-badge.png`.
 The first three are required. Text layers read the sidecar with expressions
-(`TEMPLATE_EXPRESSIONS`, e.g.
-`footage("toshi-render-data.json").sourceData.track.title`). Images and audio
+(`TEMPLATE_EXPRESSIONS`): a shared loader (`TEMPLATE_DATA_LOADER`) accepts the
+JSON as `sourceData` (an object or an array wrapping it) or as `sourceText`. A
+missing optional field renders as nothing, and unreadable data shows
+`[toshi-render-data.json: <reason>]` rather than a silent placeholder. Images and audio
 are the staged files themselves, because an expression cannot change which
 file a footage item uses. After Effects reloads them every time `aerender`
 opens the project. The audio layer is time-remapped (`time - thisLayer.inPoint`)
 and runs to the end of the composition, so any track length plays in full.
 Each format's composition has that format's canvas and frame rate and is at
 least as long as the longest track: `aerender` renders frames `0..duration-1`.
+The bootstrap's layers (`TEMPLATE_LAYERS`) are Audio, Brand Logo, Waveform,
+Accent, Key BPM, Artist, Title, Cover and Background. The background is a
+native radial Gradient Ramp (warm amber charcoal to off-black `#0b0b0b`), and
+the waveform is the native Audio Waveform effect reading the Audio layer, so
+both render in `aerender` without plugins or per-track setup.
 
 Mechanisms considered: expressions alone cannot load images or audio, and
 `aerender` cannot run scripts at render time, so the render path is fixed
@@ -232,7 +239,10 @@ three required file names: footage paths are stored as text in `.aep` and
 `.aepx`, so an absent name is an unused file. This catches an empty or
 unwired template in seconds (`"templateCheck": false` opts out). After
 `aerender`, ffprobe must find both a video and an audio stream, so a silent
-render is never published.
+render is never published. Two further findings are warnings only (`templateWarnings`):
+the composition name not found in the project file (`aerender` reports a
+genuinely missing composition itself, within seconds), and no Audio Waveform
+effect.
 
 **What it is not.** It is an adapter: Toshi starts `aerender` and reads its
 exit code and files. A future Adobe *plugin* (UXP/CEP) would run inside After
