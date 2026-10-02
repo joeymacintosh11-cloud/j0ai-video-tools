@@ -107,9 +107,14 @@ publication, library and delivery come with it.
 4. `tests/render-engine-port.test.mts` shows how to drive `renderTrackVideo`
    with a stand-in engine. `npm run lint` already covers `adapters/`.
 
-`content-library` records note the template (`COMPOSITION_ID`) and
-`VISUALIZER_VERSION` they were produced with. Give a different-looking
-template its own id, so freshness and the library tell the outputs apart.
+Every engine writes to the same `out/<slug>/<preset>.mp4`, and export freshness
+does not record which engine produced a file: its visualizer fingerprint is
+`VISUALIZER_VERSION` (`core/domain/video/exportFreshness.ts`) plus the brand
+assets. Content-library records note the template (`COMPOSITION_ID`) and
+`VISUALIZER_VERSION`. An adapter whose output looks different should therefore
+bring its own visualizer version (and template id). Otherwise a Remotion export
+and, say, an After Effects export of the same track are treated as
+interchangeable.
 
 ## Adding a host (a batch service, a desktop panel)
 
