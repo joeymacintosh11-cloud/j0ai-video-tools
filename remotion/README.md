@@ -176,28 +176,80 @@ optional: `dataFile` (default: `toshi-render-data.json` beside the project)
 and `aerenderPath`. Missing or wrong settings stop the render with a "not
 configured" error saying what to fix.
 
-**3. The project.** Before each render, Toshi writes these files next to
-`dataFile` (the project's folder by default). Import them into the project
-once, as footage:
+**3. The template (the contract).** Before each render Toshi writes these
+files next to `dataFile` (by default, your `.aep`'s folder). One template
+renders any track because it imports these files **by these names**, and After
+Effects reloads them from disk every time `aerender` opens the project:
 
-| File | Contents |
-| --- | --- |
-| `toshi-render-data.json` | Title, artist, key, BPM, subtitle, format and timing |
-| `toshi-cover.png` | The track's cover |
-| `toshi-audio.wav` | The track's audio |
-| `toshi-waveform-audio.wav` | Lighter audio for audio-reactive layers |
-| `toshi-brand-logo.png`, `toshi-brand-badge.png` | The brand marks |
+| File | Contents | Template must use it |
+| --- | --- | --- |
+| `toshi-render-data.json` | Title, artist, key, BPM, subtitle, format, timing | Yes (text) |
+| `toshi-cover.png` | The track's cover | Yes |
+| `toshi-audio.wav` | The track's audio | Yes (audio is mandatory) |
+| `toshi-waveform-audio.wav` | Lighter audio for audio-reactive layers | Optional |
+| `toshi-brand-logo.png`, `toshi-brand-badge.png` | The brand marks | Optional |
 
-Drive text layers with expressions such as
-`footage("toshi-render-data.json").sourceData.track.title`. After Effects
-reloads the files each time it renders. Each composition needs its format's
-canvas and frame rate (30fps; 1920×1080, 1080×1920 or 1080×1080), and must be
-at least as long as your longest track. Toshi renders exactly the track's
-length from frame 0.
+Text comes from the JSON through expressions. Expressions cannot change which
+file a footage item shows, so the cover and audio come from the staged files
+themselves. Never import a track's own `public/tracks/...` files into the
+template.
+
+Two checks stop a broken template from wasting a render:
+
+- **Before rendering:** if the project never mentions the three required
+  files, the render stops in seconds with "does not use ...", instead of
+  rendering a black, silent video. Set `"templateCheck": false` only for a
+  template that genuinely does not need them.
+- **After rendering:** a video with no audio (or no picture) is a failed
+  render. It is never published or recorded.
+
+**Building the template: the quick way.** `adapters/after-effects/template/create-toshi-template.jsx`
+builds the minimal template for you:
+
+1. Stage the files once:
+   `npm run render-track -- ghetto-geek --engine after-effects`. On a new or
+   empty project this stops with "does not use ...". That's expected: the files
+   are now in the data folder.
+2. In After Effects, **File > New > New Project**, then **File > Scripts > Run
+   Script File...** and choose `create-toshi-template.jsx`. When asked, pick the
+   folder with `toshi-render-data.json`.
+3. **File > Save As** the `"project"` from `after-effects.local.json`, in that
+   same folder (replacing the empty one), and render again.
+
+It creates composition **Toshi Visualizer** (1920×1080, 30fps, 10 minutes)
+with these layers, top to bottom:
+
+| Layer | Source | Setup |
+| --- | --- | --- |
+| `Audio` | `toshi-audio.wav` | Time Remapping on; Time Remap expression `time - thisLayer.inPoint`; layer extended to the end of the composition |
+| `Brand Logo` | `toshi-brand-logo.png` | Bottom right; Scale expression fits it into 240 px |
+| `Key BPM` | Text | Source Text expression `var t = footage("toshi-render-data.json").sourceData.track; t.key + "  \u00b7  " + t.bpm + " BPM"` |
+| `Artist` | Text | Source Text expression `footage("toshi-render-data.json").sourceData.track.artist` |
+| `Title` | Text | Source Text expression `footage("toshi-render-data.json").sourceData.track.title` |
+| `Cover` | `toshi-cover.png` | Left; Scale expression `var s = 640 / Math.max(thisLayer.source.width, thisLayer.source.height) * 100; [s, s]` |
+| `Background` | Solid | Dark (RGB 11, 11, 16), full frame |
+
+**Building it by hand** instead: create the same composition and layers. Import
+the files from the data folder (**File > Import > File...**, including the
+`.json`), drag them in, and paste the expressions above (Alt/Option-click a
+property's stopwatch to add one). The `Audio` layer's time remapping matters.
+A footage layer keeps the length its file had when you added it, so without
+remapping, a longer track's audio would stop early. Enable it with
+**Layer > Time > Enable Time Remapping**, add the expression, and drag the
+layer's end to the end of the composition. Font, sizes, positions and
+animation are yours to change; the file names and the `.json` expressions are
+the contract.
+
+**Output and formats.** The output module (`"outputModule"`, or the project's
+default) must write **H.264 / MP4 with audio**: its *Audio Output* must be **On**
+or **Auto**. Each composition needs its format's canvas and frame rate (30fps;
+1920×1080, 1080×1920 or 1080×1080) and must be at least as long as your longest
+track. Toshi renders exactly the track's length from frame 0. For 9:16 or 1:1,
+duplicate the composition, change its size, and map it under `"compositions"`.
 
 The diagnostics show which `aerender`, project, composition and output were
-used, and why a render failed (including `aerender`'s exit code and last
-output lines).
+used, whether the template uses the staged files, and why a render failed
+(including `aerender`'s exit code and last output lines).
 
 **Limits of this proof of concept:**
 - Only `render-track` and the API render with After Effects. Freshness
@@ -206,7 +258,9 @@ output lines).
 - One After Effects render at a time per data folder, because they share the
   data file and staged assets.
 - Nothing checks that a composition's canvas, frame rate or length matches the
-  format.
+  format, or what is visible in the picture. The checks prove the template
+  references the staged files and that the video has picture and sound.
+- `create-toshi-template.jsx` builds the 16:9 composition only.
 - The UI does not offer engine selection yet.
 
 ### Export formats

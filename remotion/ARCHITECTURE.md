@@ -48,6 +48,9 @@ adapters/               Implementations of core ports for one technology.
     aerenderDiscovery.mts          Finds aerender; the registry's availability probe.
     afterEffectsConfig.mts         Reads after-effects.local.json (project, comps).
     aerenderCommand.mts            aerender arguments and progress parsing (pure).
+    templateContract.mts           Staged file names, required files, expressions, checks (pure).
+    template/create-toshi-template.jsx
+                                   One-time ExtendScript bootstrap of the minimal template.
 
 server/                 Host: the local HTTP API. Routes and HTTP helpers only.
 scripts/                Host: the CLI. Parse args, call a workflow, print.
@@ -190,8 +193,10 @@ render-track --engine after-effects
   -> resolve(): composition for the format; frames from the track's audio (ffprobe)
              copy cover/audio/brand marks to fixed names beside the data file
              write the template-data sidecar (buildTemplateData) there
+             project never mentions the data, cover or audio file? -> RENDERER_NOT_CONFIGURED
   -> render(): aerender -project -comp -output [-OMtemplate] -s 0 -e <frames-1> -close DO_NOT_SAVE_CHANGES
              PROGRESS lines -> progress; exit code / missing file / non-MP4 -> RENDER_FAILED
+             ffprobe: no video or no audio stream -> RENDER_FAILED (never published)
              move the file into the staging path -> published to out/<slug>/after-effects/<preset>.mp4
   -> library record: renderer after-effects, composition, aep-sha256 version (no paths)
 ```
@@ -202,17 +207,32 @@ then `aerender` on `PATH`, then `/Applications/Adobe After Effects */aerender`
 on macOS, newest first. An explicit setting that points nowhere is reported,
 never silently replaced by another install.
 
-**The template contract.** The `.aep` imports, as footage, the files the
-adapter writes next to the data file (by default the project's folder):
-`toshi-render-data.json` (the sidecar, read with expressions such as
-`footage("toshi-render-data.json").sourceData.track.title`),
-`toshi-cover.png`, `toshi-audio.wav`, `toshi-waveform-audio.wav`,
-`toshi-brand-logo.png` and `toshi-brand-badge.png`. Expressions cannot swap
-a footage item's file, which is why the assets are copied to fixed names
-rather than referenced where they live. After Effects reloads them every
-time `aerender` opens the project. Each format's composition must have that
-format's canvas and frame rate, and be at least as long as the longest track:
-`aerender` renders frames `0..duration-1`.
+**The template contract** (`templateContract.mts`; the README has the
+step-by-step). The `.aep` imports, as footage, the files the adapter writes
+next to the data file (by default the project's folder):
+`toshi-render-data.json`, `toshi-cover.png`, `toshi-audio.wav`,
+`toshi-waveform-audio.wav`, `toshi-brand-logo.png` and `toshi-brand-badge.png`.
+The first three are required. Text layers read the sidecar with expressions
+(`TEMPLATE_EXPRESSIONS`, e.g.
+`footage("toshi-render-data.json").sourceData.track.title`). Images and audio
+are the staged files themselves, because an expression cannot change which
+file a footage item uses. After Effects reloads them every time `aerender`
+opens the project. The audio layer is time-remapped (`time - thisLayer.inPoint`)
+and runs to the end of the composition, so any track length plays in full.
+Each format's composition has that format's canvas and frame rate and is at
+least as long as the longest track: `aerender` renders frames `0..duration-1`.
+
+Mechanisms considered: expressions alone cannot load images or audio, and
+`aerender` cannot run scripts at render time, so the render path is fixed
+file names plus expressions. ExtendScript is used only once, to *build* the
+template (`template/create-toshi-template.jsx`), and is not needed again.
+
+**Checks.** Before `aerender` starts, the project's bytes must mention the
+three required file names: footage paths are stored as text in `.aep` and
+`.aepx`, so an absent name is an unused file. This catches an empty or
+unwired template in seconds (`"templateCheck": false` opts out). After
+`aerender`, ffprobe must find both a video and an audio stream, so a silent
+render is never published.
 
 **What it is not.** It is an adapter: Toshi starts `aerender` and reads its
 exit code and files. A future Adobe *plugin* (UXP/CEP) would run inside After
