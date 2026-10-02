@@ -96,7 +96,11 @@ const main = async (): Promise<void> => {
     },
     onPhase: (phase) => {
       if (phase === "bundling") {
-        log("Bundling Remotion project.");
+        log(
+          engine.id === "remotion"
+            ? "Bundling Remotion project."
+            : `Opening the ${engine.id} render engine.`,
+        );
       }
       if (phase === "resolving") {
         log("Resolving composition and reading audio duration.");

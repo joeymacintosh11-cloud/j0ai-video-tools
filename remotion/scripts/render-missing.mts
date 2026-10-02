@@ -14,7 +14,13 @@ import {
 import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
 import type { VisualizerProps } from "../core/domain/video/visualizerProps.ts";
-import { runCli, printLibraryOutcome } from "./cli.ts";
+import {
+  ENGINE_FLAG_USAGE,
+  isEngineFlagValue,
+  printLibraryOutcome,
+  readEngineFlag,
+  runCli,
+} from "./cli.ts";
 
 /**
  * Renders only the exports a track — or the whole catalogue — is missing.
@@ -37,7 +43,7 @@ import { runCli, printLibraryOutcome } from "./cli.ts";
 const printUsage = () => {
   console.error(
     [
-      "Usage: npm run render-missing -- <track-slug> [--preset <id>] [--all-formats] [--dry-run]",
+      "Usage: npm run render-missing -- <track-slug> [--preset <id>] [--all-formats] [--engine <id>] [--dry-run]",
       "       npm run render-catalogue-missing [-- --dry-run]",
       "",
       "  <track-slug>      Folder name under public/tracks/, e.g. ghetto-geek",
@@ -47,6 +53,7 @@ const printUsage = () => {
       "  --dry-run         Report the plan without rendering anything",
       "  --mode <mode>     missing (default), stale, or missing-and-stale",
       "  --replace         Confirm replacement of stale exports in this run",
+      ...ENGINE_FLAG_USAGE,
       "",
       "With no --preset or --all-formats, each track's own exportPresets decide",
       "which formats matter. A track that declares none intends every format.",
@@ -78,7 +85,8 @@ const parseArgs = (argv: string[]) => {
     );
   const mode = assertExportMode(modeValue);
   const positional = argv.filter(
-    (arg) => !arg.startsWith("--") && arg !== presetValue && arg !== modeValue,
+    (arg, index) =>
+      !arg.startsWith("--") && arg !== presetValue && arg !== modeValue && !isEngineFlagValue(argv, index),
   );
 
   const presetIds: readonly RenderPresetId[] | null = flags.includes(
@@ -96,6 +104,7 @@ const parseArgs = (argv: string[]) => {
     allTracks: flags.includes("--all-tracks"),
     dryRun: flags.includes("--dry-run"),
     presetIds,
+    engineId: readEngineFlag(argv),
   };
 };
 
@@ -126,7 +135,7 @@ const describePlan = (plan: ExportPlan): void => {
 };
 
 runCli("rendering missing exports", async () => {
-  const { slug, allTracks, presetIds, dryRun, mode, replace } = parseArgs(
+  const { slug, allTracks, presetIds, dryRun, mode, replace, engineId } = parseArgs(
     process.argv.slice(2),
   );
 
@@ -184,7 +193,7 @@ runCli("rendering missing exports", async () => {
     let lastLoggedPercentage = -1;
 
     const { outputLabel } = await renderTrackVideo({
-      engine: await renderEngines.resolve(undefined),
+      engine: await renderEngines.resolve(engineId),
       slug: target.slug,
       props,
       onRecorded: printLibraryOutcome,

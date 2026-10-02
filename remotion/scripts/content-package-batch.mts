@@ -16,7 +16,7 @@ import { renderTrackVideo } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
 import { listTracks } from "../services/tracks/listTracks.ts";
 import type { VisualizerProps } from "../core/domain/video/visualizerProps.ts";
-import { runCli, printLibraryOutcome } from "./cli.ts";
+import { ENGINE_FLAG_USAGE, printLibraryOutcome, readEngineFlag, runCli } from "./cli.ts";
 
 /**
  * Inspects, plans, and optionally builds Content Packages for several tracks
@@ -59,6 +59,7 @@ const printUsage = () => {
       "  --plan            Also compute and print what applying would queue.",
       "  --apply           Build the plan's missing/stale outputs (implies --plan).",
       "  --json            Print machine-readable JSON instead of text.",
+      ...ENGINE_FLAG_USAGE,
       "",
       "With no --plan/--apply, this only inspects and reports — nothing is",
       "queued or rendered.",
@@ -119,6 +120,7 @@ const parseArgs = (argv: string[]) => {
     plan: argv.includes("--plan") || argv.includes("--apply"),
     apply: argv.includes("--apply"),
     json: argv.includes("--json"),
+    engineId: readEngineFlag(argv),
   };
 };
 
@@ -162,7 +164,7 @@ const describePlan = (plan: ContentPackageBatchPlan): void => {
 };
 
 runCli("inspecting content package batch", async () => {
-  const { tracks, catalogue, mode, platforms, plan: wantsPlan, apply, json } =
+  const { tracks, catalogue, mode, platforms, plan: wantsPlan, apply, json, engineId } =
     parseArgs(process.argv.slice(2));
 
   if (tracks.length === 0 && !catalogue) {
@@ -245,7 +247,7 @@ runCli("inspecting content package batch", async () => {
     let lastLoggedPercentage = -1;
 
     const { outputLabel } = await renderTrackVideo({
-      engine: await renderEngines.resolve(undefined),
+      engine: await renderEngines.resolve(engineId),
       slug: action.slug,
       props,
       onRecorded: printLibraryOutcome,

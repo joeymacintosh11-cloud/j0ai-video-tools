@@ -11,17 +11,26 @@ import {
   renderTrackVideo,
 } from "../services/render/renderTrackVideo.ts";
 import { prepareTrack } from "../services/tracks/prepareTrack.ts";
-import { describeAnalysis, printMetadataSummary, runCli, printLibraryOutcome } from "./cli.ts";
+import {
+  describeAnalysis,
+  ENGINE_FLAG_USAGE,
+  isEngineFlagValue,
+  printLibraryOutcome,
+  printMetadataSummary,
+  readEngineFlag,
+  runCli,
+} from "./cli.ts";
 
 const printUsage = () => {
   console.error(
     [
-      "Usage: npm run render-track -- <track-slug> [--preset <id>] [--all-formats] [--validate-only]",
+      "Usage: npm run render-track -- <track-slug> [--preset <id>] [--all-formats] [--engine <id>] [--validate-only]",
       "",
       "  <track-slug>      Folder name under public/tracks/, e.g. ghetto-geek",
       `  --preset <id>     Export format; one of: ${RENDER_PRESET_IDS.join(", ")}`,
       "                    Defaults to youtube-16x9 when omitted.",
       "  --all-formats     Render every format, one after another",
+      ...ENGINE_FLAG_USAGE,
       "  --validate-only   Check and prepare the track without rendering",
       "",
       "Examples:",
@@ -34,7 +43,9 @@ const printUsage = () => {
 
 const parseArgs = (argv: string[]) => {
   const flags = argv.filter((arg) => arg.startsWith("--"));
-  const positional = argv.filter((arg) => !arg.startsWith("--"));
+  const positional = argv.filter(
+    (arg, index) => !arg.startsWith("--") && !isEngineFlagValue(argv, index),
+  );
 
   // --preset <id>, so the value is the argument after the flag.
   const presetFlagIndex = argv.indexOf("--preset");
@@ -44,13 +55,14 @@ const parseArgs = (argv: string[]) => {
   return {
     slug: positional[0] === presetValue ? positional[1] : positional[0],
     presetValue,
+    engineId: readEngineFlag(argv),
     allFormats: flags.includes("--all-formats"),
     validateOnly: flags.includes("--validate-only"),
   };
 };
 
 runCli("rendering track", async () => {
-  const { slug, presetValue, allFormats, validateOnly } = parseArgs(
+  const { slug, presetValue, allFormats, validateOnly, engineId } = parseArgs(
     process.argv.slice(2),
   );
 
@@ -93,14 +105,18 @@ runCli("rendering track", async () => {
     console.log(`\n→ ${preset.label} (${preset.width}x${preset.height})`);
 
     const { outputLabel } = await renderTrackVideo({
-      engine: await renderEngines.resolve(undefined),
+      engine: await renderEngines.resolve(engineId),
       slug,
       props,
       onRecorded: printLibraryOutcome,
       presetId,
       onPhase: (phase) => {
         if (phase === "bundling") {
-          console.log(`→ Bundling Remotion project...`);
+          console.log(
+            engineId === "remotion"
+              ? `→ Bundling Remotion project...`
+              : `→ Opening the ${engineId} render engine...`,
+          );
         }
         if (phase === "resolving") {
           console.log(
