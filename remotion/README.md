@@ -162,7 +162,7 @@ npm run dev
 ```
 
 Studio's preview always shows the `ghetto-geek` track by default
-(`src/Composition.tsx`). It's only the default props for the live preview —
+(`adapters/remotion/Composition.tsx`). It's only the default props for the live preview —
 `npm run render-track` renders any track's own data regardless of what
 Studio is currently showing.
 
@@ -900,32 +900,43 @@ stays and a warning appears instead of the field silently reverting.
 
 ### Project structure
 
-The track logic lives in shared modules, so the CLI is a thin layer over it
-and anything added later (a local app, a batch script) can reuse the same
-code rather than re-implementing it.
+The track logic lives in a reusable core with adapters around it, so the CLI,
+the API and the web app are thin layers over it, and a new renderer or host
+(a batch service, a Premiere Pro or After Effects integration) can reuse the
+same code instead of re-implementing it. [ARCHITECTURE.md](ARCHITECTURE.md)
+covers the layers, the dependency rules (enforced by
+`tests/architecture.test.mts`) and how to add an adapter.
 
 ```
-core/domain/             Pure, no filesystem. Safe to import anywhere, including
-                        the composition and browser code.
-  tracks/               types · errors · paths · metadata · validation · slug
-  video/                compositionConfig · renderPresets — the export formats,
-                        defined once and read by everything
+core/                   Platform-independent: no node:*, React or Remotion.
+  domain/               Safe to import anywhere, including the composition and
+                        browser code.
+    tracks/             types · errors · paths · metadata · validation · slug
+    video/              compositionConfig · renderPresets — the export formats,
+                        defined once and read by everything · visualizerProps —
+                        the render input every renderer consumes
+  ports/                renderEngine — the interface a renderer implements
 
-services/               Node only. The single owner of filesystem, ffmpeg and
-                        Remotion-API access.
+services/               Node only. The single owner of filesystem and ffmpeg
+                        access; renders through whichever RenderEngine it's given.
   tracks/               trackLocations · inspectTrack · listTracks ·
                         createTrack · updateTrackMetadata · prepareTrackAudio ·
                         prepareTrack · buildTrackProps · audioDuration
   render/               renderTrackVideo · publishExport — staged video/manifest publication
   tracks/               exportCoverage · exportManifest — freshness and cached fingerprints
+  workflows/            Planners, health/fix plans, library and history queries,
+                        and the render job manager, shared by the API and the CLI
+    render-worker.mts   Runs one render in its own process.
 
-src/BeatVisualizer/     The composition. Props in, pixels out.
+adapters/remotion/      The Remotion renderer.
+  remotionRenderEngine.mts   RenderEngine: bundle, Chromium, encoding settings
+  BeatVisualizer/       The composition. Props in, pixels out.
+  index.ts              Studio / bundle entry point (see remotion.config.ts)
 
 scripts/                CLI entry points: parse args, call a service, format
                         output, pick an exit code.
 
 server/                 Local HTTP API over the same services (see below).
-  render-worker.mts     Runs one render in its own process.
 
 ui/                     The local web app. Calls the API and renders what comes
                         back; it re-implements no validation, slug rules or path
@@ -941,11 +952,12 @@ vite.config.ts          Vite root is the project root, so publicDir defaults to
                         public/ and ui/ can import the composition directly.
 ```
 
-Two conventions worth knowing before changing anything here:
+Conventions worth knowing before changing anything here:
 
-- **`core/domain/` never imports `node:*`.** It's part of the Remotion bundle's
-  module graph (the composition imports it), so it has to stay browser-safe.
-  Anything touching the filesystem belongs in `services/`.
+- **`core/` never imports `node:*`, or any package.** It's part of the Remotion
+  bundle's module graph (the composition imports it) and of the browser UI, so
+  it has to stay platform-independent. Anything touching the filesystem belongs
+  in `services/`.
 - **Paths have one owner.** `core/domain/tracks/paths.ts` defines every
   `public/`-relative path (`tracks/<slug>/cover.png` and friends);
   `services/tracks/trackLocations.ts` turns those into absolute paths. Don't
