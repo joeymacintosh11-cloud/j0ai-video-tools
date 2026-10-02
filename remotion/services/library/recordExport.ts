@@ -7,7 +7,7 @@ import {
   type LibraryRecordIdentity,
   type LibraryTrackSnapshot,
 } from "../../core/domain/library/contentLibrary.ts";
-import { outputLabel } from "../../core/domain/tracks/paths.ts";
+import { manifestLabel, outputLabel } from "../../core/domain/tracks/paths.ts";
 import { isValidSlug } from "../../core/domain/tracks/slug.ts";
 import type { TrackMetadata } from "../../core/domain/tracks/types.ts";
 import { COMPOSITION_ID } from "../../core/domain/video/compositionConfig.ts";
@@ -82,8 +82,12 @@ export const libraryRecordIdFor = (
   });
 
 /** What is at the canonical path right now, before a publish replaces it. */
-export const captureExportBefore = (slug: string, presetId: RenderPresetId): ExportBeforePublish => {
-  const output = trackOutputLocation(slug, presetId);
+export const captureExportBefore = (
+  slug: string,
+  presetId: RenderPresetId,
+  renderer: RendererId = DEFAULT_RENDERER_ID,
+): ExportBeforePublish => {
+  const output = trackOutputLocation(slug, presetId, renderer);
   let hadOutput = false;
   try {
     const stats = statSync(output.path);
@@ -107,9 +111,6 @@ const presetSnapshot = (presetId: RenderPresetId) => {
     fps: preset.fps,
   };
 };
-
-const manifestLabel = (slug: string, presetId: string): string =>
-  `out/${slug}/${presetId}.manifest.json`;
 
 const sameExport = (record: ContentLibraryRecord, manifest: ExportManifest): boolean =>
   record.generatedAt === manifest.renderedAt &&
@@ -172,13 +173,13 @@ export const recordPublishedExport = (
         renderer: input.renderer ?? DEFAULT_RENDERER_ID,
       },
       output: {
-        path: outputLabel(slug, presetId),
+        path: outputLabel(slug, presetId, input.renderer),
         bytes: published.output.bytes,
         mtimeMs: published.output.mtimeMs,
         ino: published.output.ino,
       },
       manifest: {
-        path: manifestLabel(slug, presetId),
+        path: manifestLabel(slug, presetId, input.renderer),
         inputFingerprint: published.inputFingerprint,
         inputs: inputsOf(published),
       },
@@ -228,7 +229,7 @@ export const publishRecordedExport = async (
     );
   }
 
-  const before = captureExportBefore(input.slug, input.presetId);
+  const before = captureExportBefore(input.slug, input.presetId, input.renderer);
   await publishExport(
     input.slug,
     input.presetId,
@@ -236,9 +237,10 @@ export const publishRecordedExport = async (
     input.produce,
     input.checkCancelled,
     input.lock,
+    input.renderer,
   );
 
-  const output = trackOutputLocation(input.slug, input.presetId);
+  const output = trackOutputLocation(input.slug, input.presetId, input.renderer);
   const { manifest } = readExportManifest(output.manifest, input.slug, input.presetId);
   if (manifest === null) {
     // publishExport wrote this manifest moments ago under the lock we still

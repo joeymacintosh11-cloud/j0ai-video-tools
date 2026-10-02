@@ -102,7 +102,9 @@ const renderToTarget = async ({
     // never taken for a current one (rendererFingerprintParts).
     const inputs = fingerprintInputs(inputProps, presetId, session.assetRoot, engine.id, template);
 
-    const output = trackOutputLocation(slug, presetId);
+    // Remotion's exports keep their path; any other engine writes to its own
+    // folder, so the two never overwrite each other (trackOutputLocation).
+    const output = trackOutputLocation(slug, presetId, engine.id);
     const resolved: RenderResolvedInfo = {
       ...video,
       outputPath: output.path,
@@ -134,7 +136,8 @@ const renderToTarget = async ({
 };
 
 /**
- * Renders a prepared track to out/<slug>/<preset>.mp4.
+ * Renders a prepared track to out/<slug>/<preset>.mp4 (another engine than
+ * Remotion: out/<slug>/<engine>/<preset>.mp4).
  *
  * Shared by the render-track CLI and the API's render worker so there is
  * exactly one place that knows how this project encodes video. The caller

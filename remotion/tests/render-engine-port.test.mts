@@ -241,25 +241,50 @@ test("a Remotion render is recorded as Remotion and is current", async (t) => {
   assert.equal(facts?.freshness, "current");
 });
 
-test("another engine's export records its renderer and is not mistaken for a current Remotion export", async (t) => {
+test("another engine's export lands in its own folder, beside an untouched current Remotion export", async (t) => {
   const ctx = await setup(t);
   if (!ctx) return;
 
   await renderTrackVideo({
-    engine: fakeEngine([], { id: "premiere" }),
+    engine: fakeEngine([], { content: "remotion video" }),
+    slug: ctx.f.slug,
+    props: ctx.props,
+    presetId: "vertical-9x16",
+  });
+  const other = await renderTrackVideo({
+    engine: fakeEngine([], { id: "premiere", content: "premiere video" }),
     slug: ctx.f.slug,
     props: ctx.props,
     presetId: "vertical-9x16",
   });
 
-  const [record] = readContentLibrary().records.filter((entry) => entry.track.slug === ctx.f.slug);
-  assert.equal(record.template.renderer, "premiere");
+  // Remotion keeps its path; the other engine gets out/<slug>/<renderer>/.
+  const remotionOutput = trackOutputLocation(ctx.f.slug, "vertical-9x16");
+  const otherOutput = trackOutputLocation(ctx.f.slug, "vertical-9x16", "premiere");
+  assert.equal(remotionOutput.label, `out/${ctx.f.slug}/vertical-9x16.mp4`);
+  assert.equal(otherOutput.label, `out/${ctx.f.slug}/premiere/vertical-9x16.mp4`);
+  assert.equal(other.outputLabel, otherOutput.label);
+  assert.equal(await readFile(remotionOutput.path, "utf8"), "remotion video");
+  assert.equal(await readFile(otherOutput.path, "utf8"), "premiere video");
 
-  // Freshness is judged against the default renderer, so the export is stale
-  // on the visualizer axis and nothing else.
+  // Remotion's export is still the current one; the other engine's never
+  // replaced it.
   const facts = trackExportCoverage(ctx.f.slug).find((entry) => entry.presetId === "vertical-9x16");
-  assert.equal(facts?.freshness, "stale");
-  assert.deepEqual(facts?.staleReasons, ["visualizer_changed"]);
+  assert.equal(facts?.freshness, "current");
+
+  // The other export records its renderer and path, and its manifest carries
+  // a fingerprint that would never pass for a current Remotion export.
+  const records = readContentLibrary().records.filter((entry) => entry.track.slug === ctx.f.slug);
+  assert.deepEqual(
+    records.map((record) => [record.template.renderer, record.output.path, record.exportKind]),
+    [
+      ["remotion", remotionOutput.label, "original"],
+      ["premiere", otherOutput.label, "original"],
+    ],
+  );
+  const { manifest } = readExportManifest(otherOutput.manifest, ctx.f.slug, "vertical-9x16");
+  assert.ok(manifest);
+  assert.notEqual(manifest.inputs.visualizer, fingerprintInputs(ctx.props, "vertical-9x16").visualizer);
 });
 
 test("library records from before renderers were recorded still parse, and read back as Remotion", async (t) => {

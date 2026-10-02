@@ -2,12 +2,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   LEGACY_OUTPUT_FILE_NAME,
+  outputFolderRelativePath,
   outputLabel,
   outputRelativePath,
   TRACKS_DIR_NAME,
   trackAssetPaths,
 } from "../../core/domain/tracks/paths.ts";
 import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
+import { DEFAULT_RENDERER_ID, type RendererId } from "../../core/domain/video/renderers.ts";
 
 /**
  * Resolves absolute filesystem paths from the public/-relative conventions in
@@ -58,12 +60,21 @@ export type TrackOutputLocation = {
 };
 
 /** Absolute location of one track/format render. */
+/**
+ * Where an engine's export of one format lives. Remotion (the default) is
+ * out/<slug>/<preset>.mp4 as it always was; any other renderer writes to
+ * out/<slug>/<renderer>/ instead (outputFolderRelativePath).
+ */
 export const trackOutputLocation = (
   slug: string,
   presetId: RenderPresetId,
-): TrackOutputLocation => ({
-  path: path.join(OUT_DIR, outputRelativePath(slug, presetId)),
-  dir: path.join(OUT_DIR, slug),
-  label: outputLabel(slug, presetId),
-  manifest: path.join(OUT_DIR, slug, `${presetId}.manifest.json`),
-});
+  renderer: RendererId = DEFAULT_RENDERER_ID,
+): TrackOutputLocation => {
+  const dir = path.join(OUT_DIR, outputFolderRelativePath(slug, renderer));
+  return {
+    path: path.join(OUT_DIR, outputRelativePath(slug, presetId, renderer)),
+    dir,
+    label: outputLabel(slug, presetId, renderer),
+    manifest: path.join(dir, `${presetId}.manifest.json`),
+  };
+};
