@@ -1,14 +1,15 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
-import { rename, writeFile } from "node:fs/promises";
+import { constants, createReadStream, existsSync, readdirSync, statSync } from "node:fs";
+import { copyFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { secondsToFrames } from "../../core/domain/video/compositionConfig.ts";
 import { DEFAULT_RENDER_PRESET_ID, renderPreset } from "../../core/domain/video/renderPresets.ts";
-import { buildTemplateData } from "../../core/domain/video/templateData.ts";
+import { buildTemplateData, type TemplateData } from "../../core/domain/video/templateData.ts";
+import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
 import type { RenderEngine, RenderSession } from "../../core/ports/renderEngine.ts";
 import { probeAudioDurationInSeconds } from "../../services/tracks/audioDuration.ts";
 import { buildAerenderArgs, parseAerenderProgressFrame } from "./aerenderCommand.mts";
@@ -30,9 +31,10 @@ import { readAfterEffectsConfig, type AfterEffectsConfig } from "./afterEffectsC
  *             missing or wrong), finds aerender (RENDERER_UNAVAILABLE if not),
  *             and hashes the project file — the template's version.
  *  resolve()  picks the composition for the format, takes the frame count
- *             from the track's audio, and writes the template-data sidecar
- *             (core/domain/video/templateData.ts) to the configured
- *             dataFile, which the project imports as JSON footage.
+ *             from the track's audio, copies the track's images and audio
+ *             to fixed names beside the configured dataFile, and writes the
+ *             template-data sidecar (core/domain/video/templateData.ts)
+ *             there; the project imports all of them as footage.
  *  render()   runs aerender for exactly those frames into a sibling of the
  *             staging path, reports its PROGRESS lines, and moves the file
  *             into place. A non-zero exit, a missing file or an output
@@ -78,6 +80,47 @@ const projectVersion = (file: string): Promise<string> =>
       .on("end", () => resolve(`aep-sha256:${hash.digest("hex").slice(0, 16)}`));
   });
 
+/**
+ * The fixed file names a template imports, beside the data file. Each keeps
+ * its source's extension (toshi-cover.png, toshi-audio.wav, ...).
+ */
+export const STAGED_ASSET_NAMES = {
+  cover: "toshi-cover",
+  audio: "toshi-audio",
+  waveformAudio: "toshi-waveform-audio",
+  brandLogo: "toshi-brand-logo",
+  brandBadge: "toshi-brand-badge",
+} as const;
+
+/** Written beside its destination and renamed over it, so a reader never sees half a file. */
+const writeAtomically = async (destination: string, content: string | null, copyFrom?: string): Promise<void> => {
+  const temporary = `${destination}.tmp-${process.pid}`;
+  if (copyFrom !== undefined) await copyFile(copyFrom, temporary, constants.COPYFILE_FICLONE);
+  else await writeFile(temporary, content ?? "");
+  await rename(temporary, destination);
+};
+
+const stageAssets = async (
+  props: VisualizerProps,
+  dir: string,
+  publicDir: string,
+): Promise<TemplateData["assets"]> => {
+  const sources: Record<keyof typeof STAGED_ASSET_NAMES, string> = {
+    cover: props.coverSrc,
+    audio: props.audioSrc,
+    waveformAudio: props.waveformAudioSrc ?? props.audioSrc,
+    brandLogo: props.brandLogoSrc,
+    brandBadge: props.brandBadgeSrc,
+  };
+  const staged = {} as Record<keyof typeof STAGED_ASSET_NAMES, string>;
+  for (const [role, source] of Object.entries(sources) as [keyof typeof STAGED_ASSET_NAMES, string][]) {
+    const destination = path.join(dir, `${STAGED_ASSET_NAMES[role]}${path.extname(source)}`);
+    await writeAtomically(destination, null, path.join(publicDir, source));
+    staged[role] = destination;
+  }
+  return staged;
+};
+
 const renderFailed = (message: string): TrackError =>
   new TrackError(trackIssue("RENDER_FAILED", message));
 
@@ -117,19 +160,21 @@ export const createAfterEffectsRenderEngine = (
           const seconds = await deps.probeAudioDurationInSeconds(path.join(deps.publicDir, props.audioSrc));
           const durationInFrames = secondsToFrames(seconds, preset.fps);
 
+          // Expressions can read text from the sidecar but cannot swap a
+          // footage item's file, so this track's images and audio are copied
+          // to fixed names beside it; the template imports those files as
+          // footage and After Effects reloads them when aerender opens it.
+          const staged = await stageAssets(props, path.dirname(config.dataFile), deps.publicDir);
           const data = buildTemplateData({
             props,
             preset,
             durationInFrames,
             resolveAsset: (relative) => path.join(deps.publicDir, relative),
           });
-          // Written whole and renamed into place, so the project never reads half a file.
-          const temporary = `${config.dataFile}.tmp-${process.pid}`;
-          await writeFile(temporary, `${JSON.stringify(data, null, 2)}\n`);
-          await rename(temporary, config.dataFile);
+          await writeAtomically(config.dataFile, `${JSON.stringify({ ...data, assets: staged }, null, 2)}\n`);
 
           log(`After Effects: composition "${composition}", ${durationInFrames} frames @ ${preset.fps}fps.`);
-          log(`After Effects: template data written to ${config.dataFile}.`);
+          log(`After Effects: template data and assets staged in ${path.dirname(config.dataFile)}.`);
 
           resolved = { composition, durationInFrames, fps: preset.fps };
           return {

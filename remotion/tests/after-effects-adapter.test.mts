@@ -289,15 +289,30 @@ test("an After Effects render writes the sidecar, runs aerender, and publishes t
   );
   assert.equal(progress.at(-1), 60);
 
-  // The sidecar the project reads: the shared template-data contract.
-  assert.deepEqual(
-    JSON.parse(await readFile(ctx.tpl.dataFile, "utf8")),
-    buildTemplateData({
+  // The sidecar the project reads: the shared template-data contract, with
+  // the track's assets staged at the fixed names the template imports.
+  const staged = {
+    cover: path.join(ctx.tpl.dir, "toshi-cover.png"),
+    audio: path.join(ctx.tpl.dir, "toshi-audio.wav"),
+    waveformAudio: path.join(ctx.tpl.dir, "toshi-waveform-audio.wav"),
+    brandLogo: path.join(ctx.tpl.dir, "toshi-brand-logo.png"),
+    brandBadge: path.join(ctx.tpl.dir, "toshi-brand-badge.png"),
+  };
+  assert.deepEqual(JSON.parse(await readFile(ctx.tpl.dataFile, "utf8")), {
+    ...buildTemplateData({
       props: { ...ctx.props, presetId: "vertical-9x16" },
       preset: renderPreset("vertical-9x16"),
       durationInFrames: 60,
       resolveAsset: (relative) => path.join(PUBLIC_DIR, relative),
     }),
+    assets: staged,
+  });
+  assert.equal(await readFile(staged.cover, "utf8"), "cover");
+  assert.equal(await readFile(staged.audio, "utf8"), "audio");
+  assert.equal(await readFile(staged.waveformAudio, "utf8"), "audio", "no analysis audio: the full audio stands in");
+  assert.deepEqual(
+    await readFile(staged.brandLogo),
+    await readFile(path.join(PUBLIC_DIR, ctx.props.brandLogoSrc)),
   );
 
   // Published to out/<slug>/after-effects/, Remotion's path untouched.
@@ -327,7 +342,7 @@ test("an After Effects render writes the sidecar, runs aerender, and publishes t
 
   // Diagnostics name the binary, project, composition and output.
   const logText = ctx.logs.join("\n");
-  for (const expected of [FAKE_AERENDER, ctx.tpl.project, `composition "Toshi 9x16"`, ctx.tpl.dataFile, "rendering to"]) {
+  for (const expected of [FAKE_AERENDER, ctx.tpl.project, `composition "Toshi 9x16"`, `staged in ${ctx.tpl.dir}`, "rendering to"]) {
     assert.ok(logText.includes(expected), `log mentions ${expected}`);
   }
 });
