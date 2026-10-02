@@ -8,6 +8,11 @@ import {
   assertRenderPresetId,
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
+import {
+  assertRendererId,
+  DEFAULT_RENDERER_ID,
+  type RendererId,
+} from "../../core/domain/video/renderers.ts";
 import type {
   RenderBatchView,
   RenderTarget,
@@ -81,6 +86,7 @@ type RenderJob = {
   id: string;
   slug: string;
   presetId: RenderPresetId;
+  engine: RendererId;
   batchId: string | null;
   status: RenderJobStatus;
   progress: number;
@@ -156,12 +162,14 @@ class RenderManager {
   private enqueue(
     slug: string,
     presetId: RenderPresetId,
+    engine: RendererId,
     batchId: string | null,
   ): RenderJob {
     const job: RenderJob = {
       id: randomUUID(),
       slug,
       presetId,
+      engine,
       batchId,
       status: "queued",
       progress: 0,
@@ -183,12 +191,19 @@ class RenderManager {
 
     this.jobs.set(job.id, job);
     this.queue.push(job.id);
-    this.appendLog(job, "info", `Queued ${presetId} render for "${slug}".`);
+    this.appendLog(
+      job,
+      "info",
+      engine === DEFAULT_RENDERER_ID
+        ? `Queued ${presetId} render for "${slug}".`
+        : `Queued ${presetId} render for "${slug}" with the ${engine} engine.`,
+    );
     void recordRenderJournalEvent({
       jobId: job.id,
       batchId: job.batchId,
       slug: job.slug,
       presetId: job.presetId,
+      engine: job.engine,
       state: "queued",
       error: null,
     });
@@ -196,11 +211,18 @@ class RenderManager {
     return job;
   }
 
-  startRender(slugInput: string, presetInput?: unknown): RenderJobView {
+  /**
+   * `engineInput` names the renderer (core/domain/video/renderers.ts); absent
+   * means the default. Only the id is validated here — whether this
+   * installation has that engine is the caller's to check up front (the API
+   * does, via adapters/renderEngines.mts), and the worker re-checks it.
+   */
+  startRender(slugInput: string, presetInput?: unknown, engineInput?: unknown): RenderJobView {
     this.assertAccepting();
 
     const slug = assertValidSlug(slugInput);
     const presetId = assertRenderPresetId(presetInput);
+    const engine = assertRendererId(engineInput);
 
     // One job per track and format. A second job for the same pair would take
     // the single render slot in turn and write the same file again, so it is
@@ -233,7 +255,7 @@ class RenderManager {
       );
     }
 
-    const job = this.enqueue(slug, presetId, null);
+    const job = this.enqueue(slug, presetId, engine, null);
     this.drainQueue();
 
     return this.toView(job);
@@ -265,6 +287,10 @@ class RenderManager {
     const resolved = targets.map((target) => ({
       slug: assertValidSlug(target.slug),
       presetId: assertRenderPresetId(target.preset),
+      engine: assertRendererId(target.engine),
+      // Echoed back on skipped/locked targets only when the caller named one,
+      // so a request without engines gets exactly the shape it always did.
+      named: target.engine !== undefined,
     }));
 
     const batch: RenderBatch = {
@@ -278,12 +304,13 @@ class RenderManager {
     const locked: RenderTarget[] = [];
     const seen = new Set<string>();
 
-    for (const { slug, presetId } of resolved) {
+    for (const { slug, presetId, engine, named } of resolved) {
       const key = targetKey(slug, presetId);
+      const reported: RenderTarget = { slug, preset: presetId, ...(named ? { engine } : {}) };
 
       // Duplicates inside the request itself, and pairs already in flight.
       if (seen.has(key) || this.activeJobFor(slug, presetId)) {
-        skipped.push({ slug, preset: presetId });
+        skipped.push(reported);
         continue;
       }
       seen.add(key);
@@ -292,11 +319,11 @@ class RenderManager {
       // failing the whole batch: one contended format should not stop the other
       // forty-nine from queueing.
       if (this.lockedElsewhere(slug, presetId)) {
-        locked.push({ slug, preset: presetId });
+        locked.push(reported);
         continue;
       }
 
-      const job = this.enqueue(slug, presetId, batch.id);
+      const job = this.enqueue(slug, presetId, engine, batch.id);
       batch.jobIds.push(job.id);
     }
 
@@ -545,6 +572,7 @@ class RenderManager {
       batchId: job.batchId,
       slug: job.slug,
       presetId: job.presetId,
+      engine: job.engine,
       state: "preparing",
       error: null,
     });
@@ -596,7 +624,7 @@ class RenderManager {
     };
 
     try {
-      child = fork(WORKER_PATH, [job.slug, job.presetId, job.id], {
+      child = fork(WORKER_PATH, [job.slug, job.presetId, job.id, job.engine], {
         stdio: ["ignore", "pipe", "pipe", "ipc"],
       });
     } catch (error) {
@@ -641,6 +669,7 @@ class RenderManager {
             batchId: job.batchId,
             slug: job.slug,
             presetId: job.presetId,
+            engine: job.engine,
             state: "rendering",
             error: null,
           });
@@ -736,6 +765,7 @@ class RenderManager {
       batchId: job.batchId,
       slug: job.slug,
       presetId: job.presetId,
+      engine: job.engine,
       state: status,
       // Reconstructed, not `job.error` itself: the live error carries an
       // optional `details` (the raw Error#stack from a spawn/IPC failure,
@@ -876,6 +906,7 @@ class RenderManager {
       id: job.id,
       slug: job.slug,
       presetId: job.presetId,
+      engine: job.engine,
       batchId: job.batchId,
       status: job.status,
       progress: job.progress,

@@ -25,6 +25,7 @@ const historicalView = (jobId: string): RenderJobView | null => {
     id: recovered.jobId,
     slug: recovered.slug,
     presetId: recovered.presetId as RenderJobView["presetId"],
+    engine: recovered.engine,
     batchId: recovered.batchId,
     status: recovered.status,
     progress: 0,

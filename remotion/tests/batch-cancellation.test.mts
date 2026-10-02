@@ -37,6 +37,7 @@ const job = (
   id,
   slug,
   presetId,
+  engine: "remotion",
   batchId: "batch",
   status,
   progress: status === "completed" ? 1 : 0.4,

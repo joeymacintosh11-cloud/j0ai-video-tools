@@ -34,6 +34,7 @@ import {
   updateTrackMetadata,
   type TrackMetadataPatch,
 } from "../../services/tracks/updateTrackMetadata.ts";
+import { renderEngines } from "../../adapters/renderEngines.mts";
 import { readJsonBody, sendOk } from "../http/json.ts";
 import { renderManager } from "../../services/workflows/renderManager.ts";
 import {
@@ -400,9 +401,12 @@ export const handleStartRender = async (
   response: ServerResponse,
 ): Promise<void> => {
   const slug = assertValidSlug(slugInput);
-  // An empty body means the default format, preserving the original call.
+  // An empty body means the default format and the default engine, preserving
+  // the original call.
   const body = await readJsonBody(request);
   const presetId = assertRenderPresetId(body.preset);
+  // Checked against this installation's adapters before anything is queued.
+  const engine = renderEngines.assertAvailable(body.engine);
   const inspection = await inspectTrack(slug);
 
   // Reject an invalid track up front so the caller gets a real 4xx instead of
@@ -415,7 +419,7 @@ export const handleStartRender = async (
     );
   }
 
-  const job = renderManager.startRender(slug, presetId);
+  const job = renderManager.startRender(slug, presetId, engine);
 
   const payload: StartRenderView = {
     jobId: job.id,

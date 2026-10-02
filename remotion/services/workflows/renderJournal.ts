@@ -1,3 +1,4 @@
+import type { RendererId } from "../../core/domain/video/renderers.ts";
 import { randomUUID } from "node:crypto";
 import {
   appendRenderJournalEvent,
@@ -31,6 +32,7 @@ export type RenderJournalRecordInput = {
   readonly batchId: string | null;
   readonly slug: string;
   readonly presetId: string;
+  readonly engine: RendererId;
   readonly state: RenderJournalLifecycleState;
   readonly error: { readonly code: string; readonly message: string } | null;
 };
@@ -68,6 +70,7 @@ export const recordRenderJournalEvent = (
     batchId: input.batchId,
     slug: input.slug,
     presetId: input.presetId,
+    engine: input.engine,
     state: input.state,
     recordedAt: new Date().toISOString(),
     bootId: RENDER_MANAGER_BOOT_ID,

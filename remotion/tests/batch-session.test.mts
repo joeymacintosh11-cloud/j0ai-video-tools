@@ -31,7 +31,7 @@ const reference = (slug = "track-a", jobId = "00000000-0000-4000-8000-0000000000
 });
 
 const job = (status: RenderJobView["status"], overrides: Partial<RenderJobView> = {}): RenderJobView => ({
-  id: reference().jobId, slug: "track-a", presetId: "youtube-16x9", batchId: "batch",
+  id: reference().jobId, slug: "track-a", presetId: "youtube-16x9", engine: "remotion", batchId: "batch",
   status, progress: 0, framesRendered: null, totalFrames: null, fps: null, elapsedMs: 0,
   startedAt: null, queuedAt: new Date(NOW).toISOString(), finishedAt: null,
   outputPath: null, outputLabel: null, error: null, ...overrides,
