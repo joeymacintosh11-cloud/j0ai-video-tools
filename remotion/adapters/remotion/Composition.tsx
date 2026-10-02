@@ -3,10 +3,10 @@ import {
   BeatVisualizer,
   calculateBeatVisualizerMetadata,
 } from "./BeatVisualizer/BeatVisualizer";
-import { parseTrackMetadata } from "../core/domain/tracks/metadata";
-import { BRAND_ASSET_PATHS, trackAssetPaths, publicLabel } from "../core/domain/tracks/paths";
-import { COMPOSITION_CONFIG } from "../core/domain/video/compositionConfig";
-import previewTrackMetadataJson from "../public/tracks/ghetto-geek/metadata.json";
+import { parseTrackMetadata } from "../../core/domain/tracks/metadata";
+import { BRAND_ASSET_PATHS, trackAssetPaths, publicLabel } from "../../core/domain/tracks/paths";
+import { COMPOSITION_CONFIG } from "../../core/domain/video/compositionConfig";
+import previewTrackMetadataJson from "../../public/tracks/ghetto-geek/metadata.json";
 
 // The Studio preview always shows one track by default. Any track in
 // public/tracks/<slug>/ can be rendered via `npm run render-track -- <slug>`,

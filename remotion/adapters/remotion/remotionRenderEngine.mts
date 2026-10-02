@@ -26,7 +26,7 @@ import type {
 const adapterDir = path.dirname(fileURLToPath(import.meta.url));
 
 /** The Remotion entry point (registerRoot) that bundle() starts from. */
-export const REMOTION_ENTRY_POINT = path.join(adapterDir, "..", "..", "src", "index.ts");
+export const REMOTION_ENTRY_POINT = path.join(adapterDir, "index.ts");
 
 type Composition = Awaited<ReturnType<typeof selectComposition>>;
 

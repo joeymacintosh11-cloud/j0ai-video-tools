@@ -78,12 +78,19 @@ test("core/ never reaches outward into an adapter or app", () => {
   );
 });
 
+const REMOTION_ENGINE = path.join("adapters", "remotion", "remotionRenderEngine.mts");
+
 test("services, server and CLI depend on the core render contract, not on the Remotion composition", () => {
-  // They pass VisualizerProps (core/domain/video/visualizerProps.ts) around;
-  // only a render adapter, and the web UI's live preview, touch the composition.
+  // They pass VisualizerProps (core/domain/video/visualizerProps.ts) around.
+  // Entry points may plug in the Remotion *engine*; only the adapter itself,
+  // and the web UI's live preview, touch the composition.
   for (const dir of ["services", "server", "scripts"]) {
     assert.deepEqual(
-      violations(dir, (_specifier, target) => target !== null && isUnder(target, "src")),
+      violations(
+        dir,
+        (_specifier, target) =>
+          target !== null && isUnder(target, path.join("adapters", "remotion")) && target !== REMOTION_ENGINE,
+      ),
       [],
       dir,
     );

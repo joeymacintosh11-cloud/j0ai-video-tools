@@ -14,7 +14,7 @@ export default [
      *    HTTP from the dev server and the API, where a plain URL is correct.
      *
      * Every other rule (react-hooks, no-console, the TypeScript set) still
-     * applies. src/ keeps the full Remotion rule set.
+     * applies. adapters/remotion/ (the composition) keeps the full Remotion rule set.
      */
     files: ["ui/**/*.{ts,tsx}"],
     rules: {

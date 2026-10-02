@@ -10,7 +10,7 @@ import { defineConfig } from "vite";
  *    composition calls staticFile() on paths like "tracks/x/cover.png", which
  *    resolve to "/tracks/x/cover.png", so <Player> preview art and audio load
  *    with no extra configuration and no path rewriting.
- *  - ui/ can import src/BeatVisualizer and core/domain directly, because both
+ *  - ui/ can import adapters/remotion/BeatVisualizer and core/domain directly, because both
  *    sit inside the Vite root.
  *
  * /api is proxied to the Phase 2B API server, so the browser only ever talks to

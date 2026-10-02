@@ -1,4 +1,4 @@
-import type { RenderLayout } from "../../core/domain/video/renderPresets.ts";
+import type { RenderLayout } from "../../../core/domain/video/renderPresets.ts";
 
 /**
  * Per-shape sizing for the visualizer.

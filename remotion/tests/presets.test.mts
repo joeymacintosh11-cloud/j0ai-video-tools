@@ -14,7 +14,7 @@ import {
   RENDER_PRESETS,
   renderPreset,
 } from "../core/domain/video/renderPresets.ts";
-import { LAYOUTS } from "../src/BeatVisualizer/layouts.ts";
+import { LAYOUTS } from "../adapters/remotion/BeatVisualizer/layouts.ts";
 import { COMPOSITION_CONFIG, secondsToFrames } from "../core/domain/video/compositionConfig.ts";
 import { trackOutputLocation } from "../services/tracks/trackLocations.ts";
 

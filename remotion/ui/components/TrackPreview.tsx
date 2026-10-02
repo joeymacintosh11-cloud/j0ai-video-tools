@@ -1,6 +1,6 @@
 import { Player } from "@remotion/player";
 import { useState } from "react";
-import { BeatVisualizer } from "../../src/BeatVisualizer/BeatVisualizer.tsx";
+import { BeatVisualizer } from "../../adapters/remotion/BeatVisualizer/BeatVisualizer.tsx";
 import { secondsToFrames } from "../../core/domain/video/compositionConfig.ts";
 import {
   renderPreset,

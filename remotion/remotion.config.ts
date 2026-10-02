@@ -7,6 +7,9 @@
 
 import { Config } from "@remotion/cli/config";
 
+// The composition lives in the Remotion adapter, not in Remotion's default
+// src/ — see ARCHITECTURE.md. Studio and `remotion bundle` start here.
+Config.setEntryPoint("./adapters/remotion/index.ts");
 Config.setRspack(true);
 Config.setVideoImageFormat("jpeg");
 Config.setOverwriteOutput(true);

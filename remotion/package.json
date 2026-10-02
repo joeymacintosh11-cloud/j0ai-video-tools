@@ -32,7 +32,7 @@
     "dev": "remotion studio",
     "build": "remotion bundle",
     "upgrade": "remotion upgrade",
-    "lint": "eslint core adapters src scripts services server ui tests && tsc",
+    "lint": "eslint core adapters scripts services server ui tests && tsc",
     "server": "node server/index.mts",
     "ui": "vite",
     "new-track": "node scripts/new-track.mts",
