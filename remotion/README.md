@@ -128,13 +128,86 @@ This prepares the track (see above), bundles the project, resolves the
 video's duration from `beat.wav` automatically, and writes the result to
 `out/<track-slug>/<preset>.mp4` (e.g. `out/ghetto-geek/youtube-16x9.mp4`).
 
-Rendering uses the Remotion engine. `render-track`, `render-missing`,
-`content-package` and `content-package-batch` also take an optional
-`--engine <id>` (e.g. `--engine remotion`). Leaving it out means Remotion, as
-before. Remotion is the only engine installed today. `premiere` and
-`after-effects` are reserved names that are refused with a "not available"
-error, and anything else is an unknown engine. Each export records the engine
-that made it; see [ARCHITECTURE.md](ARCHITECTURE.md#choosing-the-engine-per-job).
+Rendering uses the Remotion engine. `render-track` also takes an optional
+`--engine <id>`: `remotion` (the default — leaving the flag out behaves exactly
+as before) or `after-effects` (see below). `premiere` is a reserved name that
+is refused as "not available", and anything else is an unknown engine.
+`render-missing`, `content-package` and `content-package-batch` accept
+`--engine remotion` only, because they plan from Remotion's exports. Each
+export records the engine that made it; see
+[ARCHITECTURE.md](ARCHITECTURE.md#choosing-the-engine-per-job).
+
+### Rendering with After Effects (proof of concept)
+
+`--engine after-effects` renders a track through your own After Effects
+project, using After Effects' command-line renderer, `aerender`:
+
+```console
+npm run render-track -- ghetto-geek --engine after-effects
+npm run render-track -- ghetto-geek --engine after-effects --preset vertical-9x16
+```
+
+The result goes to `out/<track-slug>/after-effects/<preset>.mp4`, next to (never
+over) the Remotion export, and is recorded in the content library as an After
+Effects export.
+
+**1. After Effects.** Install it (macOS). `aerender` is found automatically in
+`/Applications/Adobe After Effects <version>/` (newest first) or on `PATH`. To
+choose a specific one, set `TOSHI_AERENDER_PATH`, or `"aerenderPath"` in the
+config below. Without it, the command stops with a "not available" error that
+lists where it looked.
+
+**2. A template.** Create `after-effects.local.json` in this folder (it is
+git-ignored; `TOSHI_AE_CONFIG` can point elsewhere):
+
+```json
+{
+  "project": "/Users/you/Toshi/ToshiVisualizer.aep",
+  "composition": "Toshi Visualizer",
+  "compositions": { "vertical-9x16": "Toshi Visualizer 9x16", "square-1x1": "Toshi Visualizer 1x1" },
+  "outputModule": "H.264 - Match Render Settings - 15 Mbps"
+}
+```
+
+Only `project` and `composition` are required. `compositions` picks a
+composition per format. `outputModule` must name an H.264/MP4 output-module
+template in your After Effects; leave it out to use the project's own. Also
+optional: `dataFile` (default: `toshi-render-data.json` beside the project)
+and `aerenderPath`. Missing or wrong settings stop the render with a "not
+configured" error saying what to fix.
+
+**3. The project.** Before each render, Toshi writes these files next to
+`dataFile` (the project's folder by default). Import them into the project
+once, as footage:
+
+| File | Contents |
+| --- | --- |
+| `toshi-render-data.json` | Title, artist, key, BPM, subtitle, format and timing |
+| `toshi-cover.png` | The track's cover |
+| `toshi-audio.wav` | The track's audio |
+| `toshi-waveform-audio.wav` | Lighter audio for audio-reactive layers |
+| `toshi-brand-logo.png`, `toshi-brand-badge.png` | The brand marks |
+
+Drive text layers with expressions such as
+`footage("toshi-render-data.json").sourceData.track.title`. After Effects
+reloads the files each time it renders. Each composition needs its format's
+canvas and frame rate (30fps; 1920×1080, 1080×1920 or 1080×1080), and must be
+at least as long as your longest track. Toshi renders exactly the track's
+length from frame 0.
+
+The diagnostics show which `aerender`, project, composition and output were
+used, and why a render failed (including `aerender`'s exit code and last
+output lines).
+
+**Limits of this proof of concept:**
+- Only `render-track` and the API render with After Effects. Freshness
+  checks, delivery, release bundles and content packages still look at
+  Remotion exports only.
+- One After Effects render at a time per data folder, because they share the
+  data file and staged assets.
+- Nothing checks that a composition's canvas, frame rate or length matches the
+  format.
+- The UI does not offer engine selection yet.
 
 ### Export formats
 
@@ -1077,7 +1150,8 @@ queued -> preparing -> rendering -> completed
 Starting a render returns immediately; the render itself runs in a separate
 process. Every job reports its `engine` (default `remotion`). Naming an engine
 that is unknown (`INVALID_RENDERER`) or not installed (`RENDERER_UNAVAILABLE`)
-is a 400, and nothing is queued. **Only one render runs at a time** — a render already uses three
+is a 400, and nothing is queued. An `after-effects` job whose template is not
+configured fails with `RENDERER_NOT_CONFIGURED` in its job error. **Only one render runs at a time** — a render already uses three
 Chromium tabs, and running two at once would thrash rather than finish sooner.
 Further requests queue.
 

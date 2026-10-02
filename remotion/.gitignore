@@ -9,6 +9,9 @@ out
 # Machine-local export destination (absolute paths never belong in git).
 delivery.local.json
 
+# Machine-local After Effects template and aerender settings.
+after-effects.local.json
+
 # Machine/person-local content-package metadata template overrides.
 content-metadata.local.json
 
