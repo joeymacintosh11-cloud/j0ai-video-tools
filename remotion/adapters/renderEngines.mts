@@ -3,6 +3,7 @@ import {
   describeAerenderNotFound,
   discoverInstalledAerender,
 } from "./after-effects/aerenderDiscovery.mts";
+import { readAfterEffectsConfig } from "./after-effects/afterEffectsConfig.mts";
 
 /**
  * Every render engine this installation has, by renderer id.
@@ -30,6 +31,16 @@ export const renderEngines = createRenderEngineRegistry({
     probe: () => {
       const discovery = discoverInstalledAerender();
       return discovery.found ? null : describeAerenderNotFound(discovery);
+    },
+    // Only for reporting status (a UI's "not configured"): the same reader the
+    // engine opens with, so the message is the one a render would fail with.
+    configured: () => {
+      try {
+        readAfterEffectsConfig();
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
     },
   },
 });

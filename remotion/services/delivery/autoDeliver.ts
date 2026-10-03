@@ -1,7 +1,15 @@
-import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
+import {
+  RENDER_PRESETS,
+  type RenderPresetId,
+} from "../../core/domain/video/renderPresets.ts";
+import {
+  DEFAULT_RENDERER_ID,
+  RENDERER_LABELS,
+  type RendererId,
+} from "../../core/domain/video/renderers.ts";
 import { updateReleaseBundleAfterDelivery } from "./autoReleaseBundle.ts";
 import { deliverExport, type DeliveryOutcome } from "./deliverExport.ts";
-import { readDeliverySettings } from "./deliverySettings.ts";
+import { readDeliverySettings, type DeliverySettings } from "./deliverySettings.ts";
 
 /**
  * Copies an export straight after it was rendered, when asked to.
@@ -20,11 +28,37 @@ export const deliverAfterRender = async (
   slug: string,
   presetId: RenderPresetId,
   report?: (outcome: DeliveryOutcome) => void,
+  /**
+   * The engine that just rendered. Delivery copies Remotion's export, so after
+   * any other engine's render it would ship a different video than the one
+   * just made; that is reported as not delivered instead.
+   */
+  renderer: RendererId = DEFAULT_RENDERER_ID,
+  /** Read from delivery.local.json when omitted, as deliverExport does. */
+  given?: DeliverySettings,
 ): Promise<DeliveryOutcome | null> => {
   try {
-    const settings = await readDeliverySettings();
+    const settings = given ?? (await readDeliverySettings());
 
     if (!settings.autoDeliver || settings.root === null) return null;
+
+    if (renderer !== DEFAULT_RENDERER_ID) {
+      const skipped: DeliveryOutcome = {
+        slug,
+        presetId,
+        label: RENDER_PRESETS[presetId].shortLabel,
+        status: "failed",
+        reason: "renderer_not_supported",
+        destinationPath: null,
+        destinationRelativePath: null,
+        bytes: null,
+        message: `Auto-delivery copies ${RENDERER_LABELS[DEFAULT_RENDERER_ID]} exports only, so this ${RENDERER_LABELS[renderer]} export was not delivered.`,
+        historyEventId: null,
+        historyProblem: null,
+      };
+      report?.(skipped);
+      return skipped;
+    }
 
     const outcome = await deliverExport({ slug, presetId, settings });
     report?.(outcome);

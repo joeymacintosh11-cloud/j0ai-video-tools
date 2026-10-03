@@ -98,7 +98,7 @@ export const loadContentPackageBatchContext =
     ]);
 
     return {
-      inFlight: renderManager.inFlightTargets(),
+      inFlight: renderManager.inFlightExports(),
       deliveryRoot,
       globalTemplates: templateSettings.settings.templates,
       templatesProblem: templateSettings.problem,
@@ -146,6 +146,7 @@ export const buildContentPackagesForSlugs = async (
       validationOk: detail.validation.ok,
       metadata: detail.metadata,
       exports: detail.exports,
+      renderer: detail.exportsRenderer,
       contentMetadataOverrides: detail.metadata?.contentMetadataOverrides,
     };
 

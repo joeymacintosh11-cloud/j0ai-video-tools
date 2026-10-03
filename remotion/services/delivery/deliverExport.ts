@@ -11,6 +11,10 @@ import {
   RENDER_PRESETS,
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
+import {
+  remotionOnlyProblem,
+  resolveTrackRenderer,
+} from "../../core/domain/video/renderers.ts";
 import { trackExportCoverage } from "../tracks/exportCoverage.ts";
 import { outputIdentity } from "../tracks/exportManifest.ts";
 import { inspectTrack } from "../tracks/inspectTrack.ts";
@@ -143,6 +147,22 @@ const deliverOwnedExport = async ({
   );
   const label = facts?.label ?? presetId;
 
+  // Delivery copies Remotion's export. For a track that prefers another
+  // renderer that would ship a video the track did not ask for, so it is
+  // refused here — whatever started it: the Deliver panel, auto-delivery, a
+  // fix plan or a content package.
+  const rendererProblem = remotionOnlyProblem(
+    resolveTrackRenderer(metadata?.renderer),
+    "Delivery",
+  );
+  if (rendererProblem !== null) {
+    return outcome(slug, presetId, label, {
+      status: "failed",
+      reason: "renderer_not_supported",
+      message: rendererProblem,
+    });
+  }
+
   // Checked again before locking, but re-checked here because the root is
   // re-resolved from disk and could have gone away in between.
   if (root === null) {
@@ -206,6 +226,20 @@ const deliverOwnedExport = async ({
     // Re-read freshness from disk: a replacement render may have published
     // between the checks above and the copy finishing.
     const latestMetadata = (await inspectTrack(slug)).metadata;
+    // Renderer preference is intent, not part of Remotion's input fingerprint.
+    // Re-check it after staging so a switch to another engine cannot publish
+    // the previously valid Remotion copy.
+    const latestRendererProblem = remotionOnlyProblem(
+      resolveTrackRenderer(latestMetadata?.renderer),
+      "Delivery",
+    );
+    if (latestRendererProblem !== null) {
+      return outcome(slug, presetId, label, {
+        status: "failed",
+        reason: "renderer_not_supported",
+        message: latestRendererProblem,
+      });
+    }
     const latestRelative = deliveryRelativePath(slug, presetId, latestMetadata?.deliveryFolder);
     const after = trackExportCoverage(slug).find(
       (entry) => entry.presetId === presetId,

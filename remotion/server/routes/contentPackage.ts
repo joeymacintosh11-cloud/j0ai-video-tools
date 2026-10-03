@@ -67,7 +67,7 @@ export const handleGetContentPackage = async (
 
   const detail = toTrackDetailView(
     inspection,
-    renderManager.inFlightTargets(),
+    renderManager.inFlightExports(),
     await deliveryRootForView(),
   );
 
@@ -77,6 +77,7 @@ export const handleGetContentPackage = async (
     validationOk: detail.validation.ok,
     metadata: detail.metadata,
     exports: detail.exports,
+    renderer: detail.exportsRenderer,
     contentMetadataOverrides: detail.metadata?.contentMetadataOverrides,
   };
 

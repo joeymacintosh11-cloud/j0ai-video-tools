@@ -3,6 +3,7 @@ import {
   assertRendererId,
   RENDERER_IDS,
   type RendererId,
+  type RendererStatus,
 } from "../domain/video/renderers.ts";
 import type { RenderEngine } from "./renderEngine.ts";
 
@@ -27,12 +28,20 @@ import type { RenderEngine } from "./renderEngine.ts";
  * without loading the engine why it cannot run here, or null when it can.
  * It is asked every time availability is checked, so installing or
  * configuring the dependency takes effect without a restart.
+ *
+ * `configured` is separate on purpose: it reports, equally synchronously and
+ * without loading the engine, whether the engine's local configuration is
+ * usable (null when it is). It only feeds status() — so a UI can say "not
+ * configured" before anyone renders — and never assertAvailable(), whose
+ * answer to callers that name an engine is exactly what it always was: a
+ * configuration problem still surfaces when the engine opens.
  */
 export type RenderEngineRegistration =
   | (() => Promise<RenderEngine>)
   | {
       readonly load: () => Promise<RenderEngine>;
       readonly probe?: () => string | null;
+      readonly configured?: () => string | null;
     };
 
 export type RenderEngineLoaders = Partial<Record<RendererId, RenderEngineRegistration>>;
@@ -48,6 +57,11 @@ export type RenderEngineRegistry = {
   readonly assertAvailable: (requested: unknown) => RendererId;
   /** assertAvailable(), then loads that engine. */
   readonly resolve: (requested: unknown) => Promise<RenderEngine>;
+  /**
+   * Every renderer id, in RENDERER_IDS order, with whether it can render here
+   * and why not. Loads nothing; asks the probes afresh each time.
+   */
+  readonly status: () => readonly RendererStatus[];
 };
 
 export const createRenderEngineRegistry = (
@@ -56,7 +70,9 @@ export const createRenderEngineRegistry = (
   const registration = (id: RendererId) => {
     const entry = loaders[id];
     if (entry === undefined) return null;
-    return typeof entry === "function" ? { load: entry, probe: undefined } : entry;
+    return typeof entry === "function"
+      ? { load: entry, probe: undefined, configured: undefined }
+      : entry;
   };
 
   /** Null when the engine can run; otherwise why not (null reason = not registered). */
@@ -89,11 +105,33 @@ export const createRenderEngineRegistry = (
     return id;
   };
 
+  const status = (): readonly RendererStatus[] =>
+    RENDERER_IDS.map((id): RendererStatus => {
+      const entry = registration(id);
+      if (entry === null) {
+        return {
+          id,
+          implemented: false,
+          state: "unavailable",
+          problem: `The "${id}" render engine is not available in this installation.`,
+        };
+      }
+      const missing = entry.probe?.() ?? null;
+      if (missing !== null) {
+        return { id, implemented: true, state: "unavailable", problem: missing };
+      }
+      const misconfigured = entry.configured?.() ?? null;
+      return misconfigured === null
+        ? { id, implemented: true, state: "ready", problem: null }
+        : { id, implemented: true, state: "not_configured", problem: misconfigured };
+    });
+
   return {
     get available() {
       return availableNow();
     },
     assertAvailable,
+    status,
     resolve: async (requested) => {
       const id = assertAvailable(requested);
       const engine = await registration(id)!.load();

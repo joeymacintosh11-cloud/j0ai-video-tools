@@ -14,6 +14,10 @@ import {
   resolveExportPresets,
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
+import {
+  remotionOnlyProblem,
+  resolveTrackRenderer,
+} from "../../core/domain/video/renderers.ts";
 import { trackExportCoverage } from "../tracks/exportCoverage.ts";
 import { inspectTrack } from "../tracks/inspectTrack.ts";
 import { listTracks } from "../tracks/listTracks.ts";
@@ -182,6 +186,18 @@ export const planMissingExports = async (
         code: first?.code ?? "METADATA_INVALID",
         reason: first?.message ?? `Track "${slug}" is not renderable.`,
       });
+      continue;
+    }
+
+    // This planner renders and judges Remotion exports only. A track that
+    // prefers another renderer is reported rather than given Remotion renders
+    // it did not ask for; it is rendered from its own Render panel instead.
+    const rendererProblem = remotionOnlyProblem(
+      resolveTrackRenderer(inspection.metadata?.renderer),
+      "Export missing",
+    );
+    if (rendererProblem !== null) {
+      invalid.push({ slug, code: "RENDERER_NOT_SUPPORTED", reason: rendererProblem });
       continue;
     }
 

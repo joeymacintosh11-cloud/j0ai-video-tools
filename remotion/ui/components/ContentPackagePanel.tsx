@@ -365,6 +365,7 @@ export const ContentPackagePanel: React.FC<{
       metadata: track.metadata,
       contentMetadataOverrides: track.metadata?.contentMetadataOverrides,
       exports: track.exports,
+      renderer: track.exportsRenderer,
     }),
     [track],
   );

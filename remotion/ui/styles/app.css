@@ -261,6 +261,16 @@ body {
   color: var(--text-faint);
 }
 
+/* An engine that cannot run on this machine: still shown, visibly not usable. */
+.format--unavailable {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.format--unavailable:hover {
+  border-color: var(--border-strong);
+}
+
 /* ---------------------------------------------------------------- *
  * Track list
  * ---------------------------------------------------------------- */
@@ -1555,6 +1565,20 @@ body {
 
 /* One badge per track row, answering "is anything waiting to go out?" without
    doubling the marks already there for export freshness. */
+/* Which engine a track renders with, shown only when it is not the default. */
+.enginebadge {
+  font-family: var(--font-label);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+  color: var(--vintage-gold);
+  border: 1px solid var(--vintage-gold);
+}
+
 .deliverybadge {
   font-family: var(--font-label);
   font-size: 9px;

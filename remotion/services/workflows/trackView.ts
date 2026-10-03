@@ -1,3 +1,4 @@
+import { exportStatusKey } from "../../core/domain/render/exportStatus.ts";
 import type {
   TrackDetailView,
   TrackSummaryView,
@@ -8,6 +9,10 @@ import {
   DEFAULT_RENDER_PRESET_ID,
   resolveExportPresets,
 } from "../../core/domain/video/renderPresets.ts";
+import {
+  remotionOnlyProblem,
+  resolveTrackRenderer,
+} from "../../core/domain/video/renderers.ts";
 import { deliveryStateForTarget } from "../delivery/deliverExport.ts";
 import {
   readDeliverySettings,
@@ -43,7 +48,7 @@ export const deliveryRootForView = async (): Promise<string | null> =>
 export const toTrackSummaryView = (
   inspection: TrackInspection,
   /**
-   * Work in flight, keyed "<slug>::<presetId>". Passed in rather than read from
+   * Work in flight, keyed by exportStatusKey(slug, presetId, renderer). Passed in rather than read from
    * the render manager here, so this stays a pure mapping and the queue stays
    * the caller's concern. Omitted means "nothing in flight".
    */
@@ -63,9 +68,24 @@ export const toTrackSummaryView = (
     inspection.metadataDraft?.exportPresets ??
     null;
   const intended = new Set(resolveExportPresets(declared));
+  // Falls back to the draft for the same reason, so a not-yet-valid track that
+  // prefers After Effects is judged against After Effects' exports too.
+  const declaredRenderer =
+    inspection.metadata?.renderer ?? inspection.metadataDraft?.renderer ?? null;
+  const exportsRenderer = resolveTrackRenderer(declaredRenderer);
+  // Delivery and release bundles handle Remotion's exports only. For a track
+  // that prefers another renderer they report that, rather than describing a
+  // Remotion file as if it were the export this track asked for.
+  const remotionOnly = remotionOnlyProblem(exportsRenderer, "Delivery");
   // Computed once and shared with the release bundle status below, which needs
   // exactly the same facts; reading manifests twice per track would be waste.
-  const coverage = trackExportCoverage(inspection.slug, inspection.metadata);
+  // Judged against the renderer this track prefers, so a Remotion export never
+  // satisfies a track that asked for After Effects, or the other way round.
+  const coverage = trackExportCoverage(
+    inspection.slug,
+    inspection.metadata,
+    exportsRenderer,
+  );
   const deliveryFolder =
     inspection.metadata?.deliveryFolder ??
     inspection.metadataDraft?.deliveryFolder ??
@@ -88,7 +108,7 @@ export const toTrackSummaryView = (
     renderPresent: inspection.facts.outputExists,
     exports: coverage.map(
       (facts) => {
-        const state = inFlight.get(`${inspection.slug}::${facts.presetId}`);
+        const state = inFlight.get(exportStatusKey(inspection.slug, facts.presetId, exportsRenderer));
 
         return {
           freshness: facts.freshness,
@@ -112,19 +132,31 @@ export const toTrackSummaryView = (
           queued: state === "queued",
           active: state === "active",
           intended: intended.has(facts.presetId),
-          delivery: deliveryStateForTarget(
-            inspection.slug,
-            facts.presetId,
-            facts,
-            inspection.metadata === null ? null : deliveryRoot,
-            inspection.metadata?.deliveryFolder,
-          ),
+          delivery:
+            remotionOnly === null
+              ? deliveryStateForTarget(
+                  inspection.slug,
+                  facts.presetId,
+                  facts,
+                  inspection.metadata === null ? null : deliveryRoot,
+                  inspection.metadata?.deliveryFolder,
+                )
+              : {
+                  status: "not_configured",
+                  reason: "renderer_not_supported",
+                  destinationPath: null,
+                  destinationRelativePath: null,
+                  deliveredAt: null,
+                },
         };
       },
     ),
     exportPresets: declared,
+    renderer: declaredRenderer,
+    exportsRenderer,
     deliveryFolder,
     releaseBundle: (() => {
+      // Says itself when the track prefers a renderer bundles do not handle.
       const state = releaseBundleStateFor(
         inspection,
         inspection.metadata === null ? null : deliveryRoot,
@@ -147,7 +179,7 @@ export const toTrackSummaryView = (
 export const toTrackDetailView = (
   inspection: TrackInspection,
   /**
-   * Work in flight, keyed "<slug>::<presetId>". Passed in rather than read from
+   * Work in flight, keyed by exportStatusKey(slug, presetId, renderer). Passed in rather than read from
    * the render manager here, so this stays a pure mapping and the queue stays
    * the caller's concern. Omitted means "nothing in flight".
    */

@@ -1,4 +1,8 @@
 import { useMemo } from "react";
+import {
+  DEFAULT_RENDERER_ID,
+  RENDERER_LABELS,
+} from "../../core/domain/video/renderers.ts";
 import type {
   DestinationHealthView,
   TrackSummaryView,
@@ -26,6 +30,7 @@ const packageStatusFor = (track: TrackSummaryView) =>
       validationOk: track.metadataValid,
       metadata: null,
       exports: track.exports,
+      renderer: track.exportsRenderer,
     },
     { mode: "intent" },
   ).packageStatus;
@@ -125,6 +130,16 @@ export const TrackList: React.FC<{
             <span className="tracklist__slug">{track.slug}</span>
             <span className="tracklist__meta">
               <StatusBadge status={track.status} />
+              {/* Only for a track that chose another engine: its marks then
+                  describe that engine's exports, which is worth saying. */}
+              {track.exportsRenderer === DEFAULT_RENDERER_ID ? null : (
+                <span
+                  className="enginebadge"
+                  title={`Renders with ${RENDERER_LABELS[track.exportsRenderer]}; these marks are its exports`}
+                >
+                  {RENDERER_LABELS[track.exportsRenderer]}
+                </span>
+              )}
               <ExportStatus exports={track.exports} compact />
               <DeliverySummary exports={track.exports} />
               {/* Not shown for "not_configured" — a track with nothing

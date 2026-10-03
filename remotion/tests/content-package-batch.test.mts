@@ -419,7 +419,7 @@ test("apply-time revalidation: an in-flight target reads as adopted, not queued 
   const track = await setup(t, { exportPresets: ["youtube-16x9"] });
   const inFlightContext: ContentPackageBatchContext = {
     ...emptyContext,
-    inFlight: new Map([[`${track.slug}::youtube-16x9`, "active"]]),
+    inFlight: new Map([[`${track.slug}::youtube-16x9::remotion`, "active"]]),
   };
   const results = await buildContentPackagesForSlugs([track.slug], inFlightContext);
   const plan = planContentPackageBatch(results);

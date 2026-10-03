@@ -10,6 +10,7 @@ import {
   parseExportPresetList,
   type RenderPresetId,
 } from "../video/renderPresets.ts";
+import { isRendererId, parseTrackRenderer } from "../video/renderers.ts";
 import type { TrackMetadata, TrackMetadataDraft } from "./types.ts";
 
 export const DEFAULT_ARTIST = "Toshi";
@@ -70,6 +71,9 @@ export const coerceMetadataDraft = (
         : null,
     subtitle: typeof raw.subtitle === "string" ? raw.subtitle : undefined,
     exportPresets: coerceExportPresetList(raw.exportPresets),
+    // An unknown id is dropped, exactly as an unknown format id is: the draft
+    // is for prefilling an editor, and validation reports the bad value.
+    renderer: isRendererId(raw.renderer) ? raw.renderer : undefined,
     deliveryFolder:
       typeof raw.deliveryFolder === "string" && raw.deliveryFolder.trim() !== ""
         ? raw.deliveryFolder.trim()
@@ -91,6 +95,9 @@ export const serializeTrackMetadata = (
     // Undefined is dropped by JSON.stringify, so an undeclared track keeps a
     // file with no exportPresets key rather than gaining an empty one.
     exportPresets: metadata.exportPresets,
+    // Undefined is dropped too, so a track with no preference keeps a file
+    // with no "renderer" key — byte-identical to one written before the field.
+    renderer: metadata.renderer,
     deliveryFolder: metadata.deliveryFolder,
     contentMetadataOverrides: metadata.contentMetadataOverrides,
   };
@@ -179,6 +186,14 @@ export const validateTrackMetadata = (
     exportPresets = presets ?? undefined;
   }
 
+  // Undeclared is valid and means the default renderer; declared is held to
+  // the shared renderer ids, so an unknown or removed id is a hard error the
+  // track reports, never something silently replaced by Remotion.
+  const { renderer, problem: rendererProblem } = parseTrackRenderer(raw.renderer);
+  if (rendererProblem !== null) {
+    issues.push(trackIssue("METADATA_INVALID", `${source} ${rendererProblem}`, source));
+  }
+
   // Portable folder name only; the absolute destination root is local config.
   let deliveryFolder: string | undefined;
   if (raw.deliveryFolder !== undefined && raw.deliveryFolder !== null) {
@@ -222,6 +237,7 @@ export const validateTrackMetadata = (
       bpm,
       subtitle: typeof rawSubtitle === "string" ? rawSubtitle : undefined,
       exportPresets,
+      renderer,
       deliveryFolder,
       contentMetadataOverrides: contentMetadataOverrides ?? undefined,
     },

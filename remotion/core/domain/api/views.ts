@@ -1,4 +1,4 @@
-import type { RendererId } from "../video/renderers.ts";
+import type { RendererId, RendererStatus } from "../video/renderers.ts";
 import type {
   ExportFreshness,
   ExportMode,
@@ -106,6 +106,19 @@ export type HealthView = {
   readonly service: string;
 };
 
+/**
+ * GET /api/renderers
+ *
+ * Every renderer id with whether it can render on this machine right now.
+ * Reserved ids with no adapter (premiere) are listed as not implemented, so a
+ * client can leave them out rather than offer something that cannot work.
+ */
+export type RenderersView = {
+  /** What a render with no engine named uses. */
+  readonly defaultRenderer: RendererId;
+  readonly renderers: readonly RendererStatus[];
+};
+
 /** One row in GET /api/tracks. */
 export type TrackSummaryView = {
   readonly slug: string;
@@ -133,6 +146,21 @@ export type TrackSummaryView = {
    * showing an intent the user never chose.
    */
   readonly exportPresets: readonly RenderPresetId[] | null;
+  /**
+   * The renderer this track prefers, or null when it declares none — which
+   * means the default (Remotion), resolveTrackRenderer(). Kept as declared,
+   * like exportPresets, so the UI can tell "chose Remotion" from "never chose".
+   */
+  readonly renderer: RendererId | null;
+  /**
+   * Whose exports `exports` describes: the renderer this track resolves to.
+   * Remotion's live at out/<slug>/<preset>.mp4, any other renderer's at
+   * out/<slug>/<renderer>/<preset>.mp4, so a Remotion export never counts for
+   * a track that prefers After Effects, or the other way round. Delivery and
+   * release bundles handle Remotion exports only, so for any other renderer
+   * each export's `delivery` and the `releaseBundle` say so.
+   */
+  readonly exportsRenderer: RendererId;
   /**
    * The folder this track delivers into, or null when it has not chosen one and
    * falls back to its slug. A portable folder name, never a machine path.
@@ -196,6 +224,13 @@ export type TrackMetadataPatch = {
    * never invents an intent the user did not choose.
    */
   readonly exportPresets?: readonly RenderPresetId[];
+  /**
+   * The renderer this track prefers. Omitted leaves whatever the file already
+   * declares; `null` clears it, back to the default (Remotion). Any known
+   * renderer id is accepted — whether it is installed is a fact about this
+   * machine, reported by GET /api/renderers and checked when rendering.
+   */
+  readonly renderer?: RendererId | null;
   /**
    * Folder this track delivers into, inside the configured destination. Empty
    * string clears it, which falls back to the slug.

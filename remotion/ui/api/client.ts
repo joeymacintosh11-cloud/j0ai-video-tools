@@ -35,6 +35,7 @@ import type {
   DeliverySettingsBody,
   DeliverySettingsView,
   HealthView,
+  RenderersView,
   PrepareTrackView,
   ReleaseBundleBody,
   ReleaseBundlesView,
@@ -54,7 +55,12 @@ import type {
   ValidateTrackView,
 } from "../../core/domain/api/views.ts";
 import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
+import {
+  DEFAULT_RENDERER_ID,
+  type RendererId,
+} from "../../core/domain/video/renderers.ts";
 import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
+import { startRenderBody } from "./engineRequest.ts";
 
 /**
  * Typed client for the local API.
@@ -215,30 +221,44 @@ export const getTrackPreview = (
     `/api/tracks/${encodeURIComponent(slug)}/preview`,
   );
 
-/** Shows a rendered file in Finder. Only the slug and format are sent. */
+/**
+ * Shows a rendered file in Finder. Only the slug, format and engine are sent;
+ * the engine is left out for Remotion, so that request is exactly as before.
+ */
 export const revealTrackOutput = (
   slug: string,
   preset?: RenderPresetId,
+  engine: RendererId = DEFAULT_RENDERER_ID,
 ): Promise<RevealOutputView> =>
   jsonRequest<RevealOutputView>(
     `/api/tracks/${encodeURIComponent(slug)}/reveal`,
     "POST",
-    preset === undefined ? {} : { preset },
+    startRenderBody(preset, engine),
   );
 
 /* ------------------------------------------------------------------ *
  * Renders
  * ------------------------------------------------------------------ */
 
+/**
+ * Starts a render. `engine` is the track's preferred renderer; it is named in
+ * the request only when it is not the default, so a track without a
+ * preference sends exactly the request it always did.
+ */
 export const startRender = (
   slug: string,
   preset?: RenderPresetId,
+  engine: RendererId = DEFAULT_RENDERER_ID,
 ): Promise<StartRenderView> =>
   jsonRequest<StartRenderView>(
     `/api/tracks/${encodeURIComponent(slug)}/render`,
     "POST",
-    preset === undefined ? {} : { preset },
+    startRenderBody(preset, engine),
   );
+
+/** GET /api/renderers: which engines can render on this machine, and why not. */
+export const listRenderers = (): Promise<RenderersView> =>
+  request<RenderersView>("/api/renderers");
 
 export const listRenders = (): Promise<readonly RenderJobView[]> =>
   request<readonly RenderJobView[]>("/api/renders");

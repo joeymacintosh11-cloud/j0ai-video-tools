@@ -18,6 +18,11 @@ import {
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
 import {
+  DEFAULT_RENDERER_ID,
+  isRendererId,
+  RENDERER_IDS,
+} from "../../core/domain/video/renderers.ts";
+import {
   COMPOSITION_CONFIG,
   secondsToFrames,
 } from "../../core/domain/video/compositionConfig.ts";
@@ -48,7 +53,7 @@ export const handleListTracks = async (
   response: ServerResponse,
 ): Promise<void> => {
   const tracks = await listTracks();
-  const inFlight = renderManager.inFlightTargets();
+  const inFlight = renderManager.inFlightExports();
   const deliveryRoot = await deliveryRootForView();
 
   // Explicit arrow: passing the function directly would hand map's index
@@ -82,7 +87,7 @@ export const handleGetTrack = async (
     response,
     toTrackDetailView(
       inspection,
-      renderManager.inFlightTargets(),
+      renderManager.inFlightExports(),
       await deliveryRootForView(),
     ),
   );
@@ -111,7 +116,7 @@ export const handleCreateTrack = async (
     response,
     toTrackDetailView(
       inspection,
-      renderManager.inFlightTargets(),
+      renderManager.inFlightExports(),
       await deliveryRootForView(),
     ),
   );
@@ -142,7 +147,7 @@ const readExportPresets = (
 
 const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch => {
   const patch: Record<string, unknown> = {};
-  const allowed = ["title", "artist", "key", "subtitle", "deliveryFolder", "bpm", "exportPresets", "contentMetadataOverrides"];
+  const allowed = ["title", "artist", "key", "subtitle", "deliveryFolder", "bpm", "exportPresets", "renderer", "contentMetadataOverrides"];
   for (const key of Object.keys(body)) {
     if (!allowed.includes(key)) {
       throw new TrackError(trackIssue("INVALID_REQUEST", `Unknown metadata field "${key}".`));
@@ -183,6 +188,21 @@ const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch =>
     patch.exportPresets = exportPresets;
   }
 
+  // null clears the preference (back to the default renderer). A known id is
+  // stored whether or not it is installed here — metadata is portable — but
+  // an unknown id is refused before any file is opened.
+  if (body.renderer !== undefined) {
+    if (body.renderer !== null && !isRendererId(body.renderer)) {
+      throw new TrackError(
+        trackIssue(
+          "INVALID_RENDERER",
+          `Field "renderer" must be one of ${RENDERER_IDS.join(", ")}, or null to use ${DEFAULT_RENDERER_ID}.`,
+        ),
+      );
+    }
+    patch.renderer = body.renderer;
+  }
+
   // null clears every override (inherit everything); an object is the whole
   // desired set, validated downstream by updateTrackMetadata — never deep-
   // merged with what a stray shape here might guess at.
@@ -202,7 +222,7 @@ const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch =>
     throw new TrackError(
       trackIssue(
         "INVALID_REQUEST",
-        "Provide at least one of: title, artist, key, bpm, subtitle, exportPresets, deliveryFolder, contentMetadataOverrides.",
+        "Provide at least one of: title, artist, key, bpm, subtitle, exportPresets, renderer, deliveryFolder, contentMetadataOverrides.",
       ),
     );
   }
@@ -230,7 +250,7 @@ export const handleUpdateMetadata = async (
     response,
     toTrackDetailView(
       inspection,
-      renderManager.inFlightTargets(),
+      renderManager.inFlightExports(),
       await deliveryRootForView(),
     ),
   );
@@ -282,7 +302,7 @@ export const handleUploadAsset = async (
     ...result,
     track: toTrackDetailView(
       inspection,
-      renderManager.inFlightTargets(),
+      renderManager.inFlightExports(),
       await deliveryRootForView(),
     ),
   };
@@ -303,7 +323,7 @@ export const handleValidateTrack = async (
     validation: inspection.validation,
     assets: toTrackSummaryView(
       inspection,
-      renderManager.inFlightTargets(),
+      renderManager.inFlightExports(),
       await deliveryRootForView(),
     ),
   };
@@ -390,6 +410,7 @@ export const handleRevealOutput = async (
   const payload: RevealOutputView = await revealTrackOutput(
     slugInput,
     body.preset,
+    body.engine,
   );
 
   sendOk(response, payload);

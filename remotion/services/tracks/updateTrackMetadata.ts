@@ -124,6 +124,11 @@ export const updateTrackMetadata = async (
         // Left alone unless the patch names it: editing a title must not
         // materialise an intent the track never declared.
         exportPresets: patch.exportPresets ?? current.exportPresets,
+        // Omitted leaves it, `null` clears it back to the default renderer.
+        renderer:
+          patch.renderer === undefined
+            ? current.renderer
+            : (patch.renderer ?? undefined),
         // An empty string clears the override, which falls back to the slug.
         deliveryFolder:
           patch.deliveryFolder === undefined

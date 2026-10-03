@@ -29,6 +29,7 @@ import {
   type RenderJobView,
   type WorkerEvent,
 } from "./renderJobTypes.ts";
+import { exportStatusKey } from "../../core/domain/render/exportStatus.ts";
 import { recordRenderJournalEvent } from "./renderJournal.ts";
 
 const WORKER_PATH = path.join(
@@ -398,6 +399,20 @@ class RenderManager {
     }
 
     return targets;
+  }
+
+  /** Engine-specific queue state for export views. Pair-only state above is
+   * retained for contention checks: engines still share a track/format lock. */
+  inFlightExports(): ReadonlyMap<string, "queued" | "active"> {
+    const exports = new Map<string, "queued" | "active">();
+    for (const job of this.jobs.values()) {
+      if (isTerminalStatus(job.status)) continue;
+      exports.set(
+        exportStatusKey(job.slug, job.presetId, job.engine),
+        job.status === "queued" ? "queued" : "active",
+      );
+    }
+    return exports;
   }
 
   /** The queued or running job for a track/format pair, if any. */

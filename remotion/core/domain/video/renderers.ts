@@ -20,8 +20,80 @@ export type RendererId = (typeof RENDERER_IDS)[number];
  */
 export const DEFAULT_RENDERER_ID: RendererId = "remotion";
 
+/**
+ * Whether a renderer can render on this machine right now.
+ *
+ * - ready:          installed and configured
+ * - unavailable:    not implemented in this installation, or its software is
+ *                   not installed — asking it to render is refused up front
+ * - not_configured: installed, but its local configuration (an After Effects
+ *                   template, say) is missing or wrong — a render would fail
+ *                   when the engine opens, with the same message
+ */
+export type RendererState = "ready" | "unavailable" | "not_configured";
+
+export type RendererStatus = {
+  readonly id: RendererId;
+  /** An adapter is registered for it. Reserved ids (premiere) are not. */
+  readonly implemented: boolean;
+  readonly state: RendererState;
+  /** Why it is not ready, in words for the person on this machine; null when ready. */
+  readonly problem: string | null;
+};
+
+/** How each renderer is named to a person, in the UI and in messages. */
+export const RENDERER_LABELS: Record<RendererId, string> = {
+  remotion: "Remotion",
+  premiere: "Premiere Pro",
+  "after-effects": "After Effects",
+};
+
 export const isRendererId = (value: unknown): value is RendererId =>
   typeof value === "string" && (RENDERER_IDS as readonly string[]).includes(value);
+
+/**
+ * The renderer a track's own preference (metadata.json "renderer") resolves
+ * to. Undeclared is the default, which is what every track was before a
+ * preference could be stored, so nothing has to be migrated.
+ */
+export const resolveTrackRenderer = (
+  declared: RendererId | null | undefined,
+): RendererId => declared ?? DEFAULT_RENDERER_ID;
+
+/**
+ * Checks a declared "renderer" field: absent is undeclared, and anything
+ * declared must be a known renderer id. Whether that renderer is installed is
+ * deliberately not judged here — metadata.json is portable, and installation
+ * is a fact about one machine, checked when a render is requested.
+ */
+export const parseTrackRenderer = (
+  raw: unknown,
+): { readonly renderer: RendererId | undefined; readonly problem: string | null } => {
+  if (raw === undefined) return { renderer: undefined, problem: null };
+  if (isRendererId(raw)) return { renderer: raw, problem: null };
+  return {
+    renderer: undefined,
+    problem: `field "renderer" must be one of ${RENDERER_IDS.join(", ")} when present, or left out to use ${DEFAULT_RENDERER_ID}.`,
+  };
+};
+
+/**
+ * Why a Remotion-only pipeline leaves a track out, or null when it doesn't.
+ *
+ * Coverage, delivery, release bundles, content packages and their planners
+ * judge Remotion's exports (out/<slug>/<preset>.mp4) only. For a track that
+ * prefers another renderer, acting on those exports would let a Remotion video
+ * stand in for the one the track asked for, so each of them leaves the track
+ * out and says so with this one message, rather than silently falling back.
+ */
+export const remotionOnlyProblem = (
+  renderer: RendererId,
+  operation: string,
+): string | null =>
+  renderer === DEFAULT_RENDERER_ID
+    ? null
+    : `This track prefers ${RENDERER_LABELS[renderer]}; ${operation} works with ${RENDERER_LABELS[DEFAULT_RENDERER_ID]} exports only, so it is left out. ` +
+      `Render it with ${RENDERER_LABELS[renderer]} from the track's Render panel (under Advanced), or with render-track --engine ${renderer}.`;
 
 /** Resolves a renderer id from untrusted input, defaulting when absent. */
 export const assertRendererId = (value: unknown): RendererId => {

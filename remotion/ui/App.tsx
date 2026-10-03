@@ -13,6 +13,7 @@ import {
   listTracks,
 } from "./api/client.ts";
 import { ApiRequestError } from "./api/client.ts";
+import { catalogueBatchTargets } from "./api/engineRequest.ts";
 import { BatchContentPackagePanel } from "./components/BatchContentPackagePanel.tsx";
 import { ContentLibraryPanel } from "./components/ContentLibraryPanel.tsx";
 import { ContentMetadataSettingsPanel } from "./components/ContentMetadataSettingsPanel.tsx";
@@ -233,11 +234,8 @@ export const App: React.FC = () => {
   const queueSelected = async () => {
     setQueueError(null);
 
-    const targets = checked.flatMap((slug) =>
-      formats.map((preset) => ({ slug, preset })),
-    );
-
     try {
+      const targets = await catalogueBatchTargets(checked, formats, getTrack);
       const created = await createRenderBatch(targets);
 
       setBatchId(created.batchId);
