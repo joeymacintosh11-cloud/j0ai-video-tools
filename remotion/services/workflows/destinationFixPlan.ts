@@ -21,6 +21,10 @@ import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import { RENDER_PRESETS, type RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import {
+  remotionOnlyProblem,
+  resolveTrackRenderer,
+} from "../../core/domain/video/renderers.ts";
+import {
   deliverExport,
   deliveryStateForTarget,
 } from "../delivery/deliverExport.ts";
@@ -229,6 +233,30 @@ export const planDestinationFix = async (
         const presetId = finding.presetId;
         if (presetId === null) continue; // Not reachable: the scanner always names a preset for these codes.
         const facts = await coverageFor(presetId);
+
+        // Repairing a delivery means re-copying or re-rendering Remotion's
+        // export. A track that now prefers another renderer gets neither —
+        // it is left for a person, with the reason, never queued as Remotion.
+        const rendererProblem = remotionOnlyProblem(
+          resolveTrackRenderer(inspection?.metadata?.renderer),
+          "Delivery repair",
+        );
+        if (rendererProblem !== null) {
+          actions.push(
+            remediationAction({
+              kind: "manual_review",
+              findingCodes: [finding.code],
+              slug,
+              presetId,
+              relativePath: finding.relativePath,
+              title: `Review ${finding.relativePath ?? slug}`,
+              reason: `${finding.message} ${rendererProblem}`,
+              expectedEffect: "None — nothing is re-rendered or re-delivered for this track.",
+            }),
+          );
+          continue;
+        }
+
         const outputLabel = outputLabelFor(slug, presetId);
         const current = facts !== null && facts.freshness === "current";
         const action = remediationAction({

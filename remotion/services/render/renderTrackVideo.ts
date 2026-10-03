@@ -175,7 +175,7 @@ export const renderTrackVideo = async (
 
   options.onRecorded?.(recorded);
 
-  await deliverAfterRender(options.slug, presetId, options.onDelivery);
+  await deliverAfterRender(options.slug, presetId, options.onDelivery, options.engine.id);
 
   return resolved;
 };

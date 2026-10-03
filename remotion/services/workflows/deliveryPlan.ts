@@ -8,6 +8,10 @@ import type { ExportFreshness } from "../../core/domain/video/exportFreshness.ts
 import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import type { TrackInspection } from "../../core/domain/tracks/types.ts";
 import {
+  remotionOnlyProblem,
+  resolveTrackRenderer,
+} from "../../core/domain/video/renderers.ts";
+import {
   assertRenderPresetId,
   canonicalPresetOrder,
   RENDER_PRESETS,
@@ -162,6 +166,17 @@ export const planDeliveries = async (
         code: first?.code ?? "METADATA_INVALID",
         reason: first?.message ?? `Track "${slug}" is not renderable.`,
       });
+      continue;
+    }
+
+    // Delivery copies Remotion exports only. A track that prefers another
+    // renderer is reported, never planned as a Remotion delivery.
+    const rendererProblem = remotionOnlyProblem(
+      resolveTrackRenderer(inspection.metadata?.renderer),
+      "Delivery",
+    );
+    if (rendererProblem !== null) {
+      invalid.push({ slug, code: "RENDERER_NOT_SUPPORTED", reason: rendererProblem });
       continue;
     }
 

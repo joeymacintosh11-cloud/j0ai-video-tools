@@ -11,6 +11,10 @@ import {
   RENDER_PRESETS,
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
+import {
+  remotionOnlyProblem,
+  resolveTrackRenderer,
+} from "../../core/domain/video/renderers.ts";
 import { trackExportCoverage } from "../tracks/exportCoverage.ts";
 import { outputIdentity } from "../tracks/exportManifest.ts";
 import { inspectTrack } from "../tracks/inspectTrack.ts";
@@ -142,6 +146,22 @@ const deliverOwnedExport = async ({
     (entry) => entry.presetId === presetId,
   );
   const label = facts?.label ?? presetId;
+
+  // Delivery copies Remotion's export. For a track that prefers another
+  // renderer that would ship a video the track did not ask for, so it is
+  // refused here — whatever started it: the Deliver panel, auto-delivery, a
+  // fix plan or a content package.
+  const rendererProblem = remotionOnlyProblem(
+    resolveTrackRenderer(metadata?.renderer),
+    "Delivery",
+  );
+  if (rendererProblem !== null) {
+    return outcome(slug, presetId, label, {
+      status: "failed",
+      reason: "renderer_not_supported",
+      message: rendererProblem,
+    });
+  }
 
   // Checked again before locking, but re-checked here because the root is
   // re-resolved from disk and could have gone away in between.

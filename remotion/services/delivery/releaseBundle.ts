@@ -26,6 +26,10 @@ import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import type { TrackInspection } from "../../core/domain/tracks/types.ts";
 import { secondsToFrames } from "../../core/domain/video/compositionConfig.ts";
 import {
+  remotionOnlyProblem,
+  resolveTrackRenderer,
+} from "../../core/domain/video/renderers.ts";
+import {
   RENDER_PRESETS,
   resolveExportPresets,
   type RenderPresetId,
@@ -350,6 +354,19 @@ export const releaseBundleStateFor = (
   coverage?: readonly ExportFileFacts[],
 ): ReleaseBundleState => {
   const slug = inspection.slug;
+
+  // A bundle describes delivered Remotion exports. For a track that prefers
+  // another renderer it would describe files the track did not ask for, so
+  // nothing is described — and so generateReleaseBundle writes nothing.
+  const rendererProblem = remotionOnlyProblem(
+    resolveTrackRenderer(
+      inspection.metadata?.renderer ?? inspection.metadataDraft?.renderer,
+    ),
+    "A release bundle",
+  );
+  if (rendererProblem !== null) {
+    return unavailable(slug, "not_configured", rendererProblem);
+  }
 
   if (root === null) return unavailable(slug, "not_configured");
 

@@ -155,18 +155,7 @@ export const toTrackSummaryView = (
     exportsRenderer,
     deliveryFolder,
     releaseBundle: (() => {
-      if (remotionOnly !== null) {
-        return {
-          freshness: "not_configured" as const,
-          relativePath: null,
-          generatedAt: null,
-          delivered: 0,
-          outdated: 0,
-          missing: 0,
-          problem: remotionOnlyProblem(exportsRenderer, "A release bundle"),
-        };
-      }
-
+      // Says itself when the track prefers a renderer bundles do not handle.
       const state = releaseBundleStateFor(
         inspection,
         inspection.metadata === null ? null : deliveryRoot,

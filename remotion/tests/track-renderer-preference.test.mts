@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -30,6 +31,14 @@ import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { trackExportCoverage } from "../services/tracks/exportCoverage.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
 import { toTrackSummaryView } from "../services/workflows/trackView.ts";
+import { deliverAfterRender } from "../services/delivery/autoDeliver.ts";
+import { deliverExport } from "../services/delivery/deliverExport.ts";
+import type { DeliverySettings } from "../services/delivery/deliverySettings.ts";
+import { generateReleaseBundle } from "../services/delivery/releaseBundle.ts";
+import { planDeliveries } from "../services/workflows/deliveryPlan.ts";
+import { planDestinationFix } from "../services/workflows/destinationFixPlan.ts";
+import { planMissingExports } from "../services/workflows/exportPlan.ts";
+import { planReleaseBundles } from "../services/workflows/releaseBundlePlan.ts";
 import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
 import { fixture } from "./fixtures.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
@@ -440,4 +449,114 @@ test("a content package blocks a track that prefers another renderer, with the r
     assert.deepEqual(platform.actions, []);
     assert.ok(platform.blockers.some((blocker) => /prefers After Effects/.test(blocker)));
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Remotion-only pipelines leave a non-Remotion track out, and say why
+ * ------------------------------------------------------------------ */
+
+const destinationRoot = async (t: TestContext) => {
+  const root = realpathSync(await fs.mkdtemp(path.join(tmpdir(), "toshi-renderer-pref-")));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  return root;
+};
+
+const settingsFor = (root: string | null, autoDeliver = false): DeliverySettings => ({
+  schemaVersion: 1,
+  root,
+  autoDeliver,
+  autoUpdateReleaseBundle: false,
+});
+
+const listFiles = async (root: string): Promise<readonly string[]> =>
+  (await fs.readdir(root, { recursive: true })).map(String).sort();
+
+test("Export missing reports a track that prefers After Effects instead of planning Remotion renders for it", async (t) => {
+  const remotion = await renderableTrack(t);
+  const ae = await renderableTrack(t, { renderer: "after-effects" });
+
+  const plan = await planMissingExports({ slugs: [remotion.slug, ae.slug], mode: "missing-and-stale" });
+
+  assert.ok(plan.selected.some((target) => target.slug === remotion.slug));
+  assert.equal(plan.selected.some((target) => target.slug === ae.slug), false);
+  assert.equal(plan.intendedTargets.some((target) => target.slug === ae.slug), false);
+  const skipped = plan.invalid.find((entry) => entry.slug === ae.slug);
+  assert.equal(skipped?.code, "RENDERER_NOT_SUPPORTED");
+  assert.match(skipped?.reason ?? "", /prefers After Effects; Export missing works with Remotion exports only/);
+});
+
+test("delivery refuses a track that prefers After Effects — planned or direct — and copies nothing", async (t) => {
+  const root = await destinationRoot(t);
+  const f = await renderableTrack(t, { renderer: "after-effects" });
+  // A Remotion export sits there, ready to ship: it must not stand in.
+  await f.publish("remotion");
+
+  const plan = await planDeliveries({ slugs: [f.slug], settings: settingsFor(root) });
+  assert.deepEqual(plan.deliverable, []);
+  assert.equal(plan.invalid[0]?.code, "RENDERER_NOT_SUPPORTED");
+
+  const outcome = await deliverExport({ slug: f.slug, presetId: "youtube-16x9", settings: settingsFor(root) });
+  assert.equal(outcome.status, "failed");
+  assert.equal(outcome.reason, "renderer_not_supported");
+  assert.match(outcome.message ?? "", /prefers After Effects/);
+
+  assert.deepEqual(await listFiles(root), []);
+});
+
+test("a release bundle is neither planned nor written for a track that prefers After Effects", async (t) => {
+  const root = await destinationRoot(t);
+  const f = await renderableTrack(t, { renderer: "after-effects" });
+
+  const plan = await planReleaseBundles({ slugs: [f.slug], settings: settingsFor(root) });
+  assert.equal(plan.unavailable.length, 1);
+  assert.match(plan.unavailable[0]?.problem ?? "", /prefers After Effects/);
+
+  const result = await generateReleaseBundle({ slug: f.slug, settings: settingsFor(root) });
+  assert.equal(result.generated, false);
+  assert.match(result.problem ?? "", /A release bundle works with Remotion exports only/);
+  assert.deepEqual(await listFiles(root), []);
+});
+
+test("auto-delivery after a non-Remotion render reports it was not delivered, and copies nothing", async (t) => {
+  const root = await destinationRoot(t);
+  const f = await renderableTrack(t);
+  await f.publish("remotion");
+
+  const reported: string[] = [];
+  const skipped = await deliverAfterRender(
+    f.slug,
+    "youtube-16x9",
+    (outcome) => reported.push(outcome.reason ?? ""),
+    "after-effects",
+    settingsFor(root, true),
+  );
+  assert.equal(skipped?.status, "failed");
+  assert.equal(skipped?.reason, "renderer_not_supported");
+  assert.match(skipped?.message ?? "", /copies Remotion exports only, so this After Effects export was not delivered/);
+  assert.deepEqual(reported, ["renderer_not_supported"]);
+  assert.deepEqual(await listFiles(root), []);
+
+  // After a Remotion render it delivers, exactly as before.
+  const delivered = await deliverAfterRender(f.slug, "youtube-16x9", undefined, "remotion", settingsFor(root, true));
+  assert.equal(delivered?.status, "delivered");
+});
+
+test("a destination fix plan leaves a track that now prefers After Effects for a person, never a Remotion re-render", async (t) => {
+  const root = await destinationRoot(t);
+  const f = await renderableTrack(t);
+  await f.publish("remotion");
+  const delivered = await deliverExport({ slug: f.slug, presetId: "youtube-16x9", settings: settingsFor(root) });
+  assert.equal(delivered.status, "delivered");
+
+  await updateTrackMetadata(f.slug, { renderer: "after-effects" });
+  await fs.rm(delivered.destinationPath!);
+
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
+  const actions = plan.actions.filter((action) => action.slug === f.slug);
+  assert.ok(actions.length > 0, JSON.stringify(plan));
+  for (const action of actions) {
+    assert.equal(action.kind, "manual_review", JSON.stringify(action));
+    assert.equal(action.executable, false);
+  }
+  assert.ok(actions.some((action) => /prefers After Effects; Delivery repair works with Remotion exports only/.test(action.reason)));
 });
