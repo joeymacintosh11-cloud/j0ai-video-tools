@@ -1,3 +1,4 @@
+import { DEFAULT_RENDERER_ID, isRendererId, resolveTrackRenderer, type RendererId } from "../../core/domain/video/renderers.ts";
 import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -27,6 +28,7 @@ import { trackOutputLocation } from "../tracks/trackLocations.ts";
  */
 
 export type DeliveryReceipt = {
+  readonly renderer?: RendererId;
   readonly schemaVersion: number;
   readonly slug: string;
   readonly presetId: RenderPresetId;
@@ -44,22 +46,26 @@ export type DeliveryReceipt = {
 export const deliveryReceiptPath = (
   slug: string,
   presetId: RenderPresetId,
+  renderer: RendererId = DEFAULT_RENDERER_ID,
 ): string =>
-  path.join(trackOutputLocation(slug, presetId).dir, `${presetId}.delivery.json`);
+  path.join(trackOutputLocation(slug, presetId, renderer).dir, `${presetId}.delivery.json`);
 
 export const readDeliveryReceipt = (
   slug: string,
   presetId: RenderPresetId,
+  renderer: RendererId = DEFAULT_RENDERER_ID,
 ): DeliveryReceipt | null => {
   try {
     const value = JSON.parse(
-      readFileSync(deliveryReceiptPath(slug, presetId), "utf8"),
+      readFileSync(deliveryReceiptPath(slug, presetId, renderer), "utf8"),
     ) as DeliveryReceipt;
 
     const valid =
       value?.schemaVersion === DELIVERY_RECEIPT_VERSION &&
       value.slug === slug &&
       value.presetId === presetId &&
+      (value.renderer === undefined || isRendererId(value.renderer)) &&
+      resolveTrackRenderer(value.renderer) === renderer &&
       typeof value.sourceFingerprint === "string" &&
       value.sourceOutput?.bytes > 0 &&
       Number.isFinite(value.sourceOutput.mtimeMs) && Number.isFinite(value.sourceOutput.ino) &&
@@ -81,7 +87,7 @@ export const writeDeliveryReceipt = async (
   assertOwned: () => void = () => {},
 ): Promise<void> => {
   await writeAtomicFile(
-    deliveryReceiptPath(receipt.slug, receipt.presetId),
+    deliveryReceiptPath(receipt.slug, receipt.presetId, resolveTrackRenderer(receipt.renderer)),
     (handle) => handle.writeFile(`${JSON.stringify(receipt, null, 2)}\n`, "utf-8"),
     async () => assertOwned(),
   );

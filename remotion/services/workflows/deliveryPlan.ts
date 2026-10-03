@@ -8,7 +8,9 @@ import type { ExportFreshness } from "../../core/domain/video/exportFreshness.ts
 import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import type { TrackInspection } from "../../core/domain/tracks/types.ts";
 import {
-  remotionOnlyProblem,
+  workflowRendererProblem,
+  workflowEngineField,
+  type RendererId,
   resolveTrackRenderer,
 } from "../../core/domain/video/renderers.ts";
 import {
@@ -48,6 +50,7 @@ import { listTracks } from "../tracks/listTracks.ts";
  */
 
 export type DeliveryTarget = {
+  readonly engine?: RendererId;
   readonly slug: string;
   readonly presetId: RenderPresetId;
   /** Short preset label, e.g. "Reels 9:16". */
@@ -169,12 +172,9 @@ export const planDeliveries = async (
       continue;
     }
 
-    // Delivery copies Remotion exports only. A track that prefers another
-    // renderer is reported, never planned as a Remotion delivery.
-    const rendererProblem = remotionOnlyProblem(
-      resolveTrackRenderer(inspection.metadata?.renderer),
-      "Delivery",
-    );
+    // Delivery uses the preferred export; reserved engines remain unsupported.
+    const renderer = resolveTrackRenderer(inspection.metadata?.renderer);
+    const rendererProblem = workflowRendererProblem(renderer);
     if (rendererProblem !== null) {
       invalid.push({ slug, code: "RENDERER_NOT_SUPPORTED", reason: rendererProblem });
       continue;
@@ -182,16 +182,17 @@ export const planDeliveries = async (
 
     const presetIds =
       override ?? resolveExportPresets(inspection.metadata?.exportPresets);
-    const coverage = trackExportCoverage(slug, inspection.metadata);
+    const coverage = trackExportCoverage(slug, inspection.metadata, renderer);
     const folder = inspection.metadata?.deliveryFolder ?? null;
 
     for (const presetId of presetIds) {
       const facts = coverage.find((entry) => entry.presetId === presetId);
       if (facts === undefined) continue;
 
-      const state = deliveryStateForTarget(slug, presetId, facts, root, folder);
+      const state = deliveryStateForTarget(slug, presetId, facts, root, folder, renderer);
       const notCurrentYet = facts.freshness !== "current";
       const target: DeliveryTarget = {
+        ...workflowEngineField(renderer),
         slug,
         presetId,
         label: RENDER_PRESETS[presetId].shortLabel,
@@ -252,6 +253,7 @@ export const deliverPlanned = async (
       await deliverExport({
         slug: target.slug,
         presetId: target.presetId,
+        engine: target.engine,
         settings: resolved,
       }),
     );

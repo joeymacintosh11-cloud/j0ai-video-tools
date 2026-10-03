@@ -12,7 +12,10 @@ import {
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
 import {
-  remotionOnlyProblem,
+  workflowRendererProblem,
+  DEFAULT_RENDERER_ID,
+  RENDERER_LABELS,
+  type RendererId,
   resolveTrackRenderer,
 } from "../../core/domain/video/renderers.ts";
 import { trackExportCoverage } from "../tracks/exportCoverage.ts";
@@ -85,6 +88,8 @@ export type DeliveryOutcome = {
 };
 
 export type DeliverExportInput = {
+  /** Optional expected source engine; omitted reads the live preference. */
+  readonly engine?: RendererId;
   readonly slug: string;
   readonly presetId: RenderPresetId;
   /** Read once by a caller delivering several targets. */
@@ -133,6 +138,7 @@ const deliverOwnedExport = async ({
   slug: slugInput,
   presetId: presetInput,
   settings,
+  engine,
 }: DeliverExportInput, lock: RenderTargetLock): Promise<DeliveryOutcome> => {
   const slug = assertValidSlug(slugInput);
   const presetId = assertRenderPresetId(presetInput);
@@ -142,24 +148,17 @@ const deliverOwnedExport = async ({
   // Execution always reads live metadata; planner snapshots are never authority.
   const metadata = (await inspectTrack(slug)).metadata;
 
-  const facts = trackExportCoverage(slug, metadata).find(
+  const renderer = resolveTrackRenderer(metadata?.renderer);
+  const facts = trackExportCoverage(slug, metadata, renderer).find(
     (entry) => entry.presetId === presetId,
   );
   const label = facts?.label ?? presetId;
 
-  // Delivery copies Remotion's export. For a track that prefers another
-  // renderer that would ship a video the track did not ask for, so it is
-  // refused here — whatever started it: the Deliver panel, auto-delivery, a
-  // fix plan or a content package.
-  const rendererProblem = remotionOnlyProblem(
-    resolveTrackRenderer(metadata?.renderer),
-    "Delivery",
-  );
-  if (rendererProblem !== null) {
+  const rendererProblem = workflowRendererProblem(renderer);
+  if (rendererProblem !== null || (engine !== undefined && engine !== renderer)) {
     return outcome(slug, presetId, label, {
-      status: "failed",
-      reason: "renderer_not_supported",
-      message: rendererProblem,
+      status: "failed", reason: "renderer_not_supported",
+      message: rendererProblem ?? `This track now prefers ${RENDERER_LABELS[renderer]}; the requested ${RENDERER_LABELS[engine!]} export was not delivered.`,
     });
   }
 
@@ -226,22 +225,16 @@ const deliverOwnedExport = async ({
     // Re-read freshness from disk: a replacement render may have published
     // between the checks above and the copy finishing.
     const latestMetadata = (await inspectTrack(slug)).metadata;
-    // Renderer preference is intent, not part of Remotion's input fingerprint.
-    // Re-check it after staging so a switch to another engine cannot publish
-    // the previously valid Remotion copy.
-    const latestRendererProblem = remotionOnlyProblem(
-      resolveTrackRenderer(latestMetadata?.renderer),
-      "Delivery",
-    );
-    if (latestRendererProblem !== null) {
+    // Preference is intent and is not in the metadata input fingerprint.
+    // Pin the source renderer across the entire copy, in both directions.
+    if (resolveTrackRenderer(latestMetadata?.renderer) !== renderer) {
       return outcome(slug, presetId, label, {
-        status: "failed",
-        reason: "renderer_not_supported",
-        message: latestRendererProblem,
+        status: "failed", reason: "renderer_not_supported",
+        message: `This track now prefers ${RENDERER_LABELS[resolveTrackRenderer(latestMetadata?.renderer)]}; its ${RENDERER_LABELS[renderer]} copy was discarded.`,
       });
     }
     const latestRelative = deliveryRelativePath(slug, presetId, latestMetadata?.deliveryFolder);
-    const after = trackExportCoverage(slug).find(
+    const after = trackExportCoverage(slug, latestMetadata, renderer).find(
       (entry) => entry.presetId === presetId,
     );
     const identity = statSync(facts.outputPath);
@@ -269,6 +262,7 @@ const deliverOwnedExport = async ({
       lock.assertOwned();
       const receipt: DeliveryReceipt = {
         schemaVersion: DELIVERY_RECEIPT_VERSION,
+        ...(renderer === DEFAULT_RENDERER_ID ? {} : { renderer }),
         slug, presetId, sourceFingerprint: before.fingerprint!,
         sourceOutput: before.identity,
         destinationRoot: root, destinationRelativePath: relativePath,
@@ -370,11 +364,12 @@ export const deliveryStateForTarget = (
   facts: Parameters<typeof deliveryStateFor>[0],
   root: string | null,
   deliveryFolder: string | null | undefined,
+  renderer: RendererId = DEFAULT_RENDERER_ID,
 ) => {
   if (root === null) return deliveryStateFor(facts, null, null, "");
   return deliveryStateFor(
     facts,
-    readDeliveryReceipt(slug, presetId),
+    readDeliveryReceipt(slug, presetId, renderer),
     root,
     deliveryRelativePath(slug, presetId, deliveryFolder),
   );

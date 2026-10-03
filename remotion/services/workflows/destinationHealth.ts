@@ -1,3 +1,4 @@
+import { resolveTrackRenderer } from "../../core/domain/video/renderers.ts";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, readdirSync } from "node:fs";
 import path from "node:path";
 import {
@@ -36,8 +37,7 @@ import {
   deliveryFolderFor,
 } from "../../core/domain/delivery/deliveryPaths.ts";
 import { RENDER_PRESET_IDS } from "../../core/domain/video/renderPresets.ts";
-import { deliveryStateForTarget } from "../delivery/deliverExport.ts";
-import { readDeliveryReceipt } from "../delivery/deliveryReceipt.ts";
+import { deliveryStateFor, readDeliveryReceipt } from "../delivery/deliveryReceipt.ts";
 import {
   readDeliverySettings,
   resolveDeliveryRoot,
@@ -318,7 +318,8 @@ export const scanDestinationHealth = async (
     }
 
     const findings: DestinationFinding[] = [];
-    const coverage = trackExportCoverage(slug, inspection.metadata);
+    const renderer = resolveTrackRenderer(inspection.metadata?.renderer);
+    const coverage = trackExportCoverage(slug, inspection.metadata, renderer);
     const coveredBasenames = new Set<string>();
 
     // Every receipt this track has, for every preset — not only its currently
@@ -333,7 +334,8 @@ export const scanDestinationHealth = async (
       const deliveredPath = path.join(root, folder, `${slug}-${presetId}.mp4`);
       // A link is already a changed delivered entry; never inspect its target,
       // even when it has matching size and mtime.
-      const receipt = readDeliveryReceipt(slug, presetId);
+      const receipt = readDeliveryReceipt(slug, presetId, renderer) ??
+        readDeliveryReceipt(slug, presetId, renderer === "after-effects" ? "remotion" : "after-effects");
       if (receipt !== null && receipt.destinationRoot === root &&
           receipt.destinationRelativePath === `${folder}/${slug}-${presetId}.mp4`) {
         try {
@@ -349,7 +351,7 @@ export const scanDestinationHealth = async (
         } catch { /* The shared state helper classifies the missing entry. */ }
       }
 
-      const state = deliveryStateForTarget(slug, presetId, facts, root, folder);
+      const state = deliveryStateFor(facts, receipt, root, `${folder}/${slug}-${presetId}.mp4`);
 
       if (receipt !== null && receipt.destinationRoot === root &&
           receipt.destinationRelativePath === `${folder}/${slug}-${presetId}.mp4`) {
