@@ -226,6 +226,20 @@ const deliverOwnedExport = async ({
     // Re-read freshness from disk: a replacement render may have published
     // between the checks above and the copy finishing.
     const latestMetadata = (await inspectTrack(slug)).metadata;
+    // Renderer preference is intent, not part of Remotion's input fingerprint.
+    // Re-check it after staging so a switch to another engine cannot publish
+    // the previously valid Remotion copy.
+    const latestRendererProblem = remotionOnlyProblem(
+      resolveTrackRenderer(latestMetadata?.renderer),
+      "Delivery",
+    );
+    if (latestRendererProblem !== null) {
+      return outcome(slug, presetId, label, {
+        status: "failed",
+        reason: "renderer_not_supported",
+        message: latestRendererProblem,
+      });
+    }
     const latestRelative = deliveryRelativePath(slug, presetId, latestMetadata?.deliveryFolder);
     const after = trackExportCoverage(slug).find(
       (entry) => entry.presetId === presetId,

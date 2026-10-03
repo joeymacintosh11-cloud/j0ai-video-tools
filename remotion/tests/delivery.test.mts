@@ -828,6 +828,37 @@ for (const patch of [
   });
 }
 
+for (const renderer of ["after-effects", "remotion"] as const) {
+  test(`renderer preference changing during the copy is rechecked: ${renderer}`, async (t) => {
+    const f = await setup(t);
+    const root = await destination(t);
+    await f.publish();
+    let changed = false;
+    whileStaged(t, () => {
+      writeFileSync(f.metadataPath, JSON.stringify({ ...f.metadata, renderer }));
+      changed = true;
+    });
+
+    const result = await deliverExport({
+      slug: f.slug,
+      presetId: "youtube-16x9",
+      settings: settingsFor(root),
+    });
+    assert.equal(changed, true);
+    if (renderer === "after-effects") {
+      assert.equal(result.status, "failed");
+      assert.equal(result.reason, "renderer_not_supported");
+      assert.match(result.message ?? "", /prefers After Effects/);
+      assert.deepEqual(await files(root), [], "no copy or staged file survives");
+      assert.equal(readDeliveryReceipt(f.slug, "youtube-16x9"), null);
+    } else {
+      assert.equal(result.status, "delivered", result.message ?? "");
+      assert.ok(readDeliveryReceipt(f.slug, "youtube-16x9"));
+    }
+    assert.equal(inspectRenderTargetLock(f.slug, "youtube-16x9").state, "free");
+  });
+}
+
 test("invalid delivery folder drafts cannot break track views, with delivery on or off", async (t) => {
   const f = await fixture(t, { deliveryFolder: "../escape" });
   const inspection = await inspectTrack(f.slug);
