@@ -1,3 +1,4 @@
+import { resolveTrackRenderer, workflowEngineField, type RendererId } from "../video/renderers.ts";
 import type {
   ContentPackageMode,
   ContentPackagePlatformEntry,
@@ -163,6 +164,7 @@ export type ContentPackageActionKind =
   | "blocked";
 
 export type ContentPackagePlannedAction = {
+  readonly engine?: RendererId;
   readonly slug: string;
   readonly platformId: PlatformId;
   readonly presetId: RenderPresetId;
@@ -243,6 +245,7 @@ export const planContentPackageBatch = (
       if (kind === null) continue;
 
       actions.push({
+        ...workflowEngineField(resolveTrackRenderer(result.package.renderer)),
         slug: result.slug,
         platformId: platform.platformId,
         presetId: platform.presetId,
@@ -282,8 +285,9 @@ export const planContentPackageBatch = (
 /** The renderable actions, in the shape renderManager.startBatch takes. */
 export const toRenderTargetsFromPlan = (
   plan: ContentPackageBatchPlan,
-): readonly { readonly slug: string; readonly preset: RenderPresetId }[] =>
+): readonly { readonly slug: string; readonly preset: RenderPresetId; readonly engine?: RendererId }[] =>
   plan.renderable.map((action) => ({
     slug: action.slug,
     preset: action.presetId,
+    ...workflowEngineField(resolveTrackRenderer(action.engine)),
   }));

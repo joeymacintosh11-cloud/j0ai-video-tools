@@ -104,21 +104,11 @@ export const announceEngine = (engineId: RendererId): void => {
   if (engineId !== DEFAULT_RENDERER_ID) console.log(`→ Render engine: ${engineId}`);
 };
 
-/**
- * Commands that plan what to render (render-missing, content-package,
- * content-package-batch) judge exports at Remotion's paths, so with another
- * engine they would render into that engine's folder and still find
- * Remotion's export missing, every run. Until planning is engine-aware they
- * refuse other engines rather than loop; render-track renders with any.
- */
-export const assertPlanningEngine = (engineId: RendererId, command: string): void => {
-  if (engineId !== DEFAULT_RENDERER_ID) {
-    throw new TrackError(
-      trackIssue(
-        "INVALID_REQUEST",
-        `${command} plans against ${DEFAULT_RENDERER_ID} exports and cannot render with "${engineId}" yet. ` +
-          `Use: npm run render-track -- <track-slug> --engine ${engineId}`,
-      ),
-    );
-  }
+/** Planning follows saved preferences. An explicit flag is a constraint,
+ * never permission to substitute another renderer for the planned export. */
+export const assertPlanningEngine = (
+  engineId: RendererId, command: string, preferred: RendererId = DEFAULT_RENDERER_ID,
+): void => {
+  if (engineId !== preferred) throw new TrackError(trackIssue("INVALID_REQUEST",
+    `${command} cannot override preferred renderer ${preferred} with ${engineId}. Change the track's saved preference first.`));
 };

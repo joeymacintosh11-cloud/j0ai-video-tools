@@ -1,3 +1,6 @@
+import { renderEngines } from "../../adapters/renderEngines.mts";
+import { resolveTrackRenderer, workflowEngineField } from "../../core/domain/video/renderers.ts";
+import { exportStatusKey } from "../../core/domain/render/exportStatus.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   ContentPackageBatchApplyView,
@@ -39,6 +42,7 @@ import type { RenderBatchEvent } from "../../services/workflows/renderManager.ts
 const toPlannedActionView = (
   action: ContentPackagePlannedAction,
 ): ContentPackagePlannedActionView => ({
+  ...workflowEngineField(resolveTrackRenderer(action.engine)),
   slug: action.slug,
   platformId: action.platformId,
   presetId: action.presetId,
@@ -53,7 +57,8 @@ const jobReference = (
   jobId: string | null,
   outcome: ContentPackageBatchJobReferenceView["outcome"],
 ): ContentPackageBatchJobReferenceView => ({
-  actionId: `${action.slug}::${action.platformId}::${action.presetId}`,
+  ...workflowEngineField(resolveTrackRenderer(action.engine)),
+  actionId: `${action.slug}::${action.platformId}::${action.presetId}${action.engine ? `::${action.engine}` : ""}`,
   slug: action.slug,
   platformId: action.platformId,
   presetId: action.presetId,
@@ -64,7 +69,7 @@ const jobReference = (
 const adoptedReferences = (actions: readonly ContentPackagePlannedAction[]): readonly ContentPackageBatchJobReferenceView[] => {
   const jobs = renderManager.listJobs();
   return actions.map((action) => {
-    const matches = jobs.filter((job) => job.slug === action.slug && job.presetId === action.presetId);
+    const matches = jobs.filter((job) => job.slug === action.slug && job.presetId === action.presetId && job.engine === resolveTrackRenderer(action.engine));
     const active = matches.find((job) => job.status !== "completed" && job.status !== "failed" && job.status !== "cancelled");
     return jobReference(action, (active ?? matches[0])?.id ?? null, "adopted");
   });
@@ -80,7 +85,7 @@ export const handleInspectContentPackageBatch = async (
   const mode = readBatchMode(body.mode);
   const platforms = readBatchPlatforms(body.platforms);
 
-  const context = await loadContentPackageBatchContext();
+  const context = await loadContentPackageBatchContext(renderEngines.status());
   const results = await buildContentPackagesForSlugs(slugs, context, {
     mode,
     platforms,
@@ -108,7 +113,7 @@ export const handlePlanContentPackageBatch = async (
   const mode = readBatchMode(body.mode);
   const platforms = readBatchPlatforms(body.platforms);
 
-  const context = await loadContentPackageBatchContext();
+  const context = await loadContentPackageBatchContext(renderEngines.status());
   const results = await buildContentPackagesForSlugs(slugs, context, {
     mode,
     platforms,
@@ -189,7 +194,7 @@ export const handleApplyContentPackageBatch = async (
 
   // Always re-read current state before queueing anything — a plan the
   // caller saw earlier (from /inspect or /plan) is never trusted here.
-  const context = await loadContentPackageBatchContext();
+  const context = await loadContentPackageBatchContext(renderEngines.status());
   const results = await buildContentPackagesForSlugs(slugs, context, {
     mode,
     platforms,
@@ -222,26 +227,26 @@ export const handleApplyContentPackageBatch = async (
     return;
   }
 
-  const { batch, locked } = renderManager.startBatch(
+  const { batch, locked, skipped } = renderManager.startBatch(
     toRenderTargetsFromPlan(plan),
   );
   const queuedJobs = new Map(
-    batch.jobs.map((job) => [`${job.slug}::${job.presetId}`, job.id]),
+    batch.jobs.map((job) => [exportStatusKey(job.slug, job.presetId, resolveTrackRenderer(job.engine)), job.id]),
   );
   const lockedKeys = new Set(
-    locked.map((target) => `${target.slug}::${target.preset}`),
+    [...locked, ...skipped].map((target) => exportStatusKey(target.slug, target.preset, resolveTrackRenderer(target.engine))),
   );
 
   const queued = plan.renderable.filter((action) =>
-    queuedJobs.has(`${action.slug}::${action.presetId}`),
+    queuedJobs.has(exportStatusKey(action.slug, action.presetId, resolveTrackRenderer(action.engine))),
   );
   const lockedElsewhere = plan.renderable.filter((action) =>
-    lockedKeys.has(`${action.slug}::${action.presetId}`),
+    lockedKeys.has(exportStatusKey(action.slug, action.presetId, resolveTrackRenderer(action.engine))),
   );
   const jobReferences = [
     ...adopted,
     ...queued.map((action) => jobReference(action,
-      queuedJobs.get(`${action.slug}::${action.presetId}`)!, "queued")),
+      queuedJobs.get(exportStatusKey(action.slug, action.presetId, resolveTrackRenderer(action.engine)))!, "queued")),
     ...lockedElsewhere.map((action) => jobReference(action, null, "locked_elsewhere")),
   ];
 

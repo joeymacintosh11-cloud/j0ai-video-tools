@@ -1,3 +1,4 @@
+import { resolveTrackRenderer } from "../core/domain/video/renderers.ts";
 import { renderEngines } from "../adapters/renderEngines.mts";
 import {
   deriveBatchContentPackage,
@@ -172,7 +173,6 @@ const describePlan = (plan: ContentPackageBatchPlan): void => {
 runCli("inspecting content package batch", async () => {
   const { tracks, catalogue, mode, platforms, plan: wantsPlan, apply, json, engineId } =
     parseArgs(process.argv.slice(2));
-  assertPlanningEngine(engineId, "content-package-batch");
 
   if (tracks.length === 0 && !catalogue) {
     printUsage();
@@ -189,7 +189,7 @@ runCli("inspecting content package batch", async () => {
     : tracks;
 
   const { slugs, duplicates } = namedBatchSlugs(requested);
-  const context = await loadContentPackageBatchContext();
+  const context = await loadContentPackageBatchContext(renderEngines.status());
   const results = await buildContentPackagesForSlugs(slugs, context, {
     mode,
     platforms,
@@ -202,6 +202,9 @@ runCli("inspecting content package batch", async () => {
     .filter((r): r is Extract<typeof r, { found: true }> => r.found)
     .map((r) => r.package);
 
+  if (process.argv.includes("--engine")) {
+    for (const pkg of packages) assertPlanningEngine(engineId, "content-package-batch", resolveTrackRenderer(pkg.renderer));
+  }
   const inspectView = deriveBatchContentPackage(packages, { invalid, duplicates });
 
   if (!wantsPlan) {
@@ -254,7 +257,7 @@ runCli("inspecting content package batch", async () => {
     let lastLoggedPercentage = -1;
 
     const { outputLabel } = await renderTrackVideo({
-      engine: await renderEngines.resolve(engineId),
+      engine: await renderEngines.resolve(action.engine),
       slug: action.slug,
       props,
       onRecorded: printLibraryOutcome,

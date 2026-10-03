@@ -3,7 +3,9 @@ import type { DeliveryReason, DeliveryStatus } from "../delivery/deliveryPaths.t
 import type { RenderPresetId } from "../video/renderPresets.ts";
 import {
   DEFAULT_RENDERER_ID,
-  remotionOnlyProblem,
+  workflowRendererProblem,
+  rendererRunProblem,
+  type RendererStatus,
   type RendererId,
 } from "../video/renderers.ts";
 import {
@@ -143,6 +145,7 @@ export type ContentPackageCounts = {
 };
 
 export type ContentPackageView = {
+  readonly renderer?: RendererId;
   readonly slug: string;
   readonly title: string | null;
   readonly mode: ContentPackageMode;
@@ -177,11 +180,11 @@ export type ContentPackageInput = {
   readonly exports: readonly PackageExportEntry[];
   /**
    * The renderer this track resolves to (TrackSummaryView.exportsRenderer).
-   * Omitted means Remotion. A package renders and delivers Remotion exports
-   * only, so for any other renderer every selected platform is blocked with
-   * that reason — never planned as a Remotion render or delivery.
+   * Omitted means Remotion. Export facts must come from this renderer's own
+   * folder; render actions retain it through planning and queueing.
    */
   readonly renderer?: RendererId;
+  readonly renderers?: readonly RendererStatus[] | null;
   /**
    * This track's own `contentMetadataOverrides`, or null/undefined when it
    * declares none. Resolved per field against `options.globalTemplates` and
@@ -276,12 +279,10 @@ export const deriveContentPackage = (
     input.contentMetadataOverrides,
   );
 
-  // Treated exactly like an invalid track from here on: blocked, with a reason,
-  // and no render or deliver action — so apply has nothing to queue.
-  const rendererProblem = remotionOnlyProblem(
-    input.renderer ?? DEFAULT_RENDERER_ID,
-    "A content package",
-  );
+  // Unimplemented engines are blocked; AE and Remotion share the same
+  // readiness calculation over their respective export facts.
+  const renderer = input.renderer ?? DEFAULT_RENDERER_ID;
+  const rendererProblem = workflowRendererProblem(renderer);
   const renderable = input.validationOk && rendererProblem === null;
 
   const platforms: ContentPackagePlatformEntry[] = PLATFORM_LIST.map(
@@ -295,11 +296,17 @@ export const deriveContentPackage = (
             ? true
             : (exportEntry?.intended ?? false);
 
-      const readiness = readinessFor(
+      let readiness = readinessFor(
         selected,
         renderable,
         exportEntry?.status,
       );
+
+      // Existing valid exports can be packaged/delivered without an installed
+      // renderer. Only work needing a render is blocked by local availability.
+      const runProblem = readiness === "missing" || readiness === "stale"
+        ? rendererRunProblem(renderer, input.renderers) : null;
+      if (runProblem !== null) readiness = "blocked";
 
       const metadata =
         input.metadata !== null
@@ -314,6 +321,7 @@ export const deriveContentPackage = (
         blockers.push(rendererProblem);
       }
 
+      if (selected && runProblem !== null) blockers.push(runProblem);
       return {
         platformId: profile.id,
         label: profile.label,
@@ -365,6 +373,7 @@ export const deriveContentPackage = (
   return {
     slug: input.slug,
     title: input.title,
+    ...(renderer === DEFAULT_RENDERER_ID ? {} : { renderer }),
     mode,
     packageStatus,
     platforms,

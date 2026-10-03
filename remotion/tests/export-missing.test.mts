@@ -176,8 +176,8 @@ test("queued and running targets are skipped, and reported apart", async (t) => 
   // Describing the queue directly, rather than starting real renders: the
   // point here is how the plan reads in-flight work, not how forking behaves.
   const inFlight = new Map<string, "queued" | "active">([
-    [`${f.slug}::youtube-16x9`, "active"],
-    [`${f.slug}::vertical-9x16`, "queued"],
+    [`${f.slug}::youtube-16x9::remotion`, "active"],
+    [`${f.slug}::vertical-9x16::remotion`, "queued"],
   ]);
 
   const result = await planMissingExports({

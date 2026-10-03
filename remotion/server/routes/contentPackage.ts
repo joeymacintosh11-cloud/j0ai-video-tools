@@ -1,3 +1,4 @@
+import { renderEngines } from "../../adapters/renderEngines.mts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   deriveContentPackage,
@@ -78,6 +79,7 @@ export const handleGetContentPackage = async (
     metadata: detail.metadata,
     exports: detail.exports,
     renderer: detail.exportsRenderer,
+    renderers: renderEngines.status(),
     contentMetadataOverrides: detail.metadata?.contentMetadataOverrides,
   };
 
