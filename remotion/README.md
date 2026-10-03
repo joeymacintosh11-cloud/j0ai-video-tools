@@ -133,7 +133,8 @@ Rendering uses the Remotion engine. `render-track` also takes an optional
 as before) or `after-effects` (see below). `premiere` is a reserved name that
 is refused as "not available", and anything else is an unknown engine.
 `render-missing`, `content-package` and `content-package-batch` accept
-`--engine remotion` only, because they plan from Remotion's exports. Each
+an optional `--engine` constraint; with no flag they follow each track's saved
+preference. A conflicting flag is refused, never used to override it. Each
 export records the engine that made it; see
 [ARCHITECTURE.md](ARCHITECTURE.md#choosing-the-engine-per-job).
 
@@ -163,16 +164,18 @@ track read refuses the batch.
 
 A track's export marks judge **its** engine's exports. After Effects' live in
 `out/<slug>/after-effects/`, so a Remotion export never counts for a track
-that chose After Effects, or the other way round. Export missing, delivery,
-release bundles, content packages and destination fix plans handle Remotion
-exports only. For a track that chose After Effects they leave it out with
-that reason, rather than rendering, copying or describing a Remotion video in
-its place. Auto-delivery after an After Effects render reports the export as
-not delivered, for the same reason.
+that chose After Effects, or the other way round. Export missing, stale
+re-export, content packages, delivery and auto-delivery follow that preference.
+A current AE export can be packaged and delivered even on a machine without
+AE installed. Required renders stay blocked with the local availability or
+configuration reason. Delivery pins the renderer and rechecks the preference
+before publishing, so changing engines cannot publish the previous engine's
+video. Delivery receipts live beside each engine's source export.
 
-The preference is a default for the app only. On the command line and the API
-an engine is still named explicitly: `render-track` without `--engine` and
-`POST .../render` without `"engine"` render with Remotion, as they always did.
+Release bundles and destination repair plans remain Remotion-only; AE repairs
+require manual review. Direct `render-track` without `--engine` and direct API
+render requests without `"engine"` still render with Remotion. Workflow planners
+apply saved preferences explicitly to every target, including mixed batches.
 
 ### Rendering with After Effects (proof of concept)
 
@@ -331,9 +334,8 @@ text, and why a render failed
 (including `aerender`'s exit code and last output lines).
 
 **Limits of this proof of concept:**
-- Only `render-track` and the API render with After Effects. Freshness
-  checks, delivery, release bundles and content packages still look at
-  Remotion exports only.
+- Batch planning, content packages and delivery support After Effects. Release
+  bundles and automatic destination repair remain Remotion-only.
 - One After Effects render at a time per data folder, because they share the
   data file and staged assets.
 - Nothing checks that a composition's canvas, frame rate or length matches the
@@ -343,8 +345,9 @@ text, and why a render failed
   Effects' default font, and has no animation beyond the waveform.
 - The text is written in when the template is built, so each new track means
   rerunning the script by hand in After Effects (the render stops and says so).
-  Batch renders across tracks would need that rebuild to be automated.
-- The UI does not offer engine selection yet.
+  Batch planning preserves every track's engine, but unattended execution across
+  different AE tracks requires a future automated template rebuild. Today a
+  mismatched track/template fails explicitly; it never falls back to Remotion.
 
 ### Export formats
 

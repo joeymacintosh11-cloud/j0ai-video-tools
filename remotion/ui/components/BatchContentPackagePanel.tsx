@@ -1,3 +1,5 @@
+import { exportStatusKey } from "../../core/domain/render/exportStatus.ts";
+import { resolveTrackRenderer } from "../../core/domain/video/renderers.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { replaceBatchTrackPackage } from "../../core/domain/content/contentPackageBatch.ts";
 import { STALE_REASON_LABELS } from "../../core/domain/video/exportFreshness.ts";
@@ -507,9 +509,9 @@ export const BatchContentPackagePanel: React.FC<{
   const activeKeys = new Set(jobReferences
     .filter((ref) => ref.jobId && jobs[ref.jobId] &&
       ["queued", "preparing", "rendering"].includes(jobs[ref.jobId].status))
-    .map((ref) => `${ref.slug}::${ref.presetId}`));
+    .map((ref) => exportStatusKey(ref.slug, ref.presetId, resolveTrackRenderer(ref.engine))));
   const allPlannedActionsActive = Boolean(plan && plan.renderable.length > 0 &&
-    plan.renderable.every((action) => activeKeys.has(`${action.slug}::${action.presetId}`)));
+    plan.renderable.every((action) => activeKeys.has(exportStatusKey(action.slug, action.presetId, resolveTrackRenderer(action.engine)))));
 
   return (
     <section className="batchpackage" aria-label="Batch content package">

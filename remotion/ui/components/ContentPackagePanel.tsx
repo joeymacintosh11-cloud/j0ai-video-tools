@@ -1,3 +1,4 @@
+import { resolveTrackRenderer, type RendererId } from "../../core/domain/video/renderers.ts";
 import { useMemo, useState } from "react";
 import {
   deriveContentPackage,
@@ -211,8 +212,9 @@ const CheckRow: React.FC<{
 const PlatformCard: React.FC<{
   readonly entry: PublishPlatformEntry;
   readonly slug: string;
+  readonly renderer: RendererId;
   readonly onRevealed: (error: string | null) => void;
-}> = ({ entry, slug, onRevealed }) => {
+}> = ({ entry, slug, renderer, onRevealed }) => {
   const { platform, state } = entry;
   const mark = STATE_MARK[state];
   const copyText = formatPlatformCopyForClipboard(platform);
@@ -227,7 +229,7 @@ const PlatformCard: React.FC<{
 
   const reveal = async () => {
     try {
-      await revealTrackOutput(slug, platform.presetId);
+      await revealTrackOutput(slug, platform.presetId, renderer);
       onRevealed(null);
     } catch (cause) {
       onRevealed(cause instanceof Error ? cause.message : "Could not reveal the file.");
@@ -337,13 +339,14 @@ const PlatformCard: React.FC<{
  * ------------------------------------------------------------------ */
 
 export const ContentPackagePanel: React.FC<{
+  readonly renderers?: import("../../core/domain/api/views.ts").RenderersView | null;
   readonly track: TrackDetailView;
   /** The global content-metadata templates; null while still loading or unconfigured. */
   readonly globalTemplates: PartialMetadataTemplates | null;
   readonly templatesProblem: string | null;
   readonly onChanged: () => void;
   readonly onBatchStarted: (batchId: string) => void;
-}> = ({ track, globalTemplates, templatesProblem, onChanged, onBatchStarted }) => {
+}> = ({ track, renderers, globalTemplates, templatesProblem, onChanged, onBatchStarted }) => {
   // "mode" is view/workflow scope only — which platforms the Content Package
   // below inspects right now. It never writes the track's own persisted
   // export intent (that only ever changes through the metadata form's own
@@ -366,8 +369,9 @@ export const ContentPackagePanel: React.FC<{
       contentMetadataOverrides: track.metadata?.contentMetadataOverrides,
       exports: track.exports,
       renderer: track.exportsRenderer,
+      renderers: renderers?.renderers,
     }),
-    [track],
+    [track, renderers],
   );
 
   // Read via the real "intent" derivation rather than re-reading
@@ -505,6 +509,7 @@ export const ContentPackagePanel: React.FC<{
             key={entry.platformId}
             entry={entry}
             slug={track.slug}
+            renderer={resolveTrackRenderer(track.renderer)}
             onRevealed={setRevealError}
           />
         ))}

@@ -1,3 +1,4 @@
+import { isRendererId, resolveTrackRenderer, workflowEngineField } from "../core/domain/video/renderers.ts";
 import type { ContentPackageBatchJobReferenceView, RenderJobView } from "../core/domain/api/views.ts";
 import {
   PLATFORM_IDS,
@@ -19,7 +20,7 @@ export type BatchSessionMode = "intent" | "full" | "platforms";
 
 export type BatchSessionJobReference = Omit<Pick<
   ContentPackageBatchJobReferenceView,
-  "actionId" | "slug" | "platformId" | "presetId" | "jobId"
+  "actionId" | "slug" | "platformId" | "presetId" | "jobId" | "engine"
 >, "jobId"> & { readonly jobId: string };
 
 export type BatchSession = {
@@ -60,9 +61,11 @@ const isSafeId = (value: unknown, maxLength: number): value is string =>
 const parseJobReference = (value: unknown): BatchSessionJobReference | null => {
   if (!isRecord(value) || !isValidSlug(value.slug) || !isPlatformId(value.platformId)) return null;
   const presetId = PLATFORM_PROFILES[value.platformId].presetId;
-  const actionId = `${value.slug}::${value.platformId}::${presetId}`;
+  if (value.engine !== undefined && !isRendererId(value.engine)) return null;
+  const engine = resolveTrackRenderer(value.engine as Parameters<typeof resolveTrackRenderer>[0]);
+  const actionId = `${value.slug}::${value.platformId}::${presetId}${engine === "remotion" ? "" : `::${engine}`}`;
   if (value.presetId !== presetId || value.actionId !== actionId || !isSafeId(value.jobId, 128)) return null;
-  return { actionId, slug: value.slug, platformId: value.platformId, presetId, jobId: value.jobId };
+  return { actionId, slug: value.slug, platformId: value.platformId, presetId, jobId: value.jobId, ...workflowEngineField(engine) };
 };
 
 const parseJobReferences = (value: unknown): readonly BatchSessionJobReference[] | null => {
@@ -195,7 +198,7 @@ export const classifyRecoveredJob = (
   reference: BatchSessionJobReference,
   job: RenderJobView,
 ): RecoveredJobDisposition => {
-  if (job.id !== reference.jobId || job.slug !== reference.slug || job.presetId !== reference.presetId) {
+  if (job.id !== reference.jobId || job.slug !== reference.slug || job.presetId !== reference.presetId || resolveTrackRenderer(job.engine) !== resolveTrackRenderer(reference.engine)) {
     return "mismatch";
   }
   return job.status === "queued" || job.status === "preparing" || job.status === "rendering"

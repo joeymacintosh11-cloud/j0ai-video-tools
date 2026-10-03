@@ -164,6 +164,7 @@ export const TrackDetail: React.FC<{
         <h3 className="section__title">Content Package</h3>
         <ContentPackagePanel
           track={track}
+          renderers={renderers}
           globalTemplates={contentMetadataSettings?.templates ?? null}
           templatesProblem={contentMetadataSettings?.problem ?? null}
           onChanged={onChanged}
@@ -218,9 +219,10 @@ export const TrackDetail: React.FC<{
               <span className="note__message">
                 These are {RENDERER_LABELS[track.exportsRenderer]} exports, the
                 engine this track prefers (out/{track.slug}/{track.exportsRenderer}/).
-                Remotion exports do not count for it. Export missing, delivery,
-                release bundles and content packages handle Remotion exports
-                only, so they leave this track out.
+                Export missing, delivery and content packages use this engine.
+                After Effects renders run serially and require a template built
+                for this track. Release bundles and destination repair remain
+                Remotion-only.
               </span>
             </p>
           ) : null}
