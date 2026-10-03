@@ -46,20 +46,59 @@
   // templateContract.mts (a test compares them).
   var LOADER = [
     'var TOSHI_DATA = "' + DATA + '";',
+    'var toshiStep = "footage";',
+    'var toshiInfo = { foot: "-", sd: "-", txt: "-", track: "-" };',
+    "var toshiItem = null;",
+    "var toshiFootageError = null;",
+    "try { toshiItem = footage(TOSHI_DATA); } catch (err) { toshiFootageError = err; }",
+    "function toshiKind(v) {",
+    '  if (v === null) { return "null"; }',
+    '  if (v === undefined) { return "undef"; }',
+    '  if (typeof v === "string") { return "str" + v.length; }',
+    '  if (typeof v !== "object") { return typeof v; }',
+    '  if (Object.prototype.toString.call(v) === "[object Array]") { return "arr" + v.length; }',
+    "  var keys = [];",
+    "  try { for (var k in v) { if (keys.length < 3) { keys.push(String(k).substring(0, 10)); } } } catch (err) {}",
+    '  return (typeof v.length === "number" ? "list" + v.length : "obj") + "{" + keys.join(",") + "}";',
+    "}",
     "function toshiTrack() {",
+    '  toshiStep = "footage";',
+    '  toshiInfo.foot = toshiFootageError ? "err" : toshiItem === null ? "null" : toshiItem === undefined ? "undef" : "ok";',
+    "  if (toshiFootageError) { throw toshiFootageError; }",
+    '  toshiStep = "sourceData";',
     "  var data = null;",
-    "  try { data = footage(TOSHI_DATA).sourceData; } catch (err) { data = null; }",
+    '  try { data = toshiItem.sourceData; toshiInfo.sd = toshiKind(data); } catch (err) { data = null; toshiInfo.sd = "err"; }',
+    '  toshiStep = "unwrap";',
     "  if (data && !data.track && data.length > 0) { data = data[0]; }",
     "  if (!data || !data.track) {",
-    "    var text = footage(TOSHI_DATA).sourceText;",
+    '    toshiStep = "sourceText";',
+    "    var text = toshiItem.sourceText;",
+    "    toshiInfo.txt = toshiKind(text);",
+    '    toshiStep = "parse";',
     '    data = typeof JSON !== "undefined" ? JSON.parse(text) : eval("(" + text + ")");',
     "  }",
-    "  return data.track;",
+    '  toshiStep = "track";',
+    "  var track = data.track;",
+    '  toshiInfo.track = track ? "yes" : "no";',
+    '  if (!track) { throw new Error("data.track is " + toshiKind(track)); }',
+    '  toshiStep = "field";',
+    "  return track;",
+    "}",
+    "function toshiReport(err) {",
+    "  var message = err && err.message !== undefined ? String(err.message) : String(err);",
+    '  return "[data " + toshiStep + "] foot:" + toshiInfo.foot + " sd:" + toshiInfo.sd + " txt:" + toshiInfo.txt +',
+    '    " track:" + toshiInfo.track + "\\r" + message.substring(0, 80);',
     "}"
   ].join("\n");
 
+  // A failure is reported in two short lines at this size (TEMPLATE_DIAGNOSTIC_FONT_SIZE).
+  var DIAGNOSTIC_FONT_SIZE = 20;
+
   function textExpression(body) {
-    return LOADER + "\ntry {\n  " + body + '\n} catch (err) {\n  "[" + TOSHI_DATA + ": " + err.message + "]";\n}';
+    return (
+      LOADER + "\ntry {\n  " + body + "\n} catch (err) {\n  var toshiMessage = toshiReport(err);\n" +
+      "  try { text.sourceText.style.setFontSize(" + DIAGNOSTIC_FONT_SIZE + ").setText(toshiMessage); } catch (styleErr) { toshiMessage; }\n}"
+    );
   }
 
   var warnings = [];

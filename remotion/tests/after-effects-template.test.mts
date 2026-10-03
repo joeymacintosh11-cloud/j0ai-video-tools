@@ -12,6 +12,7 @@ import {
   TEMPLATE_DATA_FIELDS_READ,
   TEMPLATE_DATA_FILE_NAME,
   TEMPLATE_DATA_LOADER,
+  TEMPLATE_DIAGNOSTIC_FONT_SIZE,
   TEMPLATE_EXPRESSIONS,
   TEMPLATE_LAYERS,
   templateTextExpression,
@@ -101,14 +102,19 @@ test("the template data has the shape the expressions read", () => {
   }
 });
 
-test("the text expressions are exactly the loader plus a field read, with a visible error fallback", () => {
+test("the text expressions are exactly the loader plus a field read, with a visible diagnostic on failure", () => {
   assert.equal(
     TEMPLATE_EXPRESSIONS.Title,
-    `${TEMPLATE_DATA_LOADER}\ntry {\n  var t = toshiTrack(); t.title ? String(t.title) : "";\n} catch (err) {\n  "[" + TOSHI_DATA + ": " + err.message + "]";\n}`,
+    `${TEMPLATE_DATA_LOADER}\ntry {\n  var t = toshiTrack(); t.title ? String(t.title) : "";\n} catch (err) {\n` +
+      `  var toshiMessage = toshiReport(err);\n` +
+      `  try { text.sourceText.style.setFontSize(20).setText(toshiMessage); } catch (styleErr) { toshiMessage; }\n}`,
   );
   assert.equal(TEMPLATE_EXPRESSIONS.Artist, templateTextExpression(`var t = toshiTrack(); t.artist ? String(t.artist) : "";`));
   assert.ok(TEMPLATE_EXPRESSIONS["Key BPM"].includes(`parts.join(" \\u00b7 ");`), "· written as an escape, safe in any file encoding");
   assert.match(TEMPLATE_DATA_LOADER, /^var TOSHI_DATA = "toshi-render-data\.json";/);
+  // footage() is called once, at the expression's top level, not inside a function.
+  assert.equal(TEMPLATE_DATA_LOADER.match(/footage\(/g)?.length, 1);
+  assert.match(TEMPLATE_DATA_LOADER, /^try \{ toshiItem = footage\(TOSHI_DATA\); \}/m);
 });
 
 test("ghetto-geek renders as Ghetto Geek / Toshi / F Minor · 100 BPM however After Effects delivers the JSON", () => {
@@ -131,9 +137,80 @@ test("missing optional fields render as nothing, and unreadable data says why in
   assert.equal(renderedText(withTrack({ key: "A Minor" }))["Key BPM"], "A Minor");
 
   for (const text of Object.values(renderedText(null))) {
-    assert.match(String(text), /^\[toshi-render-data\.json: Couldn't find footage named toshi-render-data\.json\]$/);
+    assert.equal(text, "[data footage] foot:err sd:- txt:- track:-\rCouldn't find footage named toshi-render-data.json");
   }
-  assert.match(String(renderedText({ sourceText: () => "not json" }).Title), /^\[toshi-render-data\.json: /);
+});
+
+/* ------------------------------------------------------------------ *
+ * Temporary diagnostics: which access step failed, and on what
+ * ------------------------------------------------------------------ */
+
+/** Runs the Title expression with `footage()` returning `item` as is (null included). */
+const diagnose = (item: unknown, extra: Record<string, unknown> = {}): unknown =>
+  vm.runInNewContext(TEMPLATE_EXPRESSIONS.Title, { footage: () => item, ...extra });
+
+test("the diagnostic names the failing step and what each access returned", () => {
+  // footage() itself returned null: sourceData is unreadable, and reading sourceText fails.
+  assert.equal(
+    diagnose(null),
+    "[data sourceText] foot:null sd:err txt:- track:-\rCannot read properties of null (reading 'sourceText')",
+  );
+  // Both sourceData and sourceText are null: JSON.parse(null) is null, so reading .track fails.
+  assert.equal(
+    diagnose({ sourceData: null, sourceText: null }),
+    "[data track] foot:ok sd:null txt:null track:-\rCannot read properties of null (reading 'track')",
+  );
+  // sourceData arrives without a track, and the text has none either.
+  assert.equal(
+    diagnose({ sourceData: { schemaVersion: 1, assets: {}, format: {}, timing: {} }, sourceText: "{}" }),
+    "[data track] foot:ok sd:obj{schemaVers,assets,format} txt:str2 track:no\rdata.track is undef",
+  );
+  // An array that does not hold the data.
+  assert.match(String(diagnose({ sourceData: [], sourceText: undefined })), /^\[data parse\] foot:ok sd:arr0 txt:undef track:-\r/);
+  // Text that is not JSON.
+  assert.match(String(diagnose({ sourceData: undefined, sourceText: "not json" })), /^\[data parse\] foot:ok sd:undef txt:str8 track:-\r/);
+  // An array-like host object (not a real Array) is reported with its length and keys.
+  assert.match(String(diagnose({ sourceData: { length: 0, x: 1 }, sourceText: null })), /^\[data track\] foot:ok sd:list0\{length,x\} txt:null /);
+  // sourceData that throws when read.
+  const throwing = {
+    get sourceData(): unknown {
+      throw new Error("no data");
+    },
+    sourceText: null,
+  };
+  assert.match(String(diagnose(throwing)), /^\[data track\] foot:ok sd:err txt:null track:-\r/);
+  // The data is read but a field cannot be.
+  const track = {
+    get title(): string {
+      throw new Error("title unreadable");
+    },
+  };
+  assert.equal(diagnose({ sourceData: { track } }), "[data field] foot:ok sd:obj{track} txt:- track:yes\rtitle unreadable");
+});
+
+test("the diagnostic stays two short lines, drawn small where the text style API exists", () => {
+  const long = "x".repeat(300);
+  const text = String(diagnose({ sourceData: undefined, sourceText: null }, { JSON: { parse: () => { throw new Error(long); } } }));
+  const [first, second, ...rest] = text.split("\r");
+  assert.deepEqual(rest, []);
+  assert.ok(first.length <= 90, first);
+  assert.equal(second, "x".repeat(80));
+
+  // On the JavaScript engine the diagnostic is set through the text style, at a size that fits.
+  const calls: unknown[] = [];
+  const style = {
+    setFontSize(size: number) {
+      calls.push(["size", size]);
+      return { setText: (value: string) => ({ size, value }) };
+    },
+  };
+  const styled = diagnose(null, { text: { sourceText: { style } } }) as { size: number; value: string };
+  assert.equal(styled.size, TEMPLATE_DIAGNOSTIC_FONT_SIZE);
+  assert.match(styled.value, /^\[data sourceText\] foot:null /);
+  // Successful text is never restyled.
+  calls.length = 0;
+  assert.equal(diagnose({ sourceData: ghettoGeek }, { text: { sourceText: { style } } }), "Ghetto Geek");
+  assert.deepEqual(calls, []);
 });
 
 /* ------------------------------------------------------------------ *

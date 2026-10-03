@@ -48,35 +48,84 @@ export const REQUIRED_TEMPLATE_FILES = [
  *
  * `footage(...).sourceData` is documented as returning a JSON file's data "as
  * an array of sourceData objects", and versions differ on whether a top-level
- * object arrives as itself or wrapped in an array. A plain
- * `sourceData.track.title` then throws, After Effects disables the expression
- * and the layer silently shows its placeholder text. So the loader accepts
+ * object arrives as itself or wrapped in an array. So the loader accepts
  * either shape, falls back to parsing the file's text (`sourceText`) itself,
  * and works on both the JavaScript and the legacy ExtendScript expression
  * engines (no JSON object there, hence eval).
+ *
+ * TEMPORARY DIAGNOSTICS: while the real After Effects data shape is being
+ * pinned down, the loader records each access step it reaches and what it
+ * found there (toshiStep, toshiInfo), so a failure can say exactly where and
+ * why (see templateTextExpression). `footage()` is called once, at the top
+ * level of the expression rather than inside a function.
  */
 export const TEMPLATE_DATA_LOADER = [
   `var TOSHI_DATA = "${TEMPLATE_DATA_FILE_NAME}";`,
+  `var toshiStep = "footage";`,
+  `var toshiInfo = { foot: "-", sd: "-", txt: "-", track: "-" };`,
+  `var toshiItem = null;`,
+  `var toshiFootageError = null;`,
+  `try { toshiItem = footage(TOSHI_DATA); } catch (err) { toshiFootageError = err; }`,
+  `function toshiKind(v) {`,
+  `  if (v === null) { return "null"; }`,
+  `  if (v === undefined) { return "undef"; }`,
+  `  if (typeof v === "string") { return "str" + v.length; }`,
+  `  if (typeof v !== "object") { return typeof v; }`,
+  `  if (Object.prototype.toString.call(v) === "[object Array]") { return "arr" + v.length; }`,
+  `  var keys = [];`,
+  `  try { for (var k in v) { if (keys.length < 3) { keys.push(String(k).substring(0, 10)); } } } catch (err) {}`,
+  `  return (typeof v.length === "number" ? "list" + v.length : "obj") + "{" + keys.join(",") + "}";`,
+  `}`,
   `function toshiTrack() {`,
+  `  toshiStep = "footage";`,
+  `  toshiInfo.foot = toshiFootageError ? "err" : toshiItem === null ? "null" : toshiItem === undefined ? "undef" : "ok";`,
+  `  if (toshiFootageError) { throw toshiFootageError; }`,
+  `  toshiStep = "sourceData";`,
   `  var data = null;`,
-  `  try { data = footage(TOSHI_DATA).sourceData; } catch (err) { data = null; }`,
+  `  try { data = toshiItem.sourceData; toshiInfo.sd = toshiKind(data); } catch (err) { data = null; toshiInfo.sd = "err"; }`,
+  `  toshiStep = "unwrap";`,
   `  if (data && !data.track && data.length > 0) { data = data[0]; }`,
   `  if (!data || !data.track) {`,
-  `    var text = footage(TOSHI_DATA).sourceText;`,
+  `    toshiStep = "sourceText";`,
+  `    var text = toshiItem.sourceText;`,
+  `    toshiInfo.txt = toshiKind(text);`,
+  `    toshiStep = "parse";`,
   `    data = typeof JSON !== "undefined" ? JSON.parse(text) : eval("(" + text + ")");`,
   `  }`,
-  `  return data.track;`,
+  `  toshiStep = "track";`,
+  `  var track = data.track;`,
+  `  toshiInfo.track = track ? "yes" : "no";`,
+  `  if (!track) { throw new Error("data.track is " + toshiKind(track)); }`,
+  `  toshiStep = "field";`,
+  `  return track;`,
+  `}`,
+  `function toshiReport(err) {`,
+  `  var message = err && err.message !== undefined ? String(err.message) : String(err);`,
+  `  return "[data " + toshiStep + "] foot:" + toshiInfo.foot + " sd:" + toshiInfo.sd + " txt:" + toshiInfo.txt +`,
+  `    " track:" + toshiInfo.track + "\\r" + message.substring(0, 80);`,
   `}`,
 ].join("\n");
 
+/** The font size a failure's diagnostic is drawn at, so both of its lines fit in the frame. */
+export const TEMPLATE_DIAGNOSTIC_FONT_SIZE = 20;
+
 /**
- * A text expression: the loader, then `body`. If the data cannot be read at
- * all, the layer shows "[toshi-render-data.json: <reason>]" instead of
- * silently keeping its placeholder, so a broken template is obvious in the
- * very first frame.
+ * A text expression: the loader, then `body`. If the data cannot be read, the
+ * layer shows a two-line diagnostic instead of its placeholder:
+ *
+ *   [data <step>] foot:<ok|null|undef|err> sd:<kind> txt:<kind> track:<yes|no|->
+ *   <the caught error's message, at most 80 characters>
+ *
+ * where <step> is the access step that failed (footage, sourceData, unwrap,
+ * sourceText, parse, track, field) and a <kind> is null, undef, strN (a
+ * string of N characters), arrN (an array of N), listN{keys} (array-like),
+ * obj{keys} (the first three keys) or "-" (not reached). It is drawn at
+ * TEMPLATE_DIAGNOSTIC_FONT_SIZE through the text style API where After Effects
+ * has it (the JavaScript engine), and as plain text otherwise.
  */
 export const templateTextExpression = (body: string): string =>
-  `${TEMPLATE_DATA_LOADER}\ntry {\n  ${body}\n} catch (err) {\n  "[" + TOSHI_DATA + ": " + err.message + "]";\n}`;
+  `${TEMPLATE_DATA_LOADER}\ntry {\n  ${body}\n} catch (err) {\n  var toshiMessage = toshiReport(err);\n` +
+  `  try { text.sourceText.style.setFontSize(${TEMPLATE_DIAGNOSTIC_FONT_SIZE}).setText(toshiMessage); } catch (styleErr) { toshiMessage; }\n}`;
 
 /**
  * The text layers' expressions, keyed by the layer names the bootstrap script

@@ -200,6 +200,17 @@ export const createAfterEffectsRenderEngine = (
 
           log(`After Effects: composition "${composition}", ${durationInFrames} frames @ ${preset.fps}fps.`);
           log(`After Effects: template data and assets staged in ${path.dirname(config.dataFile)}.`);
+          // What the template's text expressions should find. An expression
+          // cannot write to aerender's output, so a failure to read it shows
+          // only in the frame (templateTextExpression); this line is the
+          // other half of that comparison.
+          log(
+            `After Effects: ${path.basename(config.dataFile)} track: ` +
+              (["title", "artist", "key", "bpm"] as const)
+                .map((field) => `${field}=${JSON.stringify(data.track[field] ?? null)}`)
+                .join(" ") +
+              ".",
+          );
 
           // Checked after staging, so the files a template needs are already
           // there to import when this says they are not being used.

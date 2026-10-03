@@ -601,6 +601,13 @@ test("a template without the composition name or a waveform effect renders, with
     presetId: "square-1x1",
     onEngineLog: (message) => ctx.logs.push(message),
   });
+  // What the template should read, for comparison with any diagnostic in the frame.
+  assert.ok(
+    ctx.logs.some((message) =>
+      /^After Effects: [\w.-]+\.json track: title="Fixture" artist="Toshi" key="F Minor" bpm=100\.$/.test(message),
+    ),
+    ctx.logs.join("\n"),
+  );
   const warnings = ctx.logs.filter((message) => message.includes("warning:"));
   assert.equal(warnings.length, 2);
   assert.match(warnings[0], /composition "Toshi Visualizer" was not found in the project file/);
