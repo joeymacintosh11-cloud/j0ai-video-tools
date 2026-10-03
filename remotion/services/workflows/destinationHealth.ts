@@ -37,7 +37,7 @@ import {
   deliveryFolderFor,
 } from "../../core/domain/delivery/deliveryPaths.ts";
 import { RENDER_PRESET_IDS } from "../../core/domain/video/renderPresets.ts";
-import { deliveryStateFor, readDeliveryReceipt } from "../delivery/deliveryReceipt.ts";
+import { deliveryStateFor, readDeliveryReceipt, type DeliveryReceipt } from "../delivery/deliveryReceipt.ts";
 import {
   readDeliverySettings,
   resolveDeliveryRoot,
@@ -320,6 +320,9 @@ export const scanDestinationHealth = async (
     const findings: DestinationFinding[] = [];
     const renderer = resolveTrackRenderer(inspection.metadata?.renderer);
     const coverage = trackExportCoverage(slug, inspection.metadata, renderer);
+    const coverageByRenderer = new Map([[renderer, coverage]]);
+    const receiptRenderers = renderer === "after-effects"
+      ? [renderer, "remotion"] as const : [renderer, "after-effects"] as const;
     const coveredBasenames = new Set<string>();
 
     // Every receipt this track has, for every preset — not only its currently
@@ -328,14 +331,24 @@ export const scanDestinationHealth = async (
     // not un-deliver a file that is genuinely still sitting there.
     for (const presetId of RENDER_PRESET_IDS) {
       if (!rootIsSafe()) break;
-      const facts = coverage.find((entry) => entry.presetId === presetId);
-      if (facts === undefined) continue;
-
       const deliveredPath = path.join(root, folder, `${slug}-${presetId}.mp4`);
       // A link is already a changed delivered entry; never inspect its target,
       // even when it has matching size and mtime.
-      const receipt = readDeliveryReceipt(slug, presetId, renderer) ??
-        readDeliveryReceipt(slug, presetId, renderer === "after-effects" ? "remotion" : "after-effects");
+      const relative = `${folder}/${slug}-${presetId}.mp4`;
+      // Historical delivery claims are not renderer fallbacks. Match the
+      // destination first, then use the latest claim for this shared filename.
+      // A receipt from another root/folder must never shadow that claim.
+      const receipt = receiptRenderers
+        .map((engine) => readDeliveryReceipt(slug, presetId, engine))
+        .filter((entry): entry is DeliveryReceipt => entry !== null &&
+          entry.destinationRoot === root && entry.destinationRelativePath === relative)
+        .sort((a, b) => (Date.parse(b.deliveredAt) || 0) - (Date.parse(a.deliveredAt) || 0))[0] ?? null;
+      const receiptRenderer = receipt === null ? renderer : resolveTrackRenderer(receipt.renderer);
+      if (!coverageByRenderer.has(receiptRenderer)) {
+        coverageByRenderer.set(receiptRenderer, trackExportCoverage(slug, inspection.metadata, receiptRenderer));
+      }
+      const facts = coverageByRenderer.get(receiptRenderer)!.find((entry) => entry.presetId === presetId);
+      if (facts === undefined) continue;
       if (receipt !== null && receipt.destinationRoot === root &&
           receipt.destinationRelativePath === `${folder}/${slug}-${presetId}.mp4`) {
         try {

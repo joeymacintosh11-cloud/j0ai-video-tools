@@ -969,6 +969,10 @@ destination. Nothing checks that against what is actually there — until now. A
 health scan compares the two: every delivered file a receipt names, every
 track's release bundle, and (for a catalogue-wide scan) every folder at the
 destination root that looks like one of this app's own.
+For each destination filename, the scan considers only receipts matching that
+root and path. If both engines have delivered there, the most recent matching
+receipt is checked with its own renderer's export facts. A receipt for another
+destination cannot hide a missing file.
 
 ```console
 npm run destination-health
