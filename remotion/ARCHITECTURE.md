@@ -48,7 +48,7 @@ adapters/               Implementations of core ports for one technology.
     aerenderDiscovery.mts          Finds aerender; the registry's availability probe.
     afterEffectsConfig.mts         Reads after-effects.local.json (project, comps).
     aerenderCommand.mts            aerender arguments and progress parsing (pure).
-    templateContract.mts           Staged file names, required files, expressions, checks (pure).
+    templateContract.mts           Staged file names, required files, track text and marker, checks (pure).
     template/create-toshi-template.jsx
                                    One-time ExtendScript bootstrap of the minimal template.
 
@@ -208,22 +208,23 @@ on macOS, newest first. An explicit setting that points nowhere is reported,
 never silently replaced by another install.
 
 **The template contract** (`templateContract.mts`; the README has the
-step-by-step). The `.aep` imports, as footage, the files the adapter writes
-next to the data file (by default the project's folder):
-`toshi-render-data.json`, `toshi-cover.png`, `toshi-audio.wav`,
-`toshi-waveform-audio.wav`, `toshi-brand-logo.png` and `toshi-brand-badge.png`.
-The first three are required. Text layers read the sidecar with expressions
-(`TEMPLATE_EXPRESSIONS`): a shared loader (`TEMPLATE_DATA_LOADER`) accepts the
-JSON as `sourceData` (an object or an array wrapping it) or as `sourceText`. A
-missing optional field renders as nothing. Unreadable data shows, for now, a
-short two-line diagnostic (the failing access step, what `footage()`,
-`sourceData` and `sourceText` returned, and the error) rather than a silent
-placeholder; it is temporary, until the real After Effects data shape is
-known. Images and audio
-are the staged files themselves, because an expression cannot change which
-file a footage item uses. After Effects reloads them every time `aerender`
-opens the project. The audio layer is time-remapped (`time - thisLayer.inPoint`)
-and runs to the end of the composition, so any track length plays in full.
+step-by-step). The adapter writes these files next to the data file (by
+default the project's folder): `toshi-render-data.json`, `toshi-cover.png`,
+`toshi-audio.wav`, `toshi-waveform-audio.wav`, `toshi-brand-logo.png` and
+`toshi-brand-badge.png`. The `.aep` imports the images and audio as footage.
+The cover and audio are required. After Effects reloads them every time
+`aerender` opens the project, so they always follow the staged track. The audio
+layer is time-remapped (`time - thisLayer.inPoint`) and runs to the end of the
+composition, so any track length plays in full.
+
+The text does not follow at render time. A real After Effects 2026 render found
+`footage("toshi-render-data.json")` but got `null` for both `sourceData` and
+`sourceText`, so expressions cannot read the sidecar. Instead the bootstrap
+script reads the sidecar when it builds the template and writes the title,
+artist, and key and BPM into the text layers (`templateText`). It records the
+track's text marker (`templateTextMarker`: `toshi-text-` plus a 32-bit FNV-1a
+of the three lines) in the composition's and the Title layer's comments. The
+template is therefore built for one track.
 Each format's composition has that format's canvas and frame rate and is at
 least as long as the longest track: `aerender` renders frames `0..duration-1`.
 The bootstrap's layers (`TEMPLATE_LAYERS`) are Audio, Brand Logo, Waveform,
@@ -234,13 +235,19 @@ both render in `aerender` without plugins or per-track setup.
 
 Mechanisms considered: expressions alone cannot load images or audio, and
 `aerender` cannot run scripts at render time, so the render path is fixed
-file names plus expressions. ExtendScript is used only once, to *build* the
-template (`template/create-toshi-template.jsx`), and is not needed again.
+file names for media. Expressions reading the JSON were tried and get `null`
+under `aerender`, so the text is written in by the ExtendScript bootstrap
+(`template/create-toshi-template.jsx`), rerun for each track. Automating that
+rebuild (driving After Effects itself, not `aerender`) is the next step if
+batch After Effects renders are wanted.
 
 **Checks.** Before `aerender` starts, the project's bytes must mention the
-three required file names: footage paths are stored as text in `.aep` and
+cover and audio file names: footage paths are stored as text in `.aep` and
 `.aepx`, so an absent name is an unused file. This catches an empty or
-unwired template in seconds (`"templateCheck": false` opts out). After
+unwired template in seconds. The bytes must also not carry another track's
+text marker (`templateTextStatus`): "stale" stops the render with this track
+already staged for the rebuild, and a project with no marker at all is only
+warned about (`"templateCheck": false` opts out of both). After
 `aerender`, ffprobe must find both a video and an audio stream, so a silent
 render is never published. Two further findings are warnings only (`templateWarnings`):
 the composition name not found in the project file (`aerender` reports a

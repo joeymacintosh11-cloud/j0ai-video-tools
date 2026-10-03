@@ -177,43 +177,51 @@ and `aerenderPath`. Missing or wrong settings stop the render with a "not
 configured" error saying what to fix.
 
 **3. The template (the contract).** Before each render Toshi writes these
-files next to `dataFile` (by default, your `.aep`'s folder). One template
-renders any track because it imports these files **by these names**, and After
-Effects reloads them from disk every time `aerender` opens the project:
+files next to `dataFile` (by default, your `.aep`'s folder). The template
+imports the images and audio **by these names**, and After Effects reloads them
+from disk every time `aerender` opens the project:
 
 | File | Contents | Template must use it |
 | --- | --- | --- |
-| `toshi-render-data.json` | Title, artist, key, BPM, subtitle, format, timing | Yes (text) |
+| `toshi-render-data.json` | Title, artist, key, BPM, subtitle, format, timing | Read when the template is built (text) |
 | `toshi-cover.png` | The track's cover | Yes |
 | `toshi-audio.wav` | The track's audio | Yes (audio is mandatory) |
 | `toshi-waveform-audio.wav` | Lighter audio for audio-reactive layers | Optional |
 | `toshi-brand-logo.png`, `toshi-brand-badge.png` | The brand marks | Optional |
 
-Text comes from the JSON through expressions. Expressions cannot change which
-file a footage item shows, so the cover and audio come from the staged files
-themselves. Never import a track's own `public/tracks/...` files into the
-template.
+**Text is written into the template when it is built, so build it for each
+track.** In a real After Effects 2026 render, `footage("toshi-render-data.json")`
+was found but its `sourceData` and `sourceText` were both `null`. So expressions
+can't read the title, artist, key and BPM at render time. Adobe's own notes say
+a render can miss a JSON file that only expressions use. Instead,
+`create-toshi-template.jsx` reads the staged JSON and writes the text into the
+layers. The cover, audio and waveform still follow whatever is staged. Never
+import a track's own `public/tracks/...` files into the template.
 
 Two checks stop a broken template from wasting a render:
 
-- **Before rendering:** if the project never mentions the three required
+- **Before rendering:** if the project never mentions the cover and audio
   files, the render stops in seconds with "does not use ...", instead of
-  rendering a black, silent video. Set `"templateCheck": false` only for a
-  template that genuinely does not need them.
+  rendering a black, silent video. If the template was built for another
+  track, it stops with "was built with another track's title, artist and key",
+  with this track already staged for the rebuild. Set `"templateCheck": false`
+  only for a template that genuinely does not need these checks.
 - **After rendering:** a video with no audio (or no picture) is a failed
   render. It is never published or recorded.
-- **Warnings (never fatal):** the render log says so if the project file
-  doesn't seem to contain the composition's name, or has no Audio Waveform
-  effect.
+- **Warnings (never fatal):** the render log says so if the project carries
+  no Toshi text marker (built by hand or by an older script), doesn't seem to
+  contain the composition's name, or has no Audio Waveform effect. It also
+  prints the text this track needs.
 
 **Building the template: the quick way.** `adapters/after-effects/template/create-toshi-template.jsx`
 builds the complete minimal template for you, using only native After Effects
 features (no plugins, nothing `aerender` can't render):
 
-1. Stage the files once:
-   `npm run render-track -- ghetto-geek --engine after-effects`. On a new or
-   empty project this stops with "does not use ...". That's expected: the files
-   are now in the data folder.
+1. Stage the track:
+   `npm run render-track -- <track> --engine after-effects`. On a new or empty
+   project, or one built for another track, this stops with "does not use ..."
+   or "was built with another track's ...". That's expected: the files are now
+   in the data folder.
 2. In After Effects, **File > New > New Project**, then **File > Scripts > Run
    Script File...** and choose `create-toshi-template.jsx`. When asked, pick the
    folder with `toshi-render-data.json`. If an effect couldn't be set up, the
@@ -221,10 +229,11 @@ features (no plugins, nothing `aerender` can't render):
 3. **File > Save As** the `"project"` from `after-effects.local.json`, in that
    same folder (replacing the old one), and render again.
 
-**Rebuilding.** The template is built once and kept. Run the script again
-(steps 2–3, in a new project) whenever this script changes, as it did when the
-metadata, background and waveform were added (template contract 2). The
-composition's comment shows which contract built it.
+**Rebuilding.** Run the script again (steps 1–3, in a new project) **for every
+new track**, and whenever this script changes. Template contract 3 writes the
+text in at build time. The composition's comment shows the contract and the
+track's text marker (`toshi-text-` plus 8 hex digits). The Title layer's comment
+shows the marker too.
 
 It creates composition **Toshi Visualizer** (1920×1080, 30fps, 10 minutes)
 with these layers, top to bottom:
@@ -235,103 +244,24 @@ with these layers, top to bottom:
 | `Brand Logo` | `toshi-brand-logo.png` | Bottom right; Scale expression fits it into 240 px |
 | `Waveform` | Solid + **Audio Waveform** effect | Audio Layer: `Audio`; Start Point 960,860; End Point 1780,860; Displayed Samples 220; Maximum Height 140; Audio Duration 400 ms; Thickness 3; Softness 15%; Inside Color `#b8860b`; Outside Color `#f4e8d0` |
 | `Accent` | Solid 160×4 `#b8860b` | Thin gold rule under the track details |
-| `Key BPM` | Text, `#f4e8d0`, 80% opacity | Source Text expression (below): `F Minor · 100 BPM` |
-| `Artist` | Text, `#b8860b` | Source Text expression (below): `Toshi` |
-| `Title` | Text, `#f4e8d0` | Source Text expression (below): `Ghetto Geek` |
+| `Key BPM` | Text, 40 px, `#f4e8d0`, 80% opacity | The track's key and BPM, e.g. `F Minor · 100 BPM` |
+| `Artist` | Text, 56 px, `#b8860b` | The track's artist, e.g. `Toshi` |
+| `Title` | Text, 96 px, `#f4e8d0` | The track's title, e.g. `Ghetto Geek`; comment: the text marker |
 | `Cover` | `toshi-cover.png` | Left; Scale expression `var s = 640 / Math.max(thisLayer.source.width, thisLayer.source.height) * 100; [s, s]` |
 | `Background` | Solid `#0b0b0b` + **Gradient Ramp** effect | Ramp Shape Radial; Start of Ramp 576,486, Start Color `#2a1e10` (warm amber charcoal); End of Ramp 2016,1242, End Color `#0b0b0b` |
 
 The colours are the Remotion visualizer's (`adapters/remotion/BeatVisualizer/theme.ts`):
 off-black `#0b0b0b`, warm cream `#f4e8d0` and vintage gold `#b8860b`.
 
-**The metadata expressions.** Every text layer starts with the same loader and
-then reads one field. This is the `Title` expression in full:
-
-```js
-var TOSHI_DATA = "toshi-render-data.json";
-var toshiStep = "footage";
-var toshiInfo = { foot: "-", sd: "-", txt: "-", track: "-" };
-var toshiItem = null;
-var toshiFootageError = null;
-try { toshiItem = footage(TOSHI_DATA); } catch (err) { toshiFootageError = err; }
-function toshiKind(v) {
-  if (v === null) { return "null"; }
-  if (v === undefined) { return "undef"; }
-  if (typeof v === "string") { return "str" + v.length; }
-  if (typeof v !== "object") { return typeof v; }
-  if (Object.prototype.toString.call(v) === "[object Array]") { return "arr" + v.length; }
-  var keys = [];
-  try { for (var k in v) { if (keys.length < 3) { keys.push(String(k).substring(0, 10)); } } } catch (err) {}
-  return (typeof v.length === "number" ? "list" + v.length : "obj") + "{" + keys.join(",") + "}";
-}
-function toshiTrack() {
-  toshiStep = "footage";
-  toshiInfo.foot = toshiFootageError ? "err" : toshiItem === null ? "null" : toshiItem === undefined ? "undef" : "ok";
-  if (toshiFootageError) { throw toshiFootageError; }
-  toshiStep = "sourceData";
-  var data = null;
-  try { data = toshiItem.sourceData; toshiInfo.sd = toshiKind(data); } catch (err) { data = null; toshiInfo.sd = "err"; }
-  toshiStep = "unwrap";
-  if (data && !data.track && data.length > 0) { data = data[0]; }
-  if (!data || !data.track) {
-    toshiStep = "sourceText";
-    var text = toshiItem.sourceText;
-    toshiInfo.txt = toshiKind(text);
-    toshiStep = "parse";
-    data = typeof JSON !== "undefined" ? JSON.parse(text) : eval("(" + text + ")");
-  }
-  toshiStep = "track";
-  var track = data.track;
-  toshiInfo.track = track ? "yes" : "no";
-  if (!track) { throw new Error("data.track is " + toshiKind(track)); }
-  toshiStep = "field";
-  return track;
-}
-function toshiReport(err) {
-  var message = err && err.message !== undefined ? String(err.message) : String(err);
-  return "[data " + toshiStep + "] foot:" + toshiInfo.foot + " sd:" + toshiInfo.sd + " txt:" + toshiInfo.txt +
-    " track:" + toshiInfo.track + "\r" + message.substring(0, 80);
-}
-try {
-  var t = toshiTrack(); t.title ? String(t.title) : "";
-} catch (err) {
-  var toshiMessage = toshiReport(err);
-  try { text.sourceText.style.setFontSize(20).setText(toshiMessage); } catch (styleErr) { toshiMessage; }
-}
-```
-
-`Artist` is the same with `var t = toshiTrack(); t.artist ? String(t.artist) : "";`.
-`Key BPM` uses `var t = toshiTrack(); var parts = []; if (t.key) { parts.push(String(t.key)); } if (t.bpm) { parts.push(t.bpm + " BPM"); } parts.join(" \u00b7 ");`.
-The loader accepts the data however After Effects delivers it: as an object, as
-an array wrapping it, or only as text, on both the JavaScript and the legacy
-expression engines. A field that is missing renders as nothing. The definitive
-copies are `TEMPLATE_EXPRESSIONS` in `adapters/after-effects/templateContract.mts`,
-and a test keeps the script identical to them.
-
-**If the text can't be read (temporary diagnostics).** Instead of a placeholder,
-each text layer shows two short lines, drawn at 20 px on the JavaScript
-expression engine so they fit in the frame:
-
-```
-[data <step>] foot:<ok|null|undef|err> sd:<kind> txt:<kind> track:<yes|no|->
-<the error message, at most 80 characters>
-```
-
-| Part | Meaning |
-| --- | --- |
-| `<step>` | The access that failed: `footage` (calling `footage("toshi-render-data.json")`), `sourceData`, `unwrap`, `sourceText`, `parse` (`JSON.parse` of the text), `track` (reading `.track`), or `field` (reading the title, artist, key or BPM) |
-| `foot` | What `footage(...)` returned: `ok`, `null`, `undef`, or `err` (it threw) |
-| `sd` | What `.sourceData` returned: `null`, `undef`, `err` (it threw), `arrN` (an array of N), `listN{keys}` (array-like), `obj{keys}` (an object; first three keys) |
-| `txt` | What `.sourceText` returned: `null`, `undef`, `strN` (N characters), or `-` (not needed) |
-| `track` | Whether the data has a `track`; `-` means it was never reached |
-
-For example, `[data track] foot:ok sd:null txt:null track:-` followed by
-`Cannot read properties of null (reading 'track')` means After Effects found the
-footage item but gave neither data nor text for it. The render log prints what
-the file holds (`After Effects: toshi-render-data.json track: title="Ghetto Geek" ...`)
-for comparison; an expression cannot write to aerender's output itself. On the
-legacy engine the same text appears at the layer's normal size and may be cut
-off.
+**The metadata text.** The script reads `toshi-render-data.json` and fills the
+layers by the rules in `templateText` (`adapters/after-effects/templateContract.mts`):
+title, artist, and key and BPM joined with ` · `. A missing optional field shows
+as nothing. No track's values are in the source code. A test keeps the script's
+rules and marker identical to the contract's. The render log prints the text a
+render needs (`After Effects: this track's text: Title "...", ...`). The render
+stops if the project carries another track's marker. It only warns if the
+project carries none: the marker check reads the project's bytes, so it can
+prove a mismatch but can't vouch for a template built some other way.
 
 **The waveform.** The native **Audio Waveform** effect draws from the `Audio`
 layer's sound at render time, so it always follows the staged
@@ -340,15 +270,16 @@ The effect sits on its own full-frame solid, which it doesn't show (Composite On
 Original is off).
 
 **Building it by hand** instead: create the same composition and layers. Import
-the files from the data folder (**File > Import > File...**, including the
-`.json`), drag them in, add the effects from **Effect > Generate**, and paste the
-expressions (Alt/Option-click a property's stopwatch to add one). The `Audio`
+the cover, audio and logo from the data folder (**File > Import > File...**),
+drag them in, add the effects from **Effect > Generate**, and type the track's
+text into the text layers. The `Audio`
 layer's time remapping matters. A footage layer keeps the length its file had
 when you added it, so without remapping, a longer track's audio would stop
 early. Enable it with **Layer > Time > Enable Time Remapping**, add the
 expression, and drag the layer's end to the end of the composition. Fonts,
 sizes, positions and animation are yours to change; the file names and the
-`.json` expressions are the contract.
+text are the contract. A template built by hand has no text marker. The render
+log warns about that on every render, and you must retype the text for each track.
 
 **Output and formats.** The output module (`"outputModule"`, or the project's
 default) must write **H.264 / MP4 with audio**: its *Audio Output* must be **On**
@@ -358,7 +289,8 @@ track. Toshi renders exactly the track's length from frame 0. For 9:16 or 1:1,
 duplicate the composition, change its size, and map it under `"compositions"`.
 
 The diagnostics show which `aerender`, project, composition and output were
-used, whether the template uses the staged files, and why a render failed
+used, whether the template uses the staged files and matches this track's
+text, and why a render failed
 (including `aerender`'s exit code and last output lines).
 
 **Limits of this proof of concept:**
@@ -372,6 +304,9 @@ used, whether the template uses the staged files, and why a render failed
   references the staged files and that the video has picture and sound.
 - `create-toshi-template.jsx` builds the 16:9 composition only, uses After
   Effects' default font, and has no animation beyond the waveform.
+- The text is written in when the template is built, so each new track means
+  rerunning the script by hand in After Effects (the render stops and says so).
+  Batch renders across tracks would need that rebuild to be automated.
 - The UI does not offer engine selection yet.
 
 ### Export formats
