@@ -98,7 +98,7 @@ export const loadContentPackageBatchContext =
     ]);
 
     return {
-      inFlight: renderManager.inFlightTargets(),
+      inFlight: renderManager.inFlightExports(),
       deliveryRoot,
       globalTemplates: templateSettings.settings.templates,
       templatesProblem: templateSettings.problem,

@@ -1,3 +1,4 @@
+import { exportStatusKey } from "../../core/domain/render/exportStatus.ts";
 import type {
   TrackDetailView,
   TrackSummaryView,
@@ -47,7 +48,7 @@ export const deliveryRootForView = async (): Promise<string | null> =>
 export const toTrackSummaryView = (
   inspection: TrackInspection,
   /**
-   * Work in flight, keyed "<slug>::<presetId>". Passed in rather than read from
+   * Work in flight, keyed by exportStatusKey(slug, presetId, renderer). Passed in rather than read from
    * the render manager here, so this stays a pure mapping and the queue stays
    * the caller's concern. Omitted means "nothing in flight".
    */
@@ -107,7 +108,7 @@ export const toTrackSummaryView = (
     renderPresent: inspection.facts.outputExists,
     exports: coverage.map(
       (facts) => {
-        const state = inFlight.get(`${inspection.slug}::${facts.presetId}`);
+        const state = inFlight.get(exportStatusKey(inspection.slug, facts.presetId, exportsRenderer));
 
         return {
           freshness: facts.freshness,
@@ -178,7 +179,7 @@ export const toTrackSummaryView = (
 export const toTrackDetailView = (
   inspection: TrackInspection,
   /**
-   * Work in flight, keyed "<slug>::<presetId>". Passed in rather than read from
+   * Work in flight, keyed by exportStatusKey(slug, presetId, renderer). Passed in rather than read from
    * the render manager here, so this stays a pure mapping and the queue stays
    * the caller's concern. Omitted means "nothing in flight".
    */

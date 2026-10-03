@@ -53,7 +53,7 @@ export const handleListTracks = async (
   response: ServerResponse,
 ): Promise<void> => {
   const tracks = await listTracks();
-  const inFlight = renderManager.inFlightTargets();
+  const inFlight = renderManager.inFlightExports();
   const deliveryRoot = await deliveryRootForView();
 
   // Explicit arrow: passing the function directly would hand map's index
@@ -87,7 +87,7 @@ export const handleGetTrack = async (
     response,
     toTrackDetailView(
       inspection,
-      renderManager.inFlightTargets(),
+      renderManager.inFlightExports(),
       await deliveryRootForView(),
     ),
   );
@@ -116,7 +116,7 @@ export const handleCreateTrack = async (
     response,
     toTrackDetailView(
       inspection,
-      renderManager.inFlightTargets(),
+      renderManager.inFlightExports(),
       await deliveryRootForView(),
     ),
   );
@@ -250,7 +250,7 @@ export const handleUpdateMetadata = async (
     response,
     toTrackDetailView(
       inspection,
-      renderManager.inFlightTargets(),
+      renderManager.inFlightExports(),
       await deliveryRootForView(),
     ),
   );
@@ -302,7 +302,7 @@ export const handleUploadAsset = async (
     ...result,
     track: toTrackDetailView(
       inspection,
-      renderManager.inFlightTargets(),
+      renderManager.inFlightExports(),
       await deliveryRootForView(),
     ),
   };
@@ -323,7 +323,7 @@ export const handleValidateTrack = async (
     validation: inspection.validation,
     assets: toTrackSummaryView(
       inspection,
-      renderManager.inFlightTargets(),
+      renderManager.inFlightExports(),
       await deliveryRootForView(),
     ),
   };

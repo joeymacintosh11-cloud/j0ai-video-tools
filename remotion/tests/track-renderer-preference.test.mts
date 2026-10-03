@@ -49,7 +49,8 @@ import {
   trackEngine,
 } from "../ui/components/engineModel.ts";
 import { batchTargets, catalogueBatchTargets, rendererPatch, startRenderBody } from "../ui/api/engineRequest.ts";
-import { Worker } from "./managerHarness.mts";
+import { exportStatusKey } from "../core/domain/render/exportStatus.ts";
+import { managerWithWorkers, tick, Worker } from "./managerHarness.mts";
 import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
 import { fixture } from "./fixtures.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
@@ -710,6 +711,13 @@ test("through the real API: the app's request renders with the track's engine; o
   assert.equal(batch.status, 200);
   assert.equal(batch.json.data.batch.jobs[0].engine, "after-effects");
 
+  // The real track route reports only work for the preferred renderer.
+  // The Remotion job above must not make the AE vertical export look queued.
+  const queuedView = (await (await fetch(`${base}/api/tracks/${f.slug}`)).json()).data;
+  assert.equal(queuedView.exports.find((entry: { presetId: string }) => entry.presetId === "vertical-9x16").status, "missing");
+  assert.equal(queuedView.exports.find((entry: { presetId: string }) => entry.presetId === "square-1x1").status, "rendering");
+  assert.equal(queuedView.exports.find((entry: { presetId: string }) => entry.presetId === "youtube-16x9").status, "queued");
+
   for (const jobId of [fromApp.json.data.jobId, legacy.json.data.jobId, batch.json.data.batch.jobs[0].id]) {
     try {
       renderManager.cancelRender(jobId);
@@ -814,3 +822,40 @@ test("catalogue queue refuses unread saved preferences instead of falling back",
     /Track read failed/,
   );
 });
+
+
+for (const preferred of ["remotion", "after-effects"] as const) {
+  test(`export status reflects only ${preferred} jobs for a track that prefers it`, async (t) => {
+    const f = await renderableTrack(t, { renderer: preferred });
+    const { manager, workers } = await managerWithWorkers(t);
+    const inspection = await inspectTrack(f.slug);
+    const other = preferred === "remotion" ? "after-effects" : "remotion";
+    const mismatched = manager.startRender(f.slug, "youtube-16x9", other);
+    const view = () => toTrackSummaryView(inspection, manager.inFlightExports());
+    const youtube = () => view().exports.find((entry) => entry.presetId === "youtube-16x9")!;
+    assert.equal(manager.inFlightExports().get(exportStatusKey(f.slug, "youtube-16x9", other)), "active");
+    assert.equal(youtube().status, "missing");
+    assert.equal(youtube().active, false);
+    assert.equal(youtube().queued, false);
+    // Contention is still shared across engines, independently of status.
+    assert.throws(() => manager.startRender(f.slug, "youtube-16x9", preferred), { code: "RENDER_ALREADY_ACTIVE" });
+    workers[0].emit("close", 1, null);
+    await tick();
+    assert.equal(manager.getJob(mismatched.id).status, "failed");
+    assert.equal(manager.inFlightExports().size, 0);
+
+    // Hold the slot with unrelated work, then queue the preferred engine.
+    manager.startRender("status-slot-holder", "square-1x1");
+    manager.startRender(f.slug, "youtube-16x9", preferred);
+    assert.equal(youtube().status, "queued");
+    assert.equal(youtube().queued, true);
+    workers[1].emit("close", 1, null);
+    await tick();
+    assert.equal(youtube().status, "rendering");
+    assert.equal(youtube().active, true);
+    workers[2].emit("close", 1, null);
+    await tick();
+    assert.equal(youtube().status, "missing");
+    assert.equal(manager.inFlightExports().size, 0);
+  });
+}

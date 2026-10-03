@@ -158,8 +158,9 @@ GET /api/renderers  ─> registry.status()  ─> per id: ready | unavailable | n
 ```
 
 - **Who applies it.** The UI only: its Render panel names the track's engine in
-  `POST .../render` and in batch targets (`ui/api/engineRequest.ts`), and
-  disables itself with the reason when `GET /api/renderers` says that engine
+  `POST .../render` and in batch targets (`ui/api/engineRequest.ts`). Catalogue
+  queueing rereads each selected track's saved preference before building targets.
+  The Render panel disables itself with the reason when `GET /api/renderers` says that engine
   is unavailable or not configured. The server never infers an engine from a
   track, so the CLI and API callers that name none still get Remotion.
 - **What it changes in the view.** `TrackSummaryView.exportsRenderer` is the
@@ -169,7 +170,9 @@ GET /api/renderers  ─> registry.status()  ─> per id: ready | unavailable | n
   renderer the `visualizer` input is not re-checked, because its template hash
   is only computable by the engine and `services/` must not reach into
   `adapters/`. Metadata, cover, audio, format and the file's identity still
-  are.
+  are. Queue status uses `exportStatusKey(slug, preset, renderer)` through
+  `inFlightExports()`, so only a matching engine marks an export queued/rendering.
+  Pair-only `inFlightTargets()` and track/format locks remain contention checks.
 - **Remotion-only pipelines leave such a track out.** Calling
   `trackExportCoverage` without a renderer still means Remotion, so every other
   caller is unchanged. Where those pipelines meet a track that prefers another
@@ -177,7 +180,8 @@ GET /api/renderers  ─> registry.status()  ─> per id: ready | unavailable | n
   (`RENDERER_NOT_SUPPORTED`):
   - export missing and delivery planning list the track as invalid;
   - `deliverExport` refuses (`renderer_not_supported`), which covers the
-    Deliver panel, fix plans, content packages and auto-delivery;
+    Deliver panel, fix plans, content packages and auto-delivery. It rechecks the
+    preference after staging, before publishing the copy;
   - `releaseBundleStateFor` reports a problem, so nothing is planned or
     written;
   - `deriveContentPackage` blocks every selected platform;

@@ -67,7 +67,7 @@ export const handleGetContentPackage = async (
 
   const detail = toTrackDetailView(
     inspection,
-    renderManager.inFlightTargets(),
+    renderManager.inFlightExports(),
     await deliveryRootForView(),
   );
 
