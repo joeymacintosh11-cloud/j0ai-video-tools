@@ -6,6 +6,7 @@ import {
 } from "../core/domain/content/contentPackage.ts";
 import { assertPlatformId, type PlatformId } from "../core/domain/content/platformProfiles.ts";
 import { canonicalPresetOrder, resolveExportPresets } from "../core/domain/video/renderPresets.ts";
+import { resolveTrackRenderer } from "../core/domain/video/renderers.ts";
 import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
 import {
   planMissingExports,
@@ -132,6 +133,11 @@ const buildPackage = async (
     validationOk: inspection.validation.ok,
     metadata: inspection.metadata,
     contentMetadataOverrides: inspection.metadata?.contentMetadataOverrides,
+    // A track that prefers another renderer is blocked with that reason, the
+    // same as in the app — never planned as Remotion renders.
+    renderer: resolveTrackRenderer(
+      inspection.metadata?.renderer ?? inspection.metadataDraft?.renderer,
+    ),
     exports: coverage.map((facts) => ({
       presetId: facts.presetId,
       status: facts.freshness,

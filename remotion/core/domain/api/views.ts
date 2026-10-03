@@ -153,6 +153,15 @@ export type TrackSummaryView = {
    */
   readonly renderer: RendererId | null;
   /**
+   * Whose exports `exports` describes: the renderer this track resolves to.
+   * Remotion's live at out/<slug>/<preset>.mp4, any other renderer's at
+   * out/<slug>/<renderer>/<preset>.mp4, so a Remotion export never counts for
+   * a track that prefers After Effects, or the other way round. Delivery and
+   * release bundles handle Remotion exports only, so for any other renderer
+   * each export's `delivery` and the `releaseBundle` say so.
+   */
+  readonly exportsRenderer: RendererId;
+  /**
    * The folder this track delivers into, or null when it has not chosen one and
    * falls back to its slug. A portable folder name, never a machine path.
    */

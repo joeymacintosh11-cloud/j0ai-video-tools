@@ -77,6 +77,7 @@ export const handleGetContentPackage = async (
     validationOk: detail.validation.ok,
     metadata: detail.metadata,
     exports: detail.exports,
+    renderer: detail.exportsRenderer,
     contentMetadataOverrides: detail.metadata?.contentMetadataOverrides,
   };
 

@@ -2,6 +2,11 @@ import type { ExportFreshness, StaleReason } from "../video/exportFreshness.ts";
 import type { DeliveryReason, DeliveryStatus } from "../delivery/deliveryPaths.ts";
 import type { RenderPresetId } from "../video/renderPresets.ts";
 import {
+  DEFAULT_RENDERER_ID,
+  remotionOnlyProblem,
+  type RendererId,
+} from "../video/renderers.ts";
+import {
   buildPlatformMetadata,
   type PlatformMetadataSubject,
 } from "./platformMetadata.ts";
@@ -171,6 +176,13 @@ export type ContentPackageInput = {
   /** One entry per render preset, in any order — from trackExportCoverage. */
   readonly exports: readonly PackageExportEntry[];
   /**
+   * The renderer this track resolves to (TrackSummaryView.exportsRenderer).
+   * Omitted means Remotion. A package renders and delivers Remotion exports
+   * only, so for any other renderer every selected platform is blocked with
+   * that reason — never planned as a Remotion render or delivery.
+   */
+  readonly renderer?: RendererId;
+  /**
    * This track's own `contentMetadataOverrides`, or null/undefined when it
    * declares none. Resolved per field against `options.globalTemplates` and
    * the built-in defaults — never the sole source for any field.
@@ -264,6 +276,14 @@ export const deriveContentPackage = (
     input.contentMetadataOverrides,
   );
 
+  // Treated exactly like an invalid track from here on: blocked, with a reason,
+  // and no render or deliver action — so apply has nothing to queue.
+  const rendererProblem = remotionOnlyProblem(
+    input.renderer ?? DEFAULT_RENDERER_ID,
+    "A content package",
+  );
+  const renderable = input.validationOk && rendererProblem === null;
+
   const platforms: ContentPackagePlatformEntry[] = PLATFORM_LIST.map(
     (profile) => {
       const exportEntry = exportBySlug.get(profile.presetId);
@@ -277,7 +297,7 @@ export const deriveContentPackage = (
 
       const readiness = readinessFor(
         selected,
-        input.validationOk,
+        renderable,
         exportEntry?.status,
       );
 
@@ -289,6 +309,9 @@ export const deriveContentPackage = (
       const blockers: string[] = [];
       if (selected && !input.validationOk) {
         blockers.push("Track is not currently valid — see validation notes.");
+      }
+      if (selected && rendererProblem !== null) {
+        blockers.push(rendererProblem);
       }
 
       return {
@@ -331,7 +354,7 @@ export const deriveContentPackage = (
   const packageStatus: ContentPackageStatus =
     selectedPlatforms.length === 0
       ? "not_configured"
-      : !input.validationOk || counts.blocked > 0
+      : !renderable || counts.blocked > 0
         ? "blocked"
         : counts.missing > 0 || counts.rendering > 0
           ? "incomplete"

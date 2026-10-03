@@ -21,6 +21,15 @@ import {
   resolveTrackRenderer,
 } from "../core/domain/video/renderers.ts";
 import { inspectTrack } from "../services/tracks/inspectTrack.ts";
+import { deriveContentPackage } from "../core/domain/content/contentPackage.ts";
+import { parseTrackMetadata as parseMetadataStrict } from "../core/domain/tracks/metadata.ts";
+import type { RenderPresetId } from "../core/domain/video/renderPresets.ts";
+import type { RendererId } from "../core/domain/video/renderers.ts";
+import { publishExport } from "../services/render/publishExport.ts";
+import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
+import { trackExportCoverage } from "../services/tracks/exportCoverage.ts";
+import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
+import { toTrackSummaryView } from "../services/workflows/trackView.ts";
 import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
 import { fixture } from "./fixtures.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
@@ -289,4 +298,146 @@ test("GET /api/renderers reports this machine's engines, live, with After Effect
   });
 
   assert.equal((await fetch(`${base}/api/renderers`, { method: "POST" })).status, 404);
+});
+
+/* ------------------------------------------------------------------ *
+ * Freshness against the preferred renderer
+ * ------------------------------------------------------------------ */
+
+/** A track with real cover/audio, and helpers to publish either engine's export. */
+const renderableTrack = async (t: TestContext, extra: Record<string, unknown> = {}) => {
+  const f = await fixture(t, extra);
+  await fs.writeFile(f.cover, "cover");
+  await fs.writeFile(f.beat, "audio");
+  t.after(() => fs.rm(f.outputDir, { recursive: true, force: true }));
+
+  const props = async () =>
+    buildTrackProps({
+      slug: f.slug,
+      metadata: parseMetadataStrict(JSON.parse(await fs.readFile(f.metadata, "utf8")), "fixture"),
+      analysisAvailable: true,
+    });
+
+  const publish = async (renderer: RendererId, presetId: RenderPresetId = "youtube-16x9") =>
+    publishExport(
+      f.slug,
+      presetId,
+      fingerprintInputs(
+        await props(),
+        presetId,
+        undefined,
+        renderer,
+        // What the After Effects engine reports for its template.
+        renderer === "remotion" ? undefined : { composition: "Toshi Visualizer", version: "aep-sha256:0123456789abcdef" },
+      ),
+      async (file) => {
+        await fs.writeFile(file, `${renderer} video`);
+      },
+      undefined,
+      undefined,
+      renderer,
+    );
+
+  const view = async () => toTrackSummaryView(await inspectTrack(f.slug));
+  const youtube = async () => (await view()).exports.find((output) => output.presetId === "youtube-16x9")!;
+
+  return { ...f, publish, view, youtube };
+};
+
+test("a Remotion export does not satisfy a track that prefers After Effects", async (t) => {
+  const f = await renderableTrack(t);
+  await f.publish("remotion");
+
+  // No preference: exactly as before.
+  assert.equal((await f.view()).exportsRenderer, "remotion");
+  assert.equal((await f.youtube()).freshness, "current");
+
+  await updateTrackMetadata(f.slug, { renderer: "after-effects" });
+  const view = await f.view();
+  assert.equal(view.exportsRenderer, "after-effects");
+  const youtube = view.exports.find((output) => output.presetId === "youtube-16x9")!;
+  assert.equal(youtube.freshness, "missing");
+  assert.equal(youtube.present, false);
+  assert.equal(youtube.outputLabel, `out/${f.slug}/after-effects/youtube-16x9.mp4`);
+
+  await f.publish("after-effects");
+  assert.equal((await f.youtube()).freshness, "current");
+  assert.equal((await f.youtube()).outputPath?.endsWith(`${f.slug}/after-effects/youtube-16x9.mp4`), true);
+
+  // Back to the default: the Remotion export is what counts again.
+  await updateTrackMetadata(f.slug, { renderer: null });
+  assert.equal((await f.youtube()).freshness, "current");
+  assert.match((await f.youtube()).outputLabel, new RegExp(`^out/${f.slug}/youtube-16x9\\.mp4$`));
+});
+
+test("an After Effects export does not satisfy a track that prefers Remotion", async (t) => {
+  const f = await renderableTrack(t);
+  await f.publish("after-effects");
+
+  assert.equal((await f.view()).exportsRenderer, "remotion");
+  assert.equal((await f.youtube()).freshness, "missing");
+});
+
+test("an After Effects export goes stale when the track's own inputs change", async (t) => {
+  const f = await renderableTrack(t, { renderer: "after-effects" });
+  await f.publish("after-effects");
+  assert.equal((await f.youtube()).freshness, "current");
+
+  await updateTrackMetadata(f.slug, { title: "A New Title" });
+  const youtube = await f.youtube();
+  assert.equal(youtube.freshness, "stale");
+  assert.deepEqual(youtube.staleReasons, ["metadata_changed"]);
+});
+
+test("coverage without a renderer still judges Remotion's exports, for every existing caller", async (t) => {
+  const f = await renderableTrack(t, { renderer: "after-effects" });
+  await f.publish("remotion");
+
+  const remotion = trackExportCoverage(f.slug).find((facts) => facts.presetId === "youtube-16x9")!;
+  assert.equal(remotion.freshness, "current");
+  assert.equal(remotion.outputLabel, `out/${f.slug}/youtube-16x9.mp4`);
+});
+
+test("for a track that prefers another renderer, delivery and the release bundle say they handle Remotion only", async (t) => {
+  const f = await renderableTrack(t, { renderer: "after-effects" });
+  await f.publish("after-effects");
+
+  const view = await f.view();
+  for (const output of view.exports) {
+    assert.deepEqual(output.delivery, {
+      status: "not_configured",
+      reason: "renderer_not_supported",
+      destinationPath: null,
+      destinationRelativePath: null,
+      deliveredAt: null,
+    });
+  }
+  assert.equal(view.releaseBundle.freshness, "not_configured");
+  assert.match(view.releaseBundle.problem ?? "", /prefers After Effects; A release bundle works with Remotion exports only/);
+});
+
+test("a content package blocks a track that prefers another renderer, with the reason and nothing to do", () => {
+  const exports = (["youtube-16x9", "vertical-9x16", "square-1x1"] as const).map((presetId) => ({
+    presetId,
+    status: "missing" as const,
+    staleReasons: [],
+    intended: true,
+    delivery: { status: "not_configured" as const, destinationRelativePath: null },
+  }));
+  const input = { slug: "x", title: "X", validationOk: true, metadata: null, exports };
+
+  const remotion = deriveContentPackage(input, { now: () => "t" });
+  assert.equal(remotion.packageStatus, "incomplete");
+  assert.ok(remotion.platforms.some((platform) => platform.actions.includes("render")));
+
+  // Omitted and explicit Remotion are the same package.
+  assert.deepEqual(deriveContentPackage({ ...input, renderer: "remotion" }, { now: () => "t" }), remotion);
+
+  const ae = deriveContentPackage({ ...input, renderer: "after-effects" }, { now: () => "t" });
+  assert.equal(ae.packageStatus, "blocked");
+  for (const platform of ae.platforms.filter((entry) => entry.selected)) {
+    assert.equal(platform.readiness, "blocked");
+    assert.deepEqual(platform.actions, []);
+    assert.ok(platform.blockers.some((blocker) => /prefers After Effects/.test(blocker)));
+  }
 });

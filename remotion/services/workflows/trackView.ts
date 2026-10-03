@@ -8,6 +8,10 @@ import {
   DEFAULT_RENDER_PRESET_ID,
   resolveExportPresets,
 } from "../../core/domain/video/renderPresets.ts";
+import {
+  remotionOnlyProblem,
+  resolveTrackRenderer,
+} from "../../core/domain/video/renderers.ts";
 import { deliveryStateForTarget } from "../delivery/deliverExport.ts";
 import {
   readDeliverySettings,
@@ -63,9 +67,24 @@ export const toTrackSummaryView = (
     inspection.metadataDraft?.exportPresets ??
     null;
   const intended = new Set(resolveExportPresets(declared));
+  // Falls back to the draft for the same reason, so a not-yet-valid track that
+  // prefers After Effects is judged against After Effects' exports too.
+  const declaredRenderer =
+    inspection.metadata?.renderer ?? inspection.metadataDraft?.renderer ?? null;
+  const exportsRenderer = resolveTrackRenderer(declaredRenderer);
+  // Delivery and release bundles handle Remotion's exports only. For a track
+  // that prefers another renderer they report that, rather than describing a
+  // Remotion file as if it were the export this track asked for.
+  const remotionOnly = remotionOnlyProblem(exportsRenderer, "Delivery");
   // Computed once and shared with the release bundle status below, which needs
   // exactly the same facts; reading manifests twice per track would be waste.
-  const coverage = trackExportCoverage(inspection.slug, inspection.metadata);
+  // Judged against the renderer this track prefers, so a Remotion export never
+  // satisfies a track that asked for After Effects, or the other way round.
+  const coverage = trackExportCoverage(
+    inspection.slug,
+    inspection.metadata,
+    exportsRenderer,
+  );
   const deliveryFolder =
     inspection.metadata?.deliveryFolder ??
     inspection.metadataDraft?.deliveryFolder ??
@@ -112,24 +131,42 @@ export const toTrackSummaryView = (
           queued: state === "queued",
           active: state === "active",
           intended: intended.has(facts.presetId),
-          delivery: deliveryStateForTarget(
-            inspection.slug,
-            facts.presetId,
-            facts,
-            inspection.metadata === null ? null : deliveryRoot,
-            inspection.metadata?.deliveryFolder,
-          ),
+          delivery:
+            remotionOnly === null
+              ? deliveryStateForTarget(
+                  inspection.slug,
+                  facts.presetId,
+                  facts,
+                  inspection.metadata === null ? null : deliveryRoot,
+                  inspection.metadata?.deliveryFolder,
+                )
+              : {
+                  status: "not_configured",
+                  reason: "renderer_not_supported",
+                  destinationPath: null,
+                  destinationRelativePath: null,
+                  deliveredAt: null,
+                },
         };
       },
     ),
     exportPresets: declared,
-    // From the draft as well, so a not-yet-valid track still shows its choice.
-    renderer:
-      inspection.metadata?.renderer ??
-      inspection.metadataDraft?.renderer ??
-      null,
+    renderer: declaredRenderer,
+    exportsRenderer,
     deliveryFolder,
     releaseBundle: (() => {
+      if (remotionOnly !== null) {
+        return {
+          freshness: "not_configured" as const,
+          relativePath: null,
+          generatedAt: null,
+          delivered: 0,
+          outdated: 0,
+          missing: 0,
+          problem: remotionOnlyProblem(exportsRenderer, "A release bundle"),
+        };
+      }
+
       const state = releaseBundleStateFor(
         inspection,
         inspection.metadata === null ? null : deliveryRoot,

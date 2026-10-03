@@ -26,6 +26,7 @@ const packageStatusFor = (track: TrackSummaryView) =>
       validationOk: track.metadataValid,
       metadata: null,
       exports: track.exports,
+      renderer: track.exportsRenderer,
     },
     { mode: "intent" },
   ).packageStatus;
