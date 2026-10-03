@@ -943,7 +943,10 @@ committed, so an event can never describe a file that is not there — and if th
 log itself cannot be written, the delivery still succeeded and says
 "not recorded in the delivery log" rather than pretending to have failed.
 `npm run delivery-history-reconcile` puts that right from the receipts, marking
-anything it reconstructs as such.
+anything it reconstructs as such. It resolves each track's saved renderer
+preference and reads that engine's receipts only; a missing AE receipt never
+substitutes a Remotion receipt, or vice versa. Tracks without a preference
+continue to use Remotion.
 
 **If the log is damaged** it says so, with line numbers, and still shows what it
 could read — a bad line never costs you the rest, and no view reports a damaged
