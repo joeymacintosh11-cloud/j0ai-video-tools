@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import {
   legacyOutputLabel,
+  manifestLabel,
   outputLabel,
   outputRelativePath,
 } from "../core/domain/tracks/paths.ts";
@@ -114,4 +116,18 @@ test("duration is the same across formats, since they share a frame rate", () =>
   assert.deepEqual(frames, [5555, 5555, 5555]);
   // Called without an fps it must still behave as it always did.
   assert.equal(secondsToFrames(seconds), 5555);
+});
+
+test("Remotion exports keep their paths; other engines get their own folder", () => {
+  for (const renderer of [undefined, "remotion"] as const) {
+    assert.equal(outputRelativePath("ghetto-geek", "square-1x1", renderer), "ghetto-geek/square-1x1.mp4");
+    assert.equal(outputLabel("ghetto-geek", "square-1x1", renderer), "out/ghetto-geek/square-1x1.mp4");
+    assert.equal(manifestLabel("ghetto-geek", "square-1x1", renderer), "out/ghetto-geek/square-1x1.manifest.json");
+    assert.equal(trackOutputLocation("ghetto-geek", "square-1x1", renderer).dir, trackOutputLocation("ghetto-geek", "square-1x1").dir);
+  }
+  assert.equal(outputLabel("ghetto-geek", "square-1x1", "after-effects"), "out/ghetto-geek/after-effects/square-1x1.mp4");
+  assert.equal(manifestLabel("ghetto-geek", "square-1x1", "after-effects"), "out/ghetto-geek/after-effects/square-1x1.manifest.json");
+  const ae = trackOutputLocation("ghetto-geek", "square-1x1", "after-effects");
+  assert.ok(ae.path.endsWith(`${path.sep}ghetto-geek${path.sep}after-effects${path.sep}square-1x1.mp4`));
+  assert.ok(ae.manifest.endsWith(`${path.sep}after-effects${path.sep}square-1x1.manifest.json`));
 });

@@ -8,6 +8,7 @@ import {
 import { withRenderTargetLock, type RenderTargetLock } from "./renderLock.ts";
 import { trackOutputLocation } from "../tracks/trackLocations.ts";
 import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
+import { DEFAULT_RENDERER_ID, type RendererId } from "../../core/domain/video/renderers.ts";
 
 /** Stage everything before replacing anything. A failed/cancelled producer
  * cannot touch the last successful pair. Publication has no await points;
@@ -20,12 +21,14 @@ export const publishExport = async (
   produce: (stagedVideo: string) => Promise<void>,
   checkCancelled: () => void = () => {},
   lock?: RenderTargetLock,
+  /** Whose export this is; decides the folder (trackOutputLocation). Default remotion. */
+  renderer: RendererId = DEFAULT_RENDERER_ID,
 ): Promise<void> => {
   if (!lock) return withRenderTargetLock(slug, presetId, (owned) =>
-    publishExport(slug, presetId, inputs, produce, checkCancelled, owned));
+    publishExport(slug, presetId, inputs, produce, checkCancelled, owned, renderer));
   if (lock.slug !== slug || lock.presetId !== presetId) throw new Error("Wrong publication lock target.");
   lock.assertOwned();
-  const output = trackOutputLocation(slug, presetId);
+  const output = trackOutputLocation(slug, presetId, renderer);
   await mkdir(output.dir, { recursive: true });
   const staging = await mkdtemp(path.join(output.dir, ".render-"));
   const video = path.join(staging, "video.mp4");

@@ -63,12 +63,38 @@ export type RenderProgressUpdate = {
   readonly stitchStage: string;
 };
 
+/**
+ * Which template an engine renders with, when it is not the built-in Remotion
+ * visualizer: an After Effects project's composition, say. `version` must
+ * change whenever the template's look can change (a content hash of the
+ * project file, for instance), because it is part of the export's freshness
+ * fingerprint and is recorded in the content library. Never a filesystem path.
+ */
+export type RenderTemplateIdentity = {
+  readonly composition: string;
+  readonly version: string;
+};
+
 /** What a session reports once it knows the video it is about to produce. */
 export type ResolvedVideo = {
   readonly durationInFrames: number;
   readonly fps: number;
   readonly width: number;
   readonly height: number;
+  /**
+   * Absent for the built-in visualizer (COMPOSITION_ID / VISUALIZER_VERSION),
+   * which keeps every Remotion fingerprint and record exactly as it was.
+   */
+  readonly template?: RenderTemplateIdentity;
+};
+
+export type RenderEngineOpenOptions = {
+  /**
+   * Diagnostics for the person running the render: which binary, project,
+   * composition and output an engine is using, and why it failed. Shown, not
+   * persisted, so a machine-specific path is fine here.
+   */
+  readonly log?: (message: string) => void;
 };
 
 export type RenderEngine = {
@@ -81,7 +107,7 @@ export type RenderEngine = {
    * Gets ready to render (bundling, launching an app, connecting to a host).
    * The returned session must always be closed, success or not.
    */
-  readonly open: () => Promise<RenderSession>;
+  readonly open: (options?: RenderEngineOpenOptions) => Promise<RenderSession>;
 };
 
 export type RenderSession = {

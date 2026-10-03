@@ -93,3 +93,32 @@ export const ENGINE_FLAG_USAGE = [
   `  --engine <id>     Render engine. Installed: ${renderEngines.available.join(", ")}.`,
   `                    Defaults to ${DEFAULT_RENDERER_ID} when omitted.`,
 ];
+
+/** An engine's own diagnostics (binary, template, output), indented under the step. */
+export const printEngineLog = (message: string): void => {
+  console.log(`  · ${message}`);
+};
+
+/** Names a non-default engine before rendering; Remotion's output is unchanged. */
+export const announceEngine = (engineId: RendererId): void => {
+  if (engineId !== DEFAULT_RENDERER_ID) console.log(`→ Render engine: ${engineId}`);
+};
+
+/**
+ * Commands that plan what to render (render-missing, content-package,
+ * content-package-batch) judge exports at Remotion's paths, so with another
+ * engine they would render into that engine's folder and still find
+ * Remotion's export missing, every run. Until planning is engine-aware they
+ * refuse other engines rather than loop; render-track renders with any.
+ */
+export const assertPlanningEngine = (engineId: RendererId, command: string): void => {
+  if (engineId !== DEFAULT_RENDERER_ID) {
+    throw new TrackError(
+      trackIssue(
+        "INVALID_REQUEST",
+        `${command} plans against ${DEFAULT_RENDERER_ID} exports and cannot render with "${engineId}" yet. ` +
+          `Use: npm run render-track -- <track-slug> --engine ${engineId}`,
+      ),
+    );
+  }
+};

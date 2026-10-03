@@ -14,6 +14,7 @@ import {
   type RendererId,
 } from "../../core/domain/video/renderers.ts";
 import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
+import type { RenderTemplateIdentity } from "../../core/ports/renderEngine.ts";
 import {
   EXPORT_MANIFEST_VERSION,
   VISUALIZER_VERSION,
@@ -96,12 +97,16 @@ export const fileContentHash = (file: string): string => {
  * renderer is the engine that produced (or would produce) the export; its
  * part of the visualizer fingerprint is empty for Remotion, so every existing
  * Remotion manifest keeps exactly the fingerprint it was written with.
+ * template is the engine-reported template (RenderTemplateIdentity), absent
+ * for the built-in visualizer; when present, a change to it is a visualizer
+ * change.
  */
 export const fingerprintInputs = (
   props: VisualizerProps,
   presetId: RenderPresetId,
   publicRoot = PUBLIC_DIR,
   renderer: RendererId = DEFAULT_RENDERER_ID,
+  template?: RenderTemplateIdentity,
 ): ExportInputs => {
   const preset = renderPreset(presetId);
   return {
@@ -125,6 +130,7 @@ export const fingerprintInputs = (
     visualizer: hash([
       VISUALIZER_VERSION,
       ...rendererFingerprintParts(renderer),
+      ...(template === undefined ? [] : [`template:${template.composition}`, `template-version:${template.version}`]),
       fileContentHash(path.join(publicRoot, props.brandLogoSrc)),
       fileContentHash(path.join(publicRoot, props.brandBadgeSrc)),
     ]),

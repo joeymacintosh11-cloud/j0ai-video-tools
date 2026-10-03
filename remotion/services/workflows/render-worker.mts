@@ -61,6 +61,7 @@ process.on("message", (message: WorkerCommand) => {
 const main = async (): Promise<void> => {
   const engine = await renderEngines.resolve(engineId);
   emit({ type: "status", status: "preparing" });
+  if (engine.id !== "remotion") log(`Render engine: ${engine.id}.`);
   log(`Preparing track "${slug}" for ${presetId}.`);
 
   // prepareTrack is per-track, and its analysis step is gated on mtime, so
@@ -82,6 +83,7 @@ const main = async (): Promise<void> => {
     slug,
     props,
     presetId,
+    onEngineLog: (message) => log(message),
     cancelSignal,
     jobId,
     onRecorded: (outcome) => {

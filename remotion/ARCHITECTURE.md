@@ -18,6 +18,8 @@ core/                   Platform-independent. Pure TypeScript: no node:*, no
                         wire format (domain/api/views.ts).
     video/renderers.ts  Renderer ids (remotion, premiere, after-effects) and
                         the default (remotion).
+    video/templateData.ts
+                        The sidecar JSON template-driven renderers read.
   ports/                Extension points that adapters implement.
     renderEngine.ts     RenderEngine / RenderSession, CancelSignal.
     renderEngineRegistry.ts
@@ -41,6 +43,14 @@ adapters/               Implementations of core ports for one technology.
                                renderMedia; owns the encoding settings.
     index.ts, Root.tsx, Composition.tsx, BeatVisualizer/
                                The composition itself (Studio entry point).
+  after-effects/        The After Effects renderer (proof of concept), via aerender.
+    afterEffectsRenderEngine.mts   RenderEngine: stage assets + sidecar, run aerender.
+    aerenderDiscovery.mts          Finds aerender; the registry's availability probe.
+    afterEffectsConfig.mts         Reads after-effects.local.json (project, comps).
+    aerenderCommand.mts            aerender arguments and progress parsing (pure).
+    templateContract.mts           Staged file names, required files, track text and marker, checks (pure).
+    template/create-toshi-template.jsx
+                                   One-time ExtendScript bootstrap of the minimal template.
 
 server/                 Host: the local HTTP API. Routes and HTTP helpers only.
 scripts/                Host: the CLI. Parse args, call a workflow, print.
@@ -56,7 +66,7 @@ Dependencies point inward: hosts and adapters depend on `services/` and
 | --- | --- | --- |
 | `core/` | `core/` | any package (`node:*`, React, Remotion…), anything outside `core/` |
 | `services/` | `core/`, `services/`, Node | `adapters/`*, `server/`, `scripts/`, `ui/`, Remotion |
-| `adapters/<x>/` | `core/`, its own technology | other adapters, hosts |
+| `adapters/<x>/` | `core/`, `services/` building blocks, its own technology | other adapters, hosts |
 | `server/`, `scripts/` | `core/`, `services/`, the engine registry (`adapters/renderEngines.mts`) | any specific engine or composition, Remotion packages; `scripts/` never imports `server/` |
 | `ui/` | `core/`, the composition (for the `<Player>` preview) | `services/`, `server/`, `scripts/` |
 
@@ -104,8 +114,11 @@ POST /api/render-batches     ─┘      (render manager, journal, worker)     (
 ```
 
 - **Validation happens at the edge.** `registry.assertAvailable()` checks an id
-  without loading anything: an unknown id is `INVALID_RENDERER`, a reserved id
-  with no adapter (`premiere`, `after-effects` today) is `RENDERER_UNAVAILABLE`.
+  without loading anything: an unknown id is `INVALID_RENDERER`, and a reserved
+  id with no adapter (`premiere` today) is `RENDERER_UNAVAILABLE`. An engine
+  that needs software outside this project registers a *probe*, asked on every
+  check: `after-effects` is available exactly when `aerender` is found, and
+  otherwise `RENDERER_UNAVAILABLE` says what was searched and how to fix it.
   The CLI checks while parsing arguments and the API before queuing (HTTP 400).
   The worker resolves again, so a bad id that slips through becomes a
   structured job error rather than a crash.
@@ -115,45 +128,136 @@ POST /api/render-batches     ─┘      (render manager, journal, worker)     (
 - **The export records it.** Content-library records store
   `template.renderer`. Older records have none and read back as `remotion`
   (`storedRendererId`).
+- **Each engine has its own exports.** Remotion's stay at
+  `out/<slug>/<preset>.mp4`, exactly where they always were. Every other engine
+  writes `out/<slug>/<renderer>/<preset>.mp4` with its manifest beside it, so
+  one engine never overwrites another's export. A job's per-target lock is
+  still per slug and preset, so two engines rendering the same format are
+  serialised.
 - **Freshness distinguishes it.** `rendererFingerprintParts()` adds the renderer
-  to an export's visualizer fingerprint. It adds nothing for Remotion, so
-  every manifest written before engines were selectable keeps its exact
-  fingerprint and stays current. Freshness is judged against the default
-  renderer, so an export from another engine reads as stale
-  (`visualizer_changed`) instead of passing for a current Remotion export.
-  Every engine still writes to the same `out/<slug>/<preset>.mp4`, and a job's
-  per-target lock is per slug and preset, never per engine.
+  to an export's visualizer fingerprint, and an engine-reported template
+  (`ResolvedVideo.template`: composition + version) is added too. Both add
+  nothing for Remotion, so every existing manifest keeps its exact fingerprint
+  and stays current. Coverage, delivery, release bundles and content packages
+  judge Remotion's exports only; the commands that plan from them
+  (`render-missing`, `content-package`, `content-package-batch`) therefore
+  refuse other engines rather than re-render into the wrong folder.
 
 ## Adding a renderer (e.g. Premiere Pro, After Effects)
 
 1. Create `adapters/<name>/` and implement `RenderEngine` from
    `core/ports/renderEngine.ts`:
-   - `open()` connects to the host app or prepares a project, and returns a
-     session whose `assetRoot` is the directory the renderer reads
+   - `open({ log })` connects to the host app or prepares a project, and
+     returns a session whose `assetRoot` is the directory the renderer reads
      `public/`-relative assets from (the project's `public/` if it reads them
-     in place);
+     in place). `log` takes diagnostics for the person running the render;
    - `resolve(props)` maps `VisualizerProps` onto the template and returns its
-     frame count and canvas;
+     frame count and canvas, plus `template: { composition, version }` when it
+     renders an external template. `version` must change whenever the
+     template's look can (a content hash), and must never be a path;
    - `render({ outputPath, cancelSignal, onProgress })` writes the video to
      `outputPath` and rejects if cancelled;
    - `close()` releases everything, and is idempotent.
 2. Map fields, don't redefine them. Layout shapes come from
    `RenderPreset.layout`, brand assets from `BRAND_ASSET_PATHS`, frame math
    from `secondsToFrames`.
-3. Register it under its renderer id in `adapters/renderEngines.mts`, as a lazy
-   loader (one line). From then on `--engine <id>`, the API's `engine` field
-   and the render worker all reach it. Nothing in `services/`, `server/` or
-   `scripts/` changes. A renderer id outside `RENDERER_IDS` also needs adding
-   to `core/domain/video/renderers.ts`.
+3. Register it under its renderer id in `adapters/renderEngines.mts`: a lazy
+   loader, plus a `probe` if it depends on installed software. From then on
+   `--engine <id>`, the API's `engine` field and the render worker all reach
+   it, and its exports land in their own folder. Nothing in `services/`,
+   `server/` or `scripts/` changes. A renderer id outside `RENDERER_IDS` also
+   needs adding to `core/domain/video/renderers.ts`.
+   Template-driven renderers should hand their template the shared sidecar
+   (`buildTemplateData`, `core/domain/video/templateData.ts`).
 4. `tests/render-engine-port.test.mts` shows how to drive `renderTrackVideo`
    with a stand-in engine, and `tests/render-engine-registry.test.mts` how
    resolution is tested. `npm run lint` already covers `adapters/`.
 
-The engine's id is recorded with its exports and fingerprinted (see *Choosing
-the engine per job*), so different renderers' exports are never mistaken for
-each other. `VISUALIZER_VERSION` and `COMPOSITION_ID` still describe the
-Remotion template. A non-Remotion export is stale against the default
-renderer until per-track engine preferences exist.
+The engine's id and template are recorded with its exports and fingerprinted
+(see *Choosing the engine per job*), so different renderers' and templates'
+exports are never mistaken for each other.
+
+## The After Effects adapter (proof of concept)
+
+`adapters/after-effects/` drives After Effects' command-line renderer,
+`aerender`, across a process boundary. It proves that a second renderer can
+plug into `RenderEngine` without the core knowing anything about Adobe: no
+`aerender`, `.aep` or output-module knowledge exists outside that folder (an
+architecture test checks this).
+
+```
+render-track --engine after-effects
+  -> registry probe: aerender found?            no  -> RENDERER_UNAVAILABLE (what was searched, how to set it)
+  -> open(): after-effects.local.json valid?    no  -> RENDERER_NOT_CONFIGURED (what to put in it)
+             hash the .aep -> template version "aep-sha256:<16 hex>"
+  -> resolve(): composition for the format; frames from the track's audio (ffprobe)
+             copy cover/audio/brand marks to fixed names beside the data file
+             write the template-data sidecar (buildTemplateData) there
+             project never mentions the data, cover or audio file? -> RENDERER_NOT_CONFIGURED
+  -> render(): aerender -project -comp -output [-OMtemplate] -s 0 -e <frames-1> -close DO_NOT_SAVE_CHANGES
+             PROGRESS lines -> progress; exit code / missing file / non-MP4 -> RENDER_FAILED
+             ffprobe: no video or no audio stream -> RENDER_FAILED (never published)
+             move the file into the staging path -> published to out/<slug>/after-effects/<preset>.mp4
+  -> library record: renderer after-effects, composition, aep-sha256 version (no paths)
+```
+
+**Finding `aerender`** (first match wins; the source is logged):
+`TOSHI_AERENDER_PATH`, then `"aerenderPath"` in `after-effects.local.json`,
+then `aerender` on `PATH`, then `/Applications/Adobe After Effects */aerender`
+on macOS, newest first. An explicit setting that points nowhere is reported,
+never silently replaced by another install.
+
+**The template contract** (`templateContract.mts`; the README has the
+step-by-step). The adapter writes these files next to the data file (by
+default the project's folder): `toshi-render-data.json`, `toshi-cover.png`,
+`toshi-audio.wav`, `toshi-waveform-audio.wav`, `toshi-brand-logo.png` and
+`toshi-brand-badge.png`. The `.aep` imports the images and audio as footage.
+The cover and audio are required. After Effects reloads them every time
+`aerender` opens the project, so they always follow the staged track. The audio
+layer is time-remapped (`time - thisLayer.inPoint`) and runs to the end of the
+composition, so any track length plays in full.
+
+The text does not follow at render time. A real After Effects 2026 render found
+`footage("toshi-render-data.json")` but got `null` for both `sourceData` and
+`sourceText`, so expressions cannot read the sidecar. Instead the bootstrap
+script reads the sidecar when it builds the template and writes the title,
+artist, and key and BPM into the text layers (`templateText`). It records the
+track's text marker (`templateTextMarker`: `toshi-text-` plus a 32-bit FNV-1a
+of the three lines) in the composition's and the Title layer's comments. The
+template is therefore built for one track.
+Each format's composition has that format's canvas and frame rate and is at
+least as long as the longest track: `aerender` renders frames `0..duration-1`.
+The bootstrap's layers (`TEMPLATE_LAYERS`) are Audio, Brand Logo, Waveform,
+Accent, Key BPM, Artist, Title, Cover and Background. The background is a
+native radial Gradient Ramp (warm amber charcoal to off-black `#0b0b0b`), and
+the waveform is the native Audio Waveform effect reading the Audio layer, so
+both render in `aerender` without plugins or per-track setup.
+
+Mechanisms considered: expressions alone cannot load images or audio, and
+`aerender` cannot run scripts at render time, so the render path is fixed
+file names for media. Expressions reading the JSON were tried and get `null`
+under `aerender`, so the text is written in by the ExtendScript bootstrap
+(`template/create-toshi-template.jsx`), rerun for each track. Automating that
+rebuild (driving After Effects itself, not `aerender`) is the next step if
+batch After Effects renders are wanted.
+
+**Checks.** Before `aerender` starts, the project's bytes must mention the
+cover and audio file names: footage paths are stored as text in `.aep` and
+`.aepx`, so an absent name is an unused file. This catches an empty or
+unwired template in seconds. The bytes must also not carry another track's
+text marker (`templateTextStatus`): "stale" stops the render with this track
+already staged for the rebuild, and a project with no marker at all is only
+warned about (`"templateCheck": false` opts out of both). After
+`aerender`, ffprobe must find both a video and an audio stream, so a silent
+render is never published. Two further findings are warnings only (`templateWarnings`):
+the composition name not found in the project file (`aerender` reports a
+genuinely missing composition itself, within seconds), and no Audio Waveform
+effect.
+
+**What it is not.** It is an adapter: Toshi starts `aerender` and reads its
+exit code and files. A future Adobe *plugin* (UXP/CEP) would run inside After
+Effects or Premiere Pro, driving the open application and its UI. It would be
+a host talking to `server/` over HTTP, not a `RenderEngine`.
 
 ## Adding a host (a batch service, a desktop panel)
 

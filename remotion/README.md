@@ -128,13 +128,186 @@ This prepares the track (see above), bundles the project, resolves the
 video's duration from `beat.wav` automatically, and writes the result to
 `out/<track-slug>/<preset>.mp4` (e.g. `out/ghetto-geek/youtube-16x9.mp4`).
 
-Rendering uses the Remotion engine. `render-track`, `render-missing`,
-`content-package` and `content-package-batch` also take an optional
-`--engine <id>` (e.g. `--engine remotion`). Leaving it out means Remotion, as
-before. Remotion is the only engine installed today. `premiere` and
-`after-effects` are reserved names that are refused with a "not available"
-error, and anything else is an unknown engine. Each export records the engine
-that made it; see [ARCHITECTURE.md](ARCHITECTURE.md#choosing-the-engine-per-job).
+Rendering uses the Remotion engine. `render-track` also takes an optional
+`--engine <id>`: `remotion` (the default — leaving the flag out behaves exactly
+as before) or `after-effects` (see below). `premiere` is a reserved name that
+is refused as "not available", and anything else is an unknown engine.
+`render-missing`, `content-package` and `content-package-batch` accept
+`--engine remotion` only, because they plan from Remotion's exports. Each
+export records the engine that made it; see
+[ARCHITECTURE.md](ARCHITECTURE.md#choosing-the-engine-per-job).
+
+### Rendering with After Effects (proof of concept)
+
+`--engine after-effects` renders a track through your own After Effects
+project, using After Effects' command-line renderer, `aerender`:
+
+```console
+npm run render-track -- ghetto-geek --engine after-effects
+npm run render-track -- ghetto-geek --engine after-effects --preset vertical-9x16
+```
+
+The result goes to `out/<track-slug>/after-effects/<preset>.mp4`, next to (never
+over) the Remotion export, and is recorded in the content library as an After
+Effects export.
+
+**1. After Effects.** Install it (macOS). `aerender` is found automatically in
+`/Applications/Adobe After Effects <version>/` (newest first) or on `PATH`. To
+choose a specific one, set `TOSHI_AERENDER_PATH`, or `"aerenderPath"` in the
+config below. Without it, the command stops with a "not available" error that
+lists where it looked.
+
+**2. A template.** Create `after-effects.local.json` in this folder (it is
+git-ignored; `TOSHI_AE_CONFIG` can point elsewhere):
+
+```json
+{
+  "project": "/Users/you/Toshi/ToshiVisualizer.aep",
+  "composition": "Toshi Visualizer",
+  "compositions": { "vertical-9x16": "Toshi Visualizer 9x16", "square-1x1": "Toshi Visualizer 1x1" },
+  "outputModule": "H.264 - Match Render Settings - 15 Mbps"
+}
+```
+
+Only `project` and `composition` are required. `compositions` picks a
+composition per format. `outputModule` must name an H.264/MP4 output-module
+template in your After Effects; leave it out to use the project's own. Also
+optional: `dataFile` (default: `toshi-render-data.json` beside the project)
+and `aerenderPath`. Missing or wrong settings stop the render with a "not
+configured" error saying what to fix.
+
+**3. The template (the contract).** Before each render Toshi writes these
+files next to `dataFile` (by default, your `.aep`'s folder). The template
+imports the images and audio **by these names**, and After Effects reloads them
+from disk every time `aerender` opens the project:
+
+| File | Contents | Template must use it |
+| --- | --- | --- |
+| `toshi-render-data.json` | Title, artist, key, BPM, subtitle, format, timing | Read when the template is built (text) |
+| `toshi-cover.png` | The track's cover | Yes |
+| `toshi-audio.wav` | The track's audio | Yes (audio is mandatory) |
+| `toshi-waveform-audio.wav` | Lighter audio for audio-reactive layers | Optional |
+| `toshi-brand-logo.png`, `toshi-brand-badge.png` | The brand marks | Optional |
+
+**Text is written into the template when it is built, so build it for each
+track.** In a real After Effects 2026 render, `footage("toshi-render-data.json")`
+was found but its `sourceData` and `sourceText` were both `null`. So expressions
+can't read the title, artist, key and BPM at render time. Adobe's own notes say
+a render can miss a JSON file that only expressions use. Instead,
+`create-toshi-template.jsx` reads the staged JSON and writes the text into the
+layers. The cover, audio and waveform still follow whatever is staged. Never
+import a track's own `public/tracks/...` files into the template.
+
+Two checks stop a broken template from wasting a render:
+
+- **Before rendering:** if the project never mentions the cover and audio
+  files, the render stops in seconds with "does not use ...", instead of
+  rendering a black, silent video. If the template was built for another
+  track, it stops with "was built with another track's title, artist and key",
+  with this track already staged for the rebuild. Set `"templateCheck": false`
+  only for a template that genuinely does not need these checks.
+- **After rendering:** a video with no audio (or no picture) is a failed
+  render. It is never published or recorded.
+- **Warnings (never fatal):** the render log says so if the project carries
+  no Toshi text marker (built by hand or by an older script), doesn't seem to
+  contain the composition's name, or has no Audio Waveform effect. It also
+  prints the text this track needs.
+
+**Building the template: the quick way.** `adapters/after-effects/template/create-toshi-template.jsx`
+builds the complete minimal template for you, using only native After Effects
+features (no plugins, nothing `aerender` can't render):
+
+1. Stage the track:
+   `npm run render-track -- <track> --engine after-effects`. On a new or empty
+   project, or one built for another track, this stops with "does not use ..."
+   or "was built with another track's ...". That's expected: the files are now
+   in the data folder.
+2. In After Effects, **File > New > New Project**, then **File > Scripts > Run
+   Script File...** and choose `create-toshi-template.jsx`. When asked, pick the
+   folder with `toshi-render-data.json`. If an effect couldn't be set up, the
+   final message lists it under "Check by hand".
+3. **File > Save As** the `"project"` from `after-effects.local.json`, in that
+   same folder (replacing the old one), and render again.
+
+**Rebuilding.** Run the script again (steps 1–3, in a new project) **for every
+new track**, and whenever this script changes. Template contract 3 writes the
+text in at build time. The composition's comment shows the contract and the
+track's text marker (`toshi-text-` plus 8 hex digits). The Title layer's comment
+shows the marker too.
+
+It creates composition **Toshi Visualizer** (1920×1080, 30fps, 10 minutes)
+with these layers, top to bottom:
+
+| Layer | Source | Setup |
+| --- | --- | --- |
+| `Audio` | `toshi-audio.wav` | Time Remapping on; Time Remap expression `time - thisLayer.inPoint`; layer extended to the end of the composition |
+| `Brand Logo` | `toshi-brand-logo.png` | Bottom right; Scale expression fits it into 240 px |
+| `Waveform` | Solid + **Audio Waveform** effect | Audio Layer: `Audio`; Start Point 960,860; End Point 1780,860; Displayed Samples 220; Maximum Height 140; Audio Duration 400 ms; Thickness 3; Softness 15%; Inside Color `#b8860b`; Outside Color `#f4e8d0` |
+| `Accent` | Solid 160×4 `#b8860b` | Thin gold rule under the track details |
+| `Key BPM` | Text, 40 px, `#f4e8d0`, 80% opacity | The track's key and BPM, e.g. `F Minor · 100 BPM` |
+| `Artist` | Text, 56 px, `#b8860b` | The track's artist, e.g. `Toshi` |
+| `Title` | Text, 96 px, `#f4e8d0` | The track's title, e.g. `Ghetto Geek`; comment: the text marker |
+| `Cover` | `toshi-cover.png` | Left; Scale expression `var s = 640 / Math.max(thisLayer.source.width, thisLayer.source.height) * 100; [s, s]` |
+| `Background` | Solid `#0b0b0b` + **Gradient Ramp** effect | Ramp Shape Radial; Start of Ramp 576,486, Start Color `#2a1e10` (warm amber charcoal); End of Ramp 2016,1242, End Color `#0b0b0b` |
+
+The colours are the Remotion visualizer's (`adapters/remotion/BeatVisualizer/theme.ts`):
+off-black `#0b0b0b`, warm cream `#f4e8d0` and vintage gold `#b8860b`.
+
+**The metadata text.** The script reads `toshi-render-data.json` and fills the
+layers by the rules in `templateText` (`adapters/after-effects/templateContract.mts`):
+title, artist, and key and BPM joined with ` · `. A missing optional field shows
+as nothing. No track's values are in the source code. A test keeps the script's
+rules and marker identical to the contract's. The render log prints the text a
+render needs (`After Effects: this track's text: Title "...", ...`). The render
+stops if the project carries another track's marker. It only warns if the
+project carries none: the marker check reads the project's bytes, so it can
+prove a mismatch but can't vouch for a template built some other way.
+
+**The waveform.** The native **Audio Waveform** effect draws from the `Audio`
+layer's sound at render time, so it always follows the staged
+`toshi-audio.wav`, whatever the track and its length, with no per-track setup.
+The effect sits on its own full-frame solid, which it doesn't show (Composite On
+Original is off).
+
+**Building it by hand** instead: create the same composition and layers. Import
+the cover, audio and logo from the data folder (**File > Import > File...**),
+drag them in, add the effects from **Effect > Generate**, and type the track's
+text into the text layers. The `Audio`
+layer's time remapping matters. A footage layer keeps the length its file had
+when you added it, so without remapping, a longer track's audio would stop
+early. Enable it with **Layer > Time > Enable Time Remapping**, add the
+expression, and drag the layer's end to the end of the composition. Fonts,
+sizes, positions and animation are yours to change; the file names and the
+text are the contract. A template built by hand has no text marker. The render
+log warns about that on every render, and you must retype the text for each track.
+
+**Output and formats.** The output module (`"outputModule"`, or the project's
+default) must write **H.264 / MP4 with audio**: its *Audio Output* must be **On**
+or **Auto**. Each composition needs its format's canvas and frame rate (30fps;
+1920×1080, 1080×1920 or 1080×1080) and must be at least as long as your longest
+track. Toshi renders exactly the track's length from frame 0. For 9:16 or 1:1,
+duplicate the composition, change its size, and map it under `"compositions"`.
+
+The diagnostics show which `aerender`, project, composition and output were
+used, whether the template uses the staged files and matches this track's
+text, and why a render failed
+(including `aerender`'s exit code and last output lines).
+
+**Limits of this proof of concept:**
+- Only `render-track` and the API render with After Effects. Freshness
+  checks, delivery, release bundles and content packages still look at
+  Remotion exports only.
+- One After Effects render at a time per data folder, because they share the
+  data file and staged assets.
+- Nothing checks that a composition's canvas, frame rate or length matches the
+  format, or what is visible in the picture. The checks prove the template
+  references the staged files and that the video has picture and sound.
+- `create-toshi-template.jsx` builds the 16:9 composition only, uses After
+  Effects' default font, and has no animation beyond the waveform.
+- The text is written in when the template is built, so each new track means
+  rerunning the script by hand in After Effects (the render stops and says so).
+  Batch renders across tracks would need that rebuild to be automated.
+- The UI does not offer engine selection yet.
 
 ### Export formats
 
@@ -1077,7 +1250,8 @@ queued -> preparing -> rendering -> completed
 Starting a render returns immediately; the render itself runs in a separate
 process. Every job reports its `engine` (default `remotion`). Naming an engine
 that is unknown (`INVALID_RENDERER`) or not installed (`RENDERER_UNAVAILABLE`)
-is a 400, and nothing is queued. **Only one render runs at a time** — a render already uses three
+is a 400, and nothing is queued. An `after-effects` job whose template is not
+configured fails with `RENDERER_NOT_CONFIGURED` in its job error. **Only one render runs at a time** — a render already uses three
 Chromium tabs, and running two at once would thrash rather than finish sooner.
 Further requests queue.
 

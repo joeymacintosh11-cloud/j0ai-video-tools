@@ -17,6 +17,8 @@ import {
   isEngineFlagValue,
   printLibraryOutcome,
   printMetadataSummary,
+  announceEngine,
+  printEngineLog,
   readEngineFlag,
   runCli,
 } from "./cli.ts";
@@ -97,6 +99,7 @@ runCli("rendering track", async () => {
   // One at a time, deliberately: a render already uses three Chromium tabs.
   // The analysis audio prepared above is reused by every format.
   const rendered: string[] = [];
+  announceEngine(engineId);
 
   for (const presetId of presetIds) {
     const preset = renderPreset(presetId);
@@ -106,6 +109,7 @@ runCli("rendering track", async () => {
 
     const { outputLabel } = await renderTrackVideo({
       engine: await renderEngines.resolve(engineId),
+      onEngineLog: printEngineLog,
       slug,
       props,
       onRecorded: printLibraryOutcome,
@@ -120,7 +124,9 @@ runCli("rendering track", async () => {
         }
         if (phase === "resolving") {
           console.log(
-            `→ Resolving composition "${COMPOSITION_ID}" (reading audio duration)...`,
+            engineId === "remotion"
+              ? `→ Resolving composition "${COMPOSITION_ID}" (reading audio duration)...`
+              : `→ Resolving the ${engineId} template (reading audio duration)...`,
           );
         }
       },

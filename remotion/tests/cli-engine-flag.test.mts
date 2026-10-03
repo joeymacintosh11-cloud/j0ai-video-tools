@@ -8,6 +8,10 @@ import { promisify } from "node:util";
 import { TrackError } from "../core/domain/tracks/errors.ts";
 import { isEngineFlagValue, readEngineFlag } from "../scripts/cli.ts";
 
+// These tests mean "After Effects is not installed" whatever this machine has:
+// an explicit aerender path that does not exist makes discovery report that.
+process.env.TOSHI_AERENDER_PATH = "/nonexistent/toshi-test/aerender";
+
 /**
  * `--engine <id>` on the render commands (scripts/cli.ts): absent means
  * Remotion, exactly as before; a value is checked against this installation's

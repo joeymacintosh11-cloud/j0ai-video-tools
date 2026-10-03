@@ -18,6 +18,7 @@ import {
   ENGINE_FLAG_USAGE,
   isEngineFlagValue,
   printLibraryOutcome,
+  assertPlanningEngine,
   readEngineFlag,
   runCli,
 } from "./cli.ts";
@@ -138,6 +139,7 @@ runCli("rendering missing exports", async () => {
   const { slug, allTracks, presetIds, dryRun, mode, replace, engineId } = parseArgs(
     process.argv.slice(2),
   );
+  assertPlanningEngine(engineId, "render-missing");
 
   if (!slug && !allTracks) {
     printUsage();

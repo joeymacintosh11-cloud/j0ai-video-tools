@@ -12,6 +12,10 @@ import {
 import type { RenderEngine } from "../core/ports/renderEngine.ts";
 import { createRenderEngineRegistry } from "../core/ports/renderEngineRegistry.ts";
 
+// These tests mean "After Effects is not installed" whatever this machine has:
+// an explicit aerender path that does not exist makes discovery report that.
+process.env.TOSHI_AERENDER_PATH = "/nonexistent/toshi-test/aerender";
+
 /**
  * Renderer ids (core/domain/video/renderers.ts) and the engine registry
  * (core/ports/renderEngineRegistry.ts, adapters/renderEngines.mts): callers
@@ -96,4 +100,33 @@ test("checking availability never loads an engine; resolving loads only the one 
 test("an engine registered under the wrong id is refused", async () => {
   const registry = createRenderEngineRegistry({ premiere: async () => stubEngine("remotion") });
   await assert.rejects(registry.resolve("premiere"), /registered as "premiere" reports id "remotion"/);
+});
+
+test("an engine's probe decides availability live, and its reason reaches the error", async () => {
+  let problem: string | null = "aerender was not found.";
+  let loads = 0;
+  const registry = createRenderEngineRegistry({
+    remotion: async () => stubEngine("remotion"),
+    "after-effects": {
+      load: async () => {
+        loads += 1;
+        return stubEngine("after-effects");
+      },
+      probe: () => problem,
+    },
+  });
+
+  assert.deepEqual(registry.available, ["remotion"]);
+  assert.throws(
+    () => registry.assertAvailable("after-effects"),
+    isTrackError("RENDERER_UNAVAILABLE", /"after-effects" render engine is not available: aerender was not found\. Available: remotion/),
+  );
+  await assert.rejects(registry.resolve("after-effects"), isTrackError("RENDERER_UNAVAILABLE", /aerender/));
+  assert.equal(loads, 0, "an unavailable engine is never loaded");
+
+  // Installing the dependency takes effect without rebuilding the registry.
+  problem = null;
+  assert.deepEqual(registry.available, ["remotion", "after-effects"]);
+  assert.equal((await registry.resolve("after-effects")).id, "after-effects");
+  assert.equal(loads, 1);
 });

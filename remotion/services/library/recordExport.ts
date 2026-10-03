@@ -7,12 +7,13 @@ import {
   type LibraryRecordIdentity,
   type LibraryTrackSnapshot,
 } from "../../core/domain/library/contentLibrary.ts";
-import { outputLabel } from "../../core/domain/tracks/paths.ts";
+import { manifestLabel, outputLabel } from "../../core/domain/tracks/paths.ts";
 import { isValidSlug } from "../../core/domain/tracks/slug.ts";
 import type { TrackMetadata } from "../../core/domain/tracks/types.ts";
 import { COMPOSITION_ID } from "../../core/domain/video/compositionConfig.ts";
 import { VISUALIZER_VERSION } from "../../core/domain/video/exportFreshness.ts";
 import { DEFAULT_RENDERER_ID, type RendererId } from "../../core/domain/video/renderers.ts";
+import type { RenderTemplateIdentity } from "../../core/ports/renderEngine.ts";
 import {
   RENDER_PRESET_LIST,
   renderPreset,
@@ -81,8 +82,12 @@ export const libraryRecordIdFor = (
   });
 
 /** What is at the canonical path right now, before a publish replaces it. */
-export const captureExportBefore = (slug: string, presetId: RenderPresetId): ExportBeforePublish => {
-  const output = trackOutputLocation(slug, presetId);
+export const captureExportBefore = (
+  slug: string,
+  presetId: RenderPresetId,
+  renderer: RendererId = DEFAULT_RENDERER_ID,
+): ExportBeforePublish => {
+  const output = trackOutputLocation(slug, presetId, renderer);
   let hadOutput = false;
   try {
     const stats = statSync(output.path);
@@ -107,9 +112,6 @@ const presetSnapshot = (presetId: RenderPresetId) => {
   };
 };
 
-const manifestLabel = (slug: string, presetId: string): string =>
-  `out/${slug}/${presetId}.manifest.json`;
-
 const sameExport = (record: ContentLibraryRecord, manifest: ExportManifest): boolean =>
   record.generatedAt === manifest.renderedAt &&
   record.manifest.inputFingerprint === manifest.inputFingerprint &&
@@ -129,6 +131,8 @@ export type RecordPublishedExportInput = {
   readonly published: ExportManifest;
   /** The renderer that produced the export; absent means remotion. */
   readonly renderer?: RendererId;
+  /** The engine-reported template; absent means the built-in visualizer. */
+  readonly template?: RenderTemplateIdentity;
   readonly now?: () => Date;
   readonly root?: string;
 };
@@ -164,18 +168,18 @@ export const recordPublishedExport = (
       track,
       preset: presetSnapshot(presetId),
       template: {
-        composition: COMPOSITION_ID,
-        visualizerVersion: VISUALIZER_VERSION,
+        composition: input.template?.composition ?? COMPOSITION_ID,
+        visualizerVersion: input.template?.version ?? VISUALIZER_VERSION,
         renderer: input.renderer ?? DEFAULT_RENDERER_ID,
       },
       output: {
-        path: outputLabel(slug, presetId),
+        path: outputLabel(slug, presetId, input.renderer),
         bytes: published.output.bytes,
         mtimeMs: published.output.mtimeMs,
         ino: published.output.ino,
       },
       manifest: {
-        path: manifestLabel(slug, presetId),
+        path: manifestLabel(slug, presetId, input.renderer),
         inputFingerprint: published.inputFingerprint,
         inputs: inputsOf(published),
       },
@@ -204,6 +208,8 @@ export type PublishRecordedExportInput = {
   readonly jobId: string | null;
   /** The renderer producing the export; absent means remotion. */
   readonly renderer?: RendererId;
+  /** The engine-reported template; absent means the built-in visualizer. */
+  readonly template?: RenderTemplateIdentity;
   readonly root?: string;
 };
 
@@ -223,7 +229,7 @@ export const publishRecordedExport = async (
     );
   }
 
-  const before = captureExportBefore(input.slug, input.presetId);
+  const before = captureExportBefore(input.slug, input.presetId, input.renderer);
   await publishExport(
     input.slug,
     input.presetId,
@@ -231,9 +237,10 @@ export const publishRecordedExport = async (
     input.produce,
     input.checkCancelled,
     input.lock,
+    input.renderer,
   );
 
-  const output = trackOutputLocation(input.slug, input.presetId);
+  const output = trackOutputLocation(input.slug, input.presetId, input.renderer);
   const { manifest } = readExportManifest(output.manifest, input.slug, input.presetId);
   if (manifest === null) {
     // publishExport wrote this manifest moments ago under the lock we still
@@ -255,6 +262,7 @@ export const publishRecordedExport = async (
     before,
     published: manifest,
     renderer: input.renderer,
+    template: input.template,
     root: input.root,
   });
 };

@@ -9,6 +9,7 @@ import {
   makeCancelSignal,
   type RenderEngine,
   type RenderSession,
+  type RenderTemplateIdentity,
 } from "../core/ports/renderEngine.ts";
 import { readDeliverySettings } from "../services/delivery/deliverySettings.ts";
 import { contentLibraryPath, readContentLibrary } from "../services/library/contentLibraryLog.ts";
@@ -39,18 +40,30 @@ type Call = string;
 
 const fakeEngine = (
   calls: Call[],
-  options: { failRender?: Error; content?: string; id?: RenderEngine["id"] } = {},
+  options: {
+    failRender?: Error;
+    content?: string;
+    id?: RenderEngine["id"];
+    template?: RenderTemplateIdentity;
+  } = {},
 ): RenderEngine => ({
   // A stand-in renderer; which id it claims matters only where a test says so.
   id: options.id ?? "remotion",
-  open: async (): Promise<RenderSession> => {
+  open: async (openOptions): Promise<RenderSession> => {
     calls.push("open");
+    openOptions?.log?.("fake engine opened");
     return {
       // Reads public/ in place, as a non-bundling engine would.
       assetRoot: PUBLIC_DIR,
       resolve: async (props: VisualizerProps) => {
         calls.push(`resolve:${props.presetId}`);
-        return { durationInFrames: 90, fps: 30, width: 1080, height: 1920 };
+        return {
+          durationInFrames: 90,
+          fps: 30,
+          width: 1080,
+          height: 1920,
+          ...(options.template ? { template: options.template } : {}),
+        };
       },
       render: async ({ outputPath, onProgress }) => {
         calls.push("render");
@@ -228,25 +241,50 @@ test("a Remotion render is recorded as Remotion and is current", async (t) => {
   assert.equal(facts?.freshness, "current");
 });
 
-test("another engine's export records its renderer and is not mistaken for a current Remotion export", async (t) => {
+test("another engine's export lands in its own folder, beside an untouched current Remotion export", async (t) => {
   const ctx = await setup(t);
   if (!ctx) return;
 
   await renderTrackVideo({
-    engine: fakeEngine([], { id: "premiere" }),
+    engine: fakeEngine([], { content: "remotion video" }),
+    slug: ctx.f.slug,
+    props: ctx.props,
+    presetId: "vertical-9x16",
+  });
+  const other = await renderTrackVideo({
+    engine: fakeEngine([], { id: "premiere", content: "premiere video" }),
     slug: ctx.f.slug,
     props: ctx.props,
     presetId: "vertical-9x16",
   });
 
-  const [record] = readContentLibrary().records.filter((entry) => entry.track.slug === ctx.f.slug);
-  assert.equal(record.template.renderer, "premiere");
+  // Remotion keeps its path; the other engine gets out/<slug>/<renderer>/.
+  const remotionOutput = trackOutputLocation(ctx.f.slug, "vertical-9x16");
+  const otherOutput = trackOutputLocation(ctx.f.slug, "vertical-9x16", "premiere");
+  assert.equal(remotionOutput.label, `out/${ctx.f.slug}/vertical-9x16.mp4`);
+  assert.equal(otherOutput.label, `out/${ctx.f.slug}/premiere/vertical-9x16.mp4`);
+  assert.equal(other.outputLabel, otherOutput.label);
+  assert.equal(await readFile(remotionOutput.path, "utf8"), "remotion video");
+  assert.equal(await readFile(otherOutput.path, "utf8"), "premiere video");
 
-  // Freshness is judged against the default renderer, so the export is stale
-  // on the visualizer axis and nothing else.
+  // Remotion's export is still the current one; the other engine's never
+  // replaced it.
   const facts = trackExportCoverage(ctx.f.slug).find((entry) => entry.presetId === "vertical-9x16");
-  assert.equal(facts?.freshness, "stale");
-  assert.deepEqual(facts?.staleReasons, ["visualizer_changed"]);
+  assert.equal(facts?.freshness, "current");
+
+  // The other export records its renderer and path, and its manifest carries
+  // a fingerprint that would never pass for a current Remotion export.
+  const records = readContentLibrary().records.filter((entry) => entry.track.slug === ctx.f.slug);
+  assert.deepEqual(
+    records.map((record) => [record.template.renderer, record.output.path, record.exportKind]),
+    [
+      ["remotion", remotionOutput.label, "original"],
+      ["premiere", otherOutput.label, "original"],
+    ],
+  );
+  const { manifest } = readExportManifest(otherOutput.manifest, ctx.f.slug, "vertical-9x16");
+  assert.ok(manifest);
+  assert.notEqual(manifest.inputs.visualizer, fingerprintInputs(ctx.props, "vertical-9x16").visualizer);
 });
 
 test("library records from before renderers were recorded still parse, and read back as Remotion", async (t) => {
@@ -274,4 +312,34 @@ test("library records from before renderers were recorded still parse, and read 
   );
   assert.ok(future.ok, "a renderer this version does not know never hides the record");
   assert.equal(storedRendererId(future.record.template.renderer), null);
+});
+
+test("an engine-reported template is fingerprinted and recorded; its log reaches the caller", async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  const logs: string[] = [];
+  const template = { composition: "Visualizer 1x1", version: "aep-sha256:0123456789abcdef" };
+
+  await renderTrackVideo({
+    engine: fakeEngine([], { template }),
+    slug: ctx.f.slug,
+    props: ctx.props,
+    presetId: "square-1x1",
+    onEngineLog: (message) => logs.push(message),
+  });
+
+  assert.deepEqual(logs, ["fake engine opened"]);
+  const [record] = readContentLibrary().records.filter((entry) => entry.track.slug === ctx.f.slug);
+  assert.equal(record.template.composition, "Visualizer 1x1");
+  assert.equal(record.template.visualizerVersion, "aep-sha256:0123456789abcdef");
+
+  // The template is a visualizer input: another version is another fingerprint,
+  // and leaving it out is exactly the built-in visualizer's fingerprint.
+  const base = fingerprintInputs(ctx.props, "square-1x1", PUBLIC_DIR, "remotion");
+  const withTemplate = fingerprintInputs(ctx.props, "square-1x1", PUBLIC_DIR, "remotion", template);
+  const edited = fingerprintInputs(ctx.props, "square-1x1", PUBLIC_DIR, "remotion", { ...template, version: "aep-sha256:fedcba9876543210" });
+  assert.notEqual(withTemplate.visualizer, base.visualizer);
+  assert.notEqual(edited.visualizer, withTemplate.visualizer);
+  assert.deepEqual({ ...withTemplate, visualizer: null }, { ...base, visualizer: null });
+  assert.deepEqual(fingerprintInputs(ctx.props, "square-1x1", PUBLIC_DIR, "remotion", undefined), base);
 });

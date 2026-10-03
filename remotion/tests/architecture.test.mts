@@ -181,3 +181,16 @@ test("only the engine registry names a specific render engine adapter", () => {
     assert.equal(importsAnotherAdaptersEngine, false, file);
   }
 });
+
+test("After Effects specifics (aerender, .aep projects) stay inside adapters/after-effects", () => {
+  // Code only: comments may explain what the adapter is for.
+  const code = (file: string) =>
+    readFileSync(path.join(PROJECT_ROOT, file), "utf8")
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join("\n");
+  const leaks = ["core", "services", "server", "scripts", "ui", path.join("adapters", "remotion")]
+    .flatMap((dir) => sourceFilesUnder(dir))
+    .filter((file) => /aerender|\.aepx?\b|OMtemplate/i.test(code(file)));
+  assert.deepEqual(leaks, []);
+});

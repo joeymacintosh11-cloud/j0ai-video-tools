@@ -1,3 +1,5 @@
+import { DEFAULT_RENDERER_ID, type RendererId } from "../video/renderers.ts";
+
 /**
  * The single source of truth for where a track's files live inside public/.
  *
@@ -29,17 +31,41 @@ export const BRAND_ASSET_PATHS = {
 } as const;
 
 /**
+ * The folder an engine's exports of one track live in, relative to out/.
+ *
+ * Remotion's exports stay exactly where they always were, directly in the
+ * track's folder. Every other renderer gets a subfolder named after it, so two
+ * engines' renders of the same format never overwrite each other and no
+ * existing export has to move.
+ */
+export const outputFolderRelativePath = (slug: string, renderer: RendererId = DEFAULT_RENDERER_ID): string =>
+  renderer === "remotion" ? slug : `${slug}/${renderer}`;
+
+/**
  * Where a render lands, relative to out/.
  *
  * One folder per track, one file per format, so a track's exports sit together
  * and adding a format never collides with an existing file.
  */
-export const outputRelativePath = (slug: string, presetId: string): string =>
-  `${slug}/${presetId}.mp4`;
+export const outputRelativePath = (
+  slug: string,
+  presetId: string,
+  renderer: RendererId = DEFAULT_RENDERER_ID,
+): string => `${outputFolderRelativePath(slug, renderer)}/${presetId}.mp4`;
 
-/** "out/<slug>/<preset>.mp4", for messages. */
-export const outputLabel = (slug: string, presetId: string): string =>
-  `out/${outputRelativePath(slug, presetId)}`;
+/** "out/<slug>/<preset>.mp4" (or "out/<slug>/<renderer>/<preset>.mp4"), for messages. */
+export const outputLabel = (
+  slug: string,
+  presetId: string,
+  renderer: RendererId = DEFAULT_RENDERER_ID,
+): string => `out/${outputRelativePath(slug, presetId, renderer)}`;
+
+/** The manifest beside an export, for messages and library records. */
+export const manifestLabel = (
+  slug: string,
+  presetId: string,
+  renderer: RendererId = DEFAULT_RENDERER_ID,
+): string => `out/${outputFolderRelativePath(slug, renderer)}/${presetId}.manifest.json`;
 
 /**
  * The single-file path renders used before presets existed.

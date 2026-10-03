@@ -19,6 +19,10 @@ import { fixture } from "./fixtures.mts";
 import { manager, Worker } from "./managerHarness.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
 
+// These tests mean "After Effects is not installed" whatever this machine has:
+// an explicit aerender path that does not exist makes discovery report that.
+process.env.TOSHI_AERENDER_PATH = "/nonexistent/toshi-test/aerender";
+
 /**
  * A render job's engine (core/domain/video/renderers.ts) travels with it: from
  * the API or the render manager, through the journal, to the worker process
