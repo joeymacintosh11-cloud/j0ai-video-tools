@@ -2,6 +2,7 @@ import type { TrackIssue } from "./errors.ts";
 import type { TrackAssetPaths } from "./paths.ts";
 import type { PartialMetadataTemplates } from "../content/metadataTemplates.ts";
 import type { RenderPresetId } from "../video/renderPresets.ts";
+import type { RendererId } from "../video/renderers.ts";
 
 /** A track whose metadata is complete and renderable. */
 export type TrackMetadata = {
@@ -18,6 +19,15 @@ export type TrackMetadata = {
    * duplicates.
    */
   readonly exportPresets?: readonly RenderPresetId[];
+  /**
+   * Which renderer this track's videos should come from. Absent means
+   * undeclared, which resolves to the default (Remotion) — see
+   * resolveTrackRenderer(). A preference, not an installation fact: whether
+   * that renderer can run on this machine is checked when a render is asked
+   * for. The UI renders with it; CLI and API callers name an engine
+   * explicitly (or get the default), exactly as before.
+   */
+  readonly renderer?: RendererId;
   /**
    * Which folder this track delivers into, inside the configured export
    * destination. Absent means the slug. Deliberately a portable folder name,
@@ -54,6 +64,8 @@ export type TrackMetadataDraft = {
    * duplicates.
    */
   readonly exportPresets?: readonly RenderPresetId[];
+  /** See TrackMetadata.renderer. */
+  readonly renderer?: RendererId;
   /**
    * Which folder this track delivers into, inside the configured export
    * destination. Absent means the slug. Deliberately a portable folder name,

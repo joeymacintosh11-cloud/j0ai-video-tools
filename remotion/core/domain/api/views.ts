@@ -134,6 +134,12 @@ export type TrackSummaryView = {
    */
   readonly exportPresets: readonly RenderPresetId[] | null;
   /**
+   * The renderer this track prefers, or null when it declares none — which
+   * means the default (Remotion), resolveTrackRenderer(). Kept as declared,
+   * like exportPresets, so the UI can tell "chose Remotion" from "never chose".
+   */
+  readonly renderer: RendererId | null;
+  /**
    * The folder this track delivers into, or null when it has not chosen one and
    * falls back to its slug. A portable folder name, never a machine path.
    */
@@ -196,6 +202,13 @@ export type TrackMetadataPatch = {
    * never invents an intent the user did not choose.
    */
   readonly exportPresets?: readonly RenderPresetId[];
+  /**
+   * The renderer this track prefers. Omitted leaves whatever the file already
+   * declares; `null` clears it, back to the default (Remotion). Any known
+   * renderer id is accepted — whether it is installed is a fact about this
+   * machine, reported by GET /api/renderers and checked when rendering.
+   */
+  readonly renderer?: RendererId | null;
   /**
    * Folder this track delivers into, inside the configured destination. Empty
    * string clears it, which falls back to the slug.

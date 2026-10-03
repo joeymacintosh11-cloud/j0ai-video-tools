@@ -123,6 +123,11 @@ export const toTrackSummaryView = (
       },
     ),
     exportPresets: declared,
+    // From the draft as well, so a not-yet-valid track still shows its choice.
+    renderer:
+      inspection.metadata?.renderer ??
+      inspection.metadataDraft?.renderer ??
+      null,
     deliveryFolder,
     releaseBundle: (() => {
       const state = releaseBundleStateFor(
