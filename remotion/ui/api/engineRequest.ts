@@ -1,5 +1,6 @@
 import {
   DEFAULT_RENDERER_ID,
+  resolveTrackRenderer,
   type RendererId,
 } from "../../core/domain/video/renderers.ts";
 import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
@@ -46,3 +47,16 @@ export const batchTargets = (
 export const rendererPatch = (engine: RendererId): { readonly renderer: RendererId | null } => ({
   renderer: engine === DEFAULT_RENDERER_ID ? null : engine,
 });
+
+/** Read saved preferences immediately before catalogue queueing; a failed read
+ * refuses the batch rather than inventing a default for an unread track. */
+export const catalogueBatchTargets = async (
+  slugs: readonly string[],
+  presets: readonly RenderPresetId[],
+  readTrack: (slug: string) => Promise<{ readonly renderer: RendererId | null }>,
+): Promise<ReturnType<typeof batchTargets>> => {
+  const tracks = await Promise.all(slugs.map(readTrack));
+  return slugs.flatMap((slug, index) =>
+    batchTargets(slug, presets, resolveTrackRenderer(tracks[index].renderer)),
+  );
+};

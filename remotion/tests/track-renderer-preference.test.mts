@@ -48,7 +48,7 @@ import {
   renderBlockedReason,
   trackEngine,
 } from "../ui/components/engineModel.ts";
-import { batchTargets, rendererPatch, startRenderBody } from "../ui/api/engineRequest.ts";
+import { batchTargets, catalogueBatchTargets, rendererPatch, startRenderBody } from "../ui/api/engineRequest.ts";
 import { Worker } from "./managerHarness.mts";
 import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
 import { fixture } from "./fixtures.mts";
@@ -702,7 +702,11 @@ test("through the real API: the app's request renders with the track's engine; o
   assert.equal(legacy.json.data.job.engine, "remotion");
 
   // A batch from the app carries it per target.
-  const batch = await post("/api/render-batches", { targets: batchTargets(f.slug, ["youtube-16x9"], trackEngine(view)) });
+  const batch = await post("/api/render-batches", {
+    targets: await catalogueBatchTargets([f.slug], ["youtube-16x9"], async (slug) =>
+      (await (await fetch(`${base}/api/tracks/${slug}`)).json()).data,
+    ),
+  });
   assert.equal(batch.status, 200);
   assert.equal(batch.json.data.batch.jobs[0].engine, "after-effects");
 
@@ -781,4 +785,32 @@ test("a track written before renderers existed reads back unchanged after an eng
 
   const after = JSON.parse(await fs.readFile(f.metadata, "utf8"));
   assert.deepEqual(after, before);
+});
+
+
+test("catalogue queue reads each saved preference and preserves legacy default requests", async () => {
+  const reads: string[] = [];
+  const targets = await catalogueBatchTargets(
+    ["ae", "legacy", "explicit-remotion"],
+    ["youtube-16x9", "square-1x1"],
+    async (slug) => {
+      reads.push(slug);
+      return { renderer: slug === "ae" ? "after-effects" : slug === "legacy" ? null : "remotion" };
+    },
+  );
+  assert.deepEqual(reads, ["ae", "legacy", "explicit-remotion"]);
+  assert.deepEqual(targets, [
+    ...batchTargets("ae", ["youtube-16x9", "square-1x1"], "after-effects"),
+    ...batchTargets("legacy", ["youtube-16x9", "square-1x1"], "remotion"),
+    ...batchTargets("explicit-remotion", ["youtube-16x9", "square-1x1"], "remotion"),
+  ]);
+});
+
+test("catalogue queue refuses unread saved preferences instead of falling back", async () => {
+  await assert.rejects(
+    catalogueBatchTargets(["unread"], ["youtube-16x9"], async () => {
+      throw new Error("Track read failed");
+    }),
+    /Track read failed/,
+  );
 });

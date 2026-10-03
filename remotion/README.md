@@ -157,7 +157,9 @@ The **Render** panel (under *Advanced*) renders with the track's saved engine
 and names it on the button ("Render YouTube 16:9 · After Effects"). If that
 engine can't run here, the button is disabled with the reason. It never
 falls back to Remotion. Batches started there and **Show <format>** use the
-same engine.
+same engine. Catalogue **Add to render queue** reads each selected track's
+saved preference before queueing and carries that engine per target; a failed
+track read refuses the batch.
 
 A track's export marks judge **its** engine's exports. After Effects' live in
 `out/<slug>/after-effects/`, so a Remotion export never counts for a track
