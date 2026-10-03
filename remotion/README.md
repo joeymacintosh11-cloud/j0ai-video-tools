@@ -1380,3 +1380,17 @@ Found an issue with Remotion? [File an issue here](https://github.com/remotion-d
 ## License
 
 Note that for some entities a company license is needed. [Read the terms here](https://github.com/remotion-dev/remotion/blob/main/LICENSE.md).
+
+### After Effects batch execution safety
+
+The API render queue runs one worker at a time, including mixed-engine batches.
+CLI batch commands also render sequentially. After Effects additionally holds
+`.toshi-ae-render.lock/` beside its configured data file from staging until
+`aerender` has stopped; another CLI/API session using that folder is refused.
+A crashed owner leaves the lock in place: verify Adobe rendering has stopped
+before manually removing it. Shared footage must never be overwritten during
+an active render. Queue logs identify this serial execution policy.
+
+The configured AE project is still built for one track's text. Serialization
+does not rebuild it for a different track: the existing template marker check
+refuses mismatches and reports the manual rebuild steps, without a fallback.
