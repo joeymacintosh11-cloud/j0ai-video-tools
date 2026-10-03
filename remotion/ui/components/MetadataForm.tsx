@@ -17,6 +17,7 @@ import {
   type RendererId,
 } from "../../core/domain/video/renderers.ts";
 import { ApiRequestError, updateTrackMetadata } from "../api/client.ts";
+import { rendererPatch } from "../api/engineRequest.ts";
 import { useStillCurrent } from "../hooks/useStillCurrent.ts";
 import { ContentMetadataOverridesEditor } from "./ContentMetadataOverridesEditor.tsx";
 import { EnginePicker } from "./EnginePicker.tsx";
@@ -203,6 +204,59 @@ export const MetadataForm: React.FC<{
     setSavedAt(null);
   };
 
+  /**
+   * Saves the engine choice the moment it is made, on its own.
+   *
+   * It is not a draft field like the others: the Render panel and every
+   * engine-aware view read the *saved* preference, so a choice waiting for
+   * "Save metadata" would show After Effects here while rendering with
+   * Remotion, and be lost by a reload. Only the renderer is written, against
+   * the revision this form was seeded from; any other edits in progress stay
+   * exactly as they are.
+   */
+  const saveEngine = async (next: RendererId) => {
+    const slug = track.slug;
+    const previous = fields.renderer;
+
+    setFields((current) => ({ ...current, renderer: next }));
+    setSaving(true);
+    setError(null);
+
+    try {
+      const saved = await updateTrackMetadata(slug, rendererPatch(next), seeded.current.revision);
+
+      if (!stillCurrent(slug)) {
+        return;
+      }
+
+      // The write advanced the file's revision. Adopt it (and the saved
+      // engine) so the refresh below is not mistaken for an outside edit.
+      seeded.current = { slug, revision: saved.metadataRevision };
+      setInitial((current) => ({ ...current, renderer: resolveTrackRenderer(saved.renderer) }));
+      setSavedAt(Date.now());
+      onSaved();
+    } catch (cause) {
+      if (!stillCurrent(slug)) {
+        return;
+      }
+
+      // Not saved, so the picker goes back to what is.
+      setFields((current) => ({ ...current, renderer: previous }));
+      setError(
+        cause instanceof ApiRequestError
+          ? cause
+          : new ApiRequestError(0, {
+              code: "INTERNAL_ERROR",
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+      );
+    } finally {
+      if (stillCurrent(slug)) {
+        setSaving(false);
+      }
+    }
+  };
+
   const save = async () => {
     const slug = track.slug;
 
@@ -359,12 +413,11 @@ export const MetadataForm: React.FC<{
           selected={fields.renderer}
           statuses={renderers?.renderers ?? null}
           disabled={saving}
-          onChange={(next) => {
-            setFields((previous) => ({ ...previous, renderer: next }));
-            setSavedAt(null);
-          }}
+          onChange={(next) => void saveEngine(next)}
         />
-        <span className="field__hint">{engineHint(fields.renderer, renderers)}</span>
+        <span className="field__hint">
+          {engineHint(fields.renderer, renderers)} Saved as soon as you choose.
+        </span>
       </div>
 
       <ContentMetadataOverridesEditor

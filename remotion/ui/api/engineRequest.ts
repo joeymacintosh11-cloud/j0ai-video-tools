@@ -37,3 +37,12 @@ export const batchTargets = (
   engine: RendererId,
 ): readonly { readonly slug: string; readonly preset: RenderPresetId; readonly engine?: RendererId }[] =>
   presets.map((preset) => ({ slug, preset, ...engineField(engine) }));
+
+/**
+ * The metadata patch that saves a track's engine choice on its own. The
+ * default is stored as "no preference" (null), so choosing Remotion removes
+ * the key and a track that never chose keeps a file without one.
+ */
+export const rendererPatch = (engine: RendererId): { readonly renderer: RendererId | null } => ({
+  renderer: engine === DEFAULT_RENDERER_ID ? null : engine,
+});

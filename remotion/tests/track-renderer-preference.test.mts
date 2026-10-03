@@ -48,7 +48,7 @@ import {
   renderBlockedReason,
   trackEngine,
 } from "../ui/components/engineModel.ts";
-import { batchTargets, startRenderBody } from "../ui/api/engineRequest.ts";
+import { batchTargets, rendererPatch, startRenderBody } from "../ui/api/engineRequest.ts";
 import { Worker } from "./managerHarness.mts";
 import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
 import { fixture } from "./fixtures.mts";
@@ -728,4 +728,57 @@ test("Show <format> reveals the track's own engine's file, never another engine'
     return true;
   });
   await assert.rejects(revealTrackOutput(f.slug, "youtube-16x9", "blender"), { code: "INVALID_RENDERER" });
+});
+
+/* ------------------------------------------------------------------ *
+ * Regression: choosing an engine must persist on its own, across a reload
+ * ------------------------------------------------------------------ */
+
+test("the picker's own patch persists After Effects with no other save, and a fresh read restores it", async (t) => {
+  const f = await fixture(t);
+  const base = await api(t);
+  const url = `${base}/api/tracks/${f.slug}`;
+  const patch = async (body: unknown, revision: string) => {
+    const response = await fetch(`${url}/metadata`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", "if-match": `"${revision}"` },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, data: (await response.json()).data };
+  };
+
+  assert.deepEqual(rendererPatch("after-effects"), { renderer: "after-effects" });
+  assert.deepEqual(rendererPatch("remotion"), { renderer: null });
+
+  const first = (await (await fetch(url)).json()).data;
+  const saved = await patch(rendererPatch("after-effects"), first.metadataRevision);
+  assert.equal(saved.status, 200);
+
+  // On disk, exactly as the brief names it.
+  assert.equal(JSON.parse(await fs.readFile(f.metadata, "utf8")).renderer, "after-effects");
+
+  // "Reload": a brand-new read restores it, and the form's initial value is it.
+  const reloaded = (await (await fetch(url)).json()).data;
+  assert.equal(reloaded.renderer, "after-effects");
+  assert.equal(reloaded.exportsRenderer, "after-effects");
+  assert.equal(resolveTrackRenderer(reloaded.renderer), "after-effects");
+
+  // The revision the save returned is the one the next save is based on.
+  const back = await patch(rendererPatch("remotion"), saved.data.metadataRevision);
+  assert.equal(back.status, 200);
+  assert.equal("renderer" in JSON.parse(await fs.readFile(f.metadata, "utf8")), false);
+  const restored = (await (await fetch(url)).json()).data;
+  assert.equal(restored.renderer, null);
+  assert.equal(restored.exportsRenderer, "remotion");
+});
+
+test("a track written before renderers existed reads back unchanged after an engine round trip", async (t) => {
+  const f = await fixture(t);
+  const before = JSON.parse(await fs.readFile(f.metadata, "utf8"));
+
+  await updateTrackMetadata(f.slug, rendererPatch("after-effects"));
+  await updateTrackMetadata(f.slug, rendererPatch("remotion"));
+
+  const after = JSON.parse(await fs.readFile(f.metadata, "utf8"));
+  assert.deepEqual(after, before);
 });
