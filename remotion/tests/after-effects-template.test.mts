@@ -9,13 +9,12 @@ import {
   missingTemplateFiles,
   renderedMediaProblems,
   REQUIRED_TEMPLATE_FILES,
-  TEMPLATE_DATA_FIELDS_READ,
-  TEMPLATE_DATA_FILE_NAME,
-  TEMPLATE_DATA_LOADER,
-  TEMPLATE_DIAGNOSTIC_FONT_SIZE,
-  TEMPLATE_EXPRESSIONS,
   TEMPLATE_LAYERS,
-  templateTextExpression,
+  TEMPLATE_TEXT_LAYERS,
+  TEMPLATE_TEXT_MARKER_PREFIX,
+  templateText,
+  templateTextMarker,
+  templateTextStatus,
   templateWarnings,
 } from "../adapters/after-effects/templateContract.mts";
 import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
@@ -49,46 +48,22 @@ const ghettoGeek = buildTemplateData({
   resolveAsset: (relative) => `/staged/${relative}`,
 });
 
-/**
- * Evaluates an expression the way After Effects does — its value is the last
- * statement's — with `footage()` returning what `item` describes.
- */
-const evaluate = (
-  expression: string,
-  item: { sourceData?: () => unknown; sourceText?: () => string } | null,
-  options: { legacyEngine?: boolean } = {},
-): unknown =>
-  vm.runInNewContext(expression, {
-    footage: (name: string) => {
-      assert.equal(name, TEMPLATE_DATA_FILE_NAME);
-      if (item === null) throw new Error(`Couldn't find footage named ${name}`);
-      return {
-        get sourceData() {
-          if (!item.sourceData) throw new Error("sourceData is not supported");
-          return item.sourceData();
-        },
-        get sourceText() {
-          if (!item.sourceText) throw new Error("sourceText is not supported");
-          return item.sourceText();
-        },
-      };
-    },
-    // The legacy ExtendScript expression engine has no JSON object.
-    ...(options.legacyEngine ? { JSON: undefined } : {}),
-  });
-
-const renderedText = (item: Parameters<typeof evaluate>[1], options?: { legacyEngine?: boolean }) =>
-  Object.fromEntries(
-    Object.entries(TEMPLATE_EXPRESSIONS).map(([layer, expression]) => [layer, evaluate(expression, item, options)]),
-  );
-
 const GHETTO_GEEK_TEXT = { Title: "Ghetto Geek", Artist: "Toshi", "Key BPM": "F Minor · 100 BPM" };
 
+/** A reference 32-bit FNV-1a, written independently of the contract's. */
+const fnv1a = (text: string): string => {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+};
+
 /* ------------------------------------------------------------------ *
- * Metadata: the data, the expressions, and what they render
+ * Metadata: the track text the template is built with
  * ------------------------------------------------------------------ */
 
-test("the template data has the shape the expressions read", () => {
+test("ghetto-geek's staged data gives Ghetto Geek / Toshi / F Minor · 100 BPM", () => {
   assert.deepEqual(ghettoGeek.track, {
     title: "Ghetto Geek",
     artist: "Toshi",
@@ -96,121 +71,24 @@ test("the template data has the shape the expressions read", () => {
     bpm: 100,
     subtitle: "Boom bap soul, trap bounce and latin heat.",
   });
-  for (const fieldPath of TEMPLATE_DATA_FIELDS_READ) {
-    const value = fieldPath.reduce<unknown>((node, key) => (node as Record<string, unknown>)[key], ghettoGeek);
-    assert.notEqual(value, undefined, fieldPath.join("."));
-  }
+  assert.deepEqual(templateText(ghettoGeek.track), GHETTO_GEEK_TEXT);
+  assert.deepEqual(Object.keys(templateText(ghettoGeek.track)).sort(), [...TEMPLATE_TEXT_LAYERS].sort());
 });
 
-test("the text expressions are exactly the loader plus a field read, with a visible diagnostic on failure", () => {
-  assert.equal(
-    TEMPLATE_EXPRESSIONS.Title,
-    `${TEMPLATE_DATA_LOADER}\ntry {\n  var t = toshiTrack(); t.title ? String(t.title) : "";\n} catch (err) {\n` +
-      `  var toshiMessage = toshiReport(err);\n` +
-      `  try { text.sourceText.style.setFontSize(20).setText(toshiMessage); } catch (styleErr) { toshiMessage; }\n}`,
-  );
-  assert.equal(TEMPLATE_EXPRESSIONS.Artist, templateTextExpression(`var t = toshiTrack(); t.artist ? String(t.artist) : "";`));
-  assert.ok(TEMPLATE_EXPRESSIONS["Key BPM"].includes(`parts.join(" \\u00b7 ");`), "· written as an escape, safe in any file encoding");
-  assert.match(TEMPLATE_DATA_LOADER, /^var TOSHI_DATA = "toshi-render-data\.json";/);
-  // footage() is called once, at the expression's top level, not inside a function.
-  assert.equal(TEMPLATE_DATA_LOADER.match(/footage\(/g)?.length, 1);
-  assert.match(TEMPLATE_DATA_LOADER, /^try \{ toshiItem = footage\(TOSHI_DATA\); \}/m);
+test("missing optional metadata shows as nothing, never as undefined or a placeholder", () => {
+  assert.deepEqual(templateText({ title: "Untitled Beat", bpm: 90 }), { Title: "Untitled Beat", Artist: "", "Key BPM": "90 BPM" });
+  assert.deepEqual(templateText({ key: "A Minor" }), { Title: "", Artist: "", "Key BPM": "A Minor" });
+  assert.deepEqual(templateText({}), { Title: "", Artist: "", "Key BPM": "" });
+  assert.deepEqual(templateText({ title: null, artist: "", key: undefined, bpm: 0 }), { Title: "", Artist: "", "Key BPM": "" });
 });
 
-test("ghetto-geek renders as Ghetto Geek / Toshi / F Minor · 100 BPM however After Effects delivers the JSON", () => {
-  const json = JSON.stringify(ghettoGeek);
-  // As documented (an object), wrapped in an array, text only, and on the legacy engine.
-  assert.deepEqual(renderedText({ sourceData: () => JSON.parse(json) }), GHETTO_GEEK_TEXT);
-  assert.deepEqual(renderedText({ sourceData: () => [JSON.parse(json)] }), GHETTO_GEEK_TEXT);
-  assert.deepEqual(renderedText({ sourceText: () => json }), GHETTO_GEEK_TEXT);
-  assert.deepEqual(renderedText({ sourceData: () => undefined, sourceText: () => json }), GHETTO_GEEK_TEXT);
-  assert.deepEqual(renderedText({ sourceText: () => json }, { legacyEngine: true }), GHETTO_GEEK_TEXT);
-});
-
-test("missing optional fields render as nothing, and unreadable data says why instead of showing placeholders", () => {
-  const withTrack = (track: Record<string, unknown>) => ({ sourceData: () => ({ ...ghettoGeek, track }) });
-  assert.deepEqual(renderedText(withTrack({ title: "Untitled Beat", bpm: 90 })), {
-    Title: "Untitled Beat",
-    Artist: "",
-    "Key BPM": "90 BPM",
-  });
-  assert.equal(renderedText(withTrack({ key: "A Minor" }))["Key BPM"], "A Minor");
-
-  for (const text of Object.values(renderedText(null))) {
-    assert.equal(text, "[data footage] foot:err sd:- txt:- track:-\rCouldn't find footage named toshi-render-data.json");
-  }
-});
-
-/* ------------------------------------------------------------------ *
- * Temporary diagnostics: which access step failed, and on what
- * ------------------------------------------------------------------ */
-
-/** Runs the Title expression with `footage()` returning `item` as is (null included). */
-const diagnose = (item: unknown, extra: Record<string, unknown> = {}): unknown =>
-  vm.runInNewContext(TEMPLATE_EXPRESSIONS.Title, { footage: () => item, ...extra });
-
-test("the diagnostic names the failing step and what each access returned", () => {
-  // footage() itself returned null: sourceData is unreadable, and reading sourceText fails.
-  assert.equal(
-    diagnose(null),
-    "[data sourceText] foot:null sd:err txt:- track:-\rCannot read properties of null (reading 'sourceText')",
-  );
-  // Both sourceData and sourceText are null: JSON.parse(null) is null, so reading .track fails.
-  assert.equal(
-    diagnose({ sourceData: null, sourceText: null }),
-    "[data track] foot:ok sd:null txt:null track:-\rCannot read properties of null (reading 'track')",
-  );
-  // sourceData arrives without a track, and the text has none either.
-  assert.equal(
-    diagnose({ sourceData: { schemaVersion: 1, assets: {}, format: {}, timing: {} }, sourceText: "{}" }),
-    "[data track] foot:ok sd:obj{schemaVers,assets,format} txt:str2 track:no\rdata.track is undef",
-  );
-  // An array that does not hold the data.
-  assert.match(String(diagnose({ sourceData: [], sourceText: undefined })), /^\[data parse\] foot:ok sd:arr0 txt:undef track:-\r/);
-  // Text that is not JSON.
-  assert.match(String(diagnose({ sourceData: undefined, sourceText: "not json" })), /^\[data parse\] foot:ok sd:undef txt:str8 track:-\r/);
-  // An array-like host object (not a real Array) is reported with its length and keys.
-  assert.match(String(diagnose({ sourceData: { length: 0, x: 1 }, sourceText: null })), /^\[data track\] foot:ok sd:list0\{length,x\} txt:null /);
-  // sourceData that throws when read.
-  const throwing = {
-    get sourceData(): unknown {
-      throw new Error("no data");
-    },
-    sourceText: null,
-  };
-  assert.match(String(diagnose(throwing)), /^\[data track\] foot:ok sd:err txt:null track:-\r/);
-  // The data is read but a field cannot be.
-  const track = {
-    get title(): string {
-      throw new Error("title unreadable");
-    },
-  };
-  assert.equal(diagnose({ sourceData: { track } }), "[data field] foot:ok sd:obj{track} txt:- track:yes\rtitle unreadable");
-});
-
-test("the diagnostic stays two short lines, drawn small where the text style API exists", () => {
-  const long = "x".repeat(300);
-  const text = String(diagnose({ sourceData: undefined, sourceText: null }, { JSON: { parse: () => { throw new Error(long); } } }));
-  const [first, second, ...rest] = text.split("\r");
-  assert.deepEqual(rest, []);
-  assert.ok(first.length <= 90, first);
-  assert.equal(second, "x".repeat(80));
-
-  // On the JavaScript engine the diagnostic is set through the text style, at a size that fits.
-  const calls: unknown[] = [];
-  const style = {
-    setFontSize(size: number) {
-      calls.push(["size", size]);
-      return { setText: (value: string) => ({ size, value }) };
-    },
-  };
-  const styled = diagnose(null, { text: { sourceText: { style } } }) as { size: number; value: string };
-  assert.equal(styled.size, TEMPLATE_DIAGNOSTIC_FONT_SIZE);
-  assert.match(styled.value, /^\[data sourceText\] foot:null /);
-  // Successful text is never restyled.
-  calls.length = 0;
-  assert.equal(diagnose({ sourceData: ghettoGeek }, { text: { sourceText: { style } } }), "Ghetto Geek");
-  assert.deepEqual(calls, []);
+test("the text marker is a stable FNV-1a of the three lines, different for different text", () => {
+  const marker = templateTextMarker(GHETTO_GEEK_TEXT);
+  assert.equal(marker, `${TEMPLATE_TEXT_MARKER_PREFIX}${fnv1a("Ghetto Geek\nToshi\nF Minor · 100 BPM")}`);
+  assert.match(marker, /^toshi-text-[0-9a-f]{8}$/);
+  assert.equal(templateTextMarker({ ...GHETTO_GEEK_TEXT }), marker);
+  assert.notEqual(templateTextMarker({ ...GHETTO_GEEK_TEXT, Title: "Ghetto Geek 2" }), marker);
+  assert.equal(templateTextMarker({ Title: "", Artist: "", "Key BPM": "" }), `toshi-text-${fnv1a("\n\n")}`);
 });
 
 /* ------------------------------------------------------------------ *
@@ -236,6 +114,16 @@ test("a project that never mentions the staged files is caught; one that does pa
     missingTemplateFiles(Buffer.from("/Users/me/Toshi/toshi-cover.png /Users/me/Toshi/toshi-render-data.json")),
     ["toshi-audio.wav"],
   );
+});
+
+test("a project's text marker says whether it was built for this track", () => {
+  const marker = templateTextMarker(GHETTO_GEEK_TEXT);
+  const other = templateTextMarker({ ...GHETTO_GEEK_TEXT, Title: "Another Beat" });
+  assert.equal(templateTextStatus(Buffer.from(`RIFX....toshi-template-contract: 3; ${marker}....`), marker), "current");
+  assert.equal(templateTextStatus(utf16(`comment ${marker}`, true), marker), "current");
+  assert.equal(templateTextStatus(Buffer.from(`RIFX....${other}....`), marker), "stale");
+  assert.equal(templateTextStatus(utf16(`comment ${other}`, false), marker), "stale");
+  assert.equal(templateTextStatus(Buffer.from("RIFX....toshi-cover.png....toshi-audio.wav"), marker), "unmarked");
 });
 
 test("a missing composition name or waveform effect is a warning, never a refusal", () => {
@@ -285,6 +173,7 @@ class FakeEffect {
 
 class FakeLayer {
   inPoint = 0;
+  comment = "";
   outPoint: number | undefined;
   timeRemapEnabled = false;
   readonly properties = new Map<string, FakeProperty>();
@@ -335,8 +224,18 @@ const propertyOf = (layer: FakeLayer, name: string): FakeProperty => layer.prope
 const NATIVE_EFFECTS = new Set(["ADBE Ramp", "ADBE AudWave"]);
 
 const runBootstrap = (
-  options: { staged?: readonly string[]; existingComp?: string; folder?: string | null; effects?: ReadonlySet<string> } = {},
+  options: {
+    staged?: readonly string[];
+    existingComp?: string;
+    folder?: string | null;
+    effects?: ReadonlySet<string>;
+    /** toshi-render-data.json's contents; ghetto-geek's by default. */
+    data?: string;
+    /** ExtendScript without a JSON object, as in older After Effects. */
+    noJson?: boolean;
+  } = {},
 ) => {
+  const data = options.data ?? JSON.stringify(ghettoGeek, null, 2);
   const staged = new Set(options.staged ?? ["toshi-render-data.json", "toshi-cover.png", "toshi-audio.wav", "toshi-brand-logo.png"]);
   const effects = options.effects ?? NATIVE_EFFECTS;
   const alerts: string[] = [];
@@ -389,13 +288,30 @@ const runBootstrap = (
     File: class {
       readonly fsName: string;
       readonly exists: boolean;
+      encoding = "BINARY";
+      opened = false;
       constructor(fsName: string) {
         this.fsName = fsName;
         this.exists = staged.has(path.basename(fsName));
       }
+      open(mode: string) {
+        assert.equal(mode, "r");
+        this.opened = this.exists;
+        return this.opened;
+      }
+      read() {
+        assert.ok(this.opened, "read before open");
+        assert.equal(this.encoding, "UTF-8");
+        assert.equal(path.basename(this.fsName), "toshi-render-data.json");
+        return data;
+      }
+      close() {
+        this.opened = false;
+      }
     },
     Folder: { selectDialog: () => (options.folder === null ? null : { fsName: options.folder ?? "/Users/me/Toshi" }) },
     alert: (message: string) => alerts.push(message),
+    ...(options.noJson ? { JSON: undefined } : {}),
     app: {
       project: {
         get numItems() {
@@ -435,7 +351,6 @@ test("the bootstrap builds the composition, layers and staged footage the contra
   const { alerts, imports, comps, layer } = runBootstrap();
 
   assert.deepEqual(imports, [
-    "/Users/me/Toshi/toshi-render-data.json",
     "/Users/me/Toshi/toshi-cover.png",
     "/Users/me/Toshi/toshi-audio.wav",
     "/Users/me/Toshi/toshi-brand-logo.png",
@@ -447,7 +362,7 @@ test("the bootstrap builds the composition, layers and staged footage the contra
     ["Toshi Visualizer", 1920, 1080, 1, 30],
   );
   assert.ok(comp.duration >= 600, "long enough for any track");
-  assert.match(comp.comment, /toshi-template-contract: 2/);
+  assert.equal(comp.comment, `toshi-template-contract: 3; ${templateTextMarker(GHETTO_GEEK_TEXT)}`);
 
   // Top to bottom, as the Timeline shows it.
   assert.deepEqual(comp.stack.map((entry) => entry.name), [...TEMPLATE_LAYERS]);
@@ -462,18 +377,80 @@ test("the bootstrap builds the composition, layers and staged footage the contra
   assert.match(propertyOf(layer("Cover")!, "Scale").expression, /640 \/ Math\.max\(thisLayer\.source\.width, thisLayer\.source\.height\)/);
   assert.deepEqual(alerts.length, 1);
   assert.match(alerts[0], /Toshi template created/);
+  assert.match(alerts[0], /Text for this track: Ghetto Geek \/ Toshi \/ F Minor · 100 BPM \(toshi-text-[0-9a-f]{8}\)\.\nRebuild the template whenever you render a different track\./);
   assert.doesNotMatch(alerts[0], /Check by hand/);
 });
 
-test("the bootstrap's text layers use exactly the contract's expressions, in the Toshi colours", () => {
+/** What the bootstrap wrote into each text layer: the Source Text value, and any expression. */
+const writtenText = (layer: (name: string) => FakeLayer | undefined) =>
+  Object.fromEntries(
+    TEMPLATE_TEXT_LAYERS.map((name) => {
+      const sourceText = propertyOf(layer(name)!, "Source Text");
+      assert.equal(sourceText.expression, "", `${name} has no expression`);
+      return [name, (sourceText.value as { text: string }).text];
+    }),
+  );
+
+test("the bootstrap reads the staged JSON and writes the track's text into the text layers, in the Toshi colours", () => {
   const { layer } = runBootstrap();
-  for (const [name, expression] of Object.entries(TEMPLATE_EXPRESSIONS)) {
-    assert.equal(propertyOf(layer(name)!, "Source Text").expression, expression, name);
-  }
+  assert.deepEqual(writtenText(layer), GHETTO_GEEK_TEXT);
   const fill = (name: string) => hex((propertyOf(layer(name)!, "Source Text").value as { fillColor: number[] }).fillColor);
   assert.deepEqual([fill("Title"), fill("Artist"), fill("Key BPM")], ["#f4e8d0", "#b8860b", "#f4e8d0"]);
-  // Nothing track-specific is baked in: the only text is the layer name.
-  assert.equal(layer("Title")!.kind, "text");
+  assert.deepEqual(
+    TEMPLATE_TEXT_LAYERS.map((name) => (propertyOf(layer(name)!, "Source Text").value as { fontSize: number }).fontSize),
+    [40, 56, 96],
+  );
+  assert.equal(layer("Title")!.comment, templateTextMarker(GHETTO_GEEK_TEXT), "the marker the adapter checks");
+
+  // ExtendScript without JSON parses the same file the same way.
+  const legacy = runBootstrap({ noJson: true });
+  assert.deepEqual(writtenText(legacy.layer), GHETTO_GEEK_TEXT);
+});
+
+test("the bootstrap's text and marker follow the same rules as the contract, for any track", () => {
+  const tracks: Record<string, unknown>[] = [
+    { title: "Untitled Beat", bpm: 90 },
+    { key: "A Minor" },
+    {},
+    { title: "Café Ñoño — 東京 🎧", artist: "Ünïcode \"Quoted\"", key: "C# Major", bpm: "128" },
+    { title: "Line\nBreak", artist: "Toshi", key: "F Minor", bpm: 100.5, extra: { nested: [1, 2] } },
+  ];
+  for (const track of tracks) {
+    const { comps, layer, alerts } = runBootstrap({ data: JSON.stringify({ ...ghettoGeek, track }) });
+    assert.match(alerts[0], /Toshi template created/, JSON.stringify(track));
+    const expected = templateText(track);
+    assert.deepEqual(writtenText(layer), expected, JSON.stringify(track));
+    assert.equal(comps[0].comment, `toshi-template-contract: 3; ${templateTextMarker(expected)}`);
+    assert.equal(layer("Title")!.comment, templateTextMarker(expected));
+  }
+});
+
+test("no track's metadata is hard-coded in the template builder or the contract", () => {
+  for (const file of [BOOTSTRAP, path.join(PROJECT_ROOT, "adapters", "after-effects", "templateContract.mts")]) {
+    const source = readFileSync(file, "utf8");
+    for (const value of ["Ghetto Geek", "ghetto-geek", "F Minor", "100 BPM"]) {
+      assert.ok(!source.includes(value), `${path.basename(file)} mentions ${value}`);
+    }
+  }
+  // Another track's data builds another track's text.
+  const { layer } = runBootstrap({ data: JSON.stringify({ ...ghettoGeek, track: { title: "Night Drive", artist: "Someone Else", key: "D Major", bpm: 84 } }) });
+  assert.deepEqual(writtenText(layer), { Title: "Night Drive", Artist: "Someone Else", "Key BPM": "D Major · 84 BPM" });
+});
+
+test("staged data the builder cannot use stops it with a clear reason, before anything is built", () => {
+  const invalid = runBootstrap({ data: "{ not json" });
+  assert.deepEqual(invalid.comps, []);
+  assert.match(invalid.alerts[0], /^Toshi template was not created: .*toshi-render-data\.json is not valid JSON \(.+\)\. Render once with --engine after-effects/);
+
+  for (const data of [JSON.stringify({ schemaVersion: 1 }), "null", JSON.stringify({ track: "Ghetto" })]) {
+    const trackless = runBootstrap({ data });
+    assert.deepEqual(trackless.comps, [], data);
+    assert.match(trackless.alerts[0], /toshi-render-data\.json has no track\. Render once with --engine after-effects/, data);
+  }
+
+  const unstaged = runBootstrap({ staged: ["toshi-cover.png", "toshi-audio.wav", "toshi-brand-logo.png"] });
+  assert.deepEqual(unstaged.comps, []);
+  assert.match(unstaged.alerts[0], /toshi-render-data\.json is not in \/Users\/me\/Toshi\. Render once with --engine after-effects/);
 });
 
 test("the background is a native radial Gradient Ramp: warm amber-charcoal glow to Toshi off-black", () => {

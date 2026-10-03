@@ -24,6 +24,9 @@ import {
   missingTemplateFiles,
   renderedMediaProblems,
   STAGED_ASSET_NAMES,
+  templateText,
+  templateTextMarker,
+  templateTextStatus,
   templateWarnings,
 } from "./templateContract.mts";
 
@@ -43,10 +46,13 @@ export { STAGED_ASSET_NAMES };
  *             from the track's audio, copies the track's images and audio
  *             to fixed names beside the configured dataFile, and writes the
  *             template-data sidecar (core/domain/video/templateData.ts)
- *             there; the project imports all of them as footage. A
- *             project that never mentions the data, cover or audio file is
+ *             there. The project imports the images and audio as footage;
+ *             its text is written in from the sidecar when it is built. A
+ *             project that never mentions the cover or audio file, or
+ *             whose text marker belongs to another track, is
  *             RENDERER_NOT_CONFIGURED before aerender starts — it would
- *             render black and silent (templateContract.mts).
+ *             render black and silent, or with another track's title
+ *             (templateContract.mts).
  *  render()   runs aerender for exactly those frames into a sibling of the
  *             staging path, reports its PROGRESS lines, and moves the file
  *             into place once ffprobe sees video and audio in it. A
@@ -136,7 +142,6 @@ const stageAssets = async (
 
 const describeMissing = (missing: readonly string[]): string => {
   const parts = [
-    ...(missing.some((name) => name.endsWith(".json")) ? ["title, artist, key and BPM"] : []),
     ...(missing.some((name) => name.endsWith(".png")) ? ["cover"] : []),
     ...(missing.some((name) => name.endsWith(".wav")) ? ["audio"] : []),
   ];
@@ -185,10 +190,11 @@ export const createAfterEffectsRenderEngine = (
           const seconds = await deps.probeAudioDurationInSeconds(path.join(deps.publicDir, props.audioSrc));
           const durationInFrames = secondsToFrames(seconds, preset.fps);
 
-          // Expressions can read text from the sidecar but cannot swap a
-          // footage item's file, so this track's images and audio are copied
-          // to fixed names beside it; the template imports those files as
-          // footage and After Effects reloads them when aerender opens it.
+          // A template cannot swap a footage item's file per render, so this
+          // track's images and audio are copied to fixed names beside the
+          // sidecar; the template imports those files as footage and After
+          // Effects reloads them when aerender opens it. The sidecar is what
+          // create-toshi-template.jsx reads the track's text from.
           const staged = await stageAssets(props, path.dirname(config.dataFile), deps.publicDir);
           const data = buildTemplateData({
             props,
@@ -200,16 +206,13 @@ export const createAfterEffectsRenderEngine = (
 
           log(`After Effects: composition "${composition}", ${durationInFrames} frames @ ${preset.fps}fps.`);
           log(`After Effects: template data and assets staged in ${path.dirname(config.dataFile)}.`);
-          // What the template's text expressions should find. An expression
-          // cannot write to aerender's output, so a failure to read it shows
-          // only in the frame (templateTextExpression); this line is the
-          // other half of that comparison.
+          // The template's text is written in when it is built (templateText),
+          // so this is the text it must have been built with.
+          const text = templateText(data.track);
+          const marker = templateTextMarker(text);
           log(
-            `After Effects: ${path.basename(config.dataFile)} track: ` +
-              (["title", "artist", "key", "bpm"] as const)
-                .map((field) => `${field}=${JSON.stringify(data.track[field] ?? null)}`)
-                .join(" ") +
-              ".",
+            `After Effects: this track's text: Title "${text.Title}", Artist "${text.Artist}", ` +
+              `Key BPM "${text["Key BPM"]}" (${marker}).`,
           );
 
           // Checked after staging, so the files a template needs are already
@@ -228,7 +231,27 @@ export const createAfterEffectsRenderEngine = (
                 ),
               );
             }
-            log(`After Effects: template uses the staged data, cover and audio.`);
+            log(`After Effects: template uses the staged cover and audio.`);
+            const textStatus = templateTextStatus(projectBytes, marker);
+            if (textStatus === "stale") {
+              throw new TrackError(
+                trackIssue(
+                  "RENDERER_NOT_CONFIGURED",
+                  `The After Effects template ${path.basename(config.project)} was built with another track's title, artist and key: ` +
+                    `the text is written into the template when it is built, and it does not match this track (${marker}). ` +
+                    `This track's data is now staged in ${path.dirname(config.dataFile)}: in a new After Effects project, run ` +
+                    `adapters/after-effects/template/create-toshi-template.jsx (File > Scripts > Run Script File...), choose that folder, ` +
+                    `save the project over ${config.project}, and render again.`,
+                ),
+              );
+            }
+            if (textStatus === "current") log(`After Effects: template text matches this track.`);
+            else {
+              log(
+                `After Effects: warning: the project carries no Toshi text marker, so its title, artist and key may not be this track's; ` +
+                  `rebuild it with create-toshi-template.jsx to be sure.`,
+              );
+            }
             for (const warning of templateWarnings(projectBytes, composition)) {
               log(`After Effects: warning: ${warning}`);
             }

@@ -1,4 +1,4 @@
-// Toshi After Effects template: one-time bootstrap (template contract 2).
+// Toshi After Effects template: bootstrap (template contract 3).
 //
 // Builds the minimal Toshi template described in the README ("Rendering with
 // After Effects") and in adapters/after-effects/templateContract.mts:
@@ -8,23 +8,32 @@
 //     Brand Logo  toshi-brand-logo.png, bottom right
 //     Waveform    native Audio Waveform effect reading the Audio layer, lower right
 //     Accent      thin gold rule under the track details
-//     Key BPM     text from toshi-render-data.json ("F Minor · 100 BPM")
-//     Artist      text from toshi-render-data.json
-//     Title       text from toshi-render-data.json
+//     Key BPM     the track's key and BPM, joined with " · "
+//     Artist      the track's artist
+//     Title       the track's title
 //     Cover       toshi-cover.png, fitted into a 640px square, left
 //     Background  native Gradient Ramp: warm amber-charcoal glow to Toshi off-black
 //
 // Native effects only (Gradient Ramp, Audio Waveform): no plugins, nothing
-// aerender cannot render, and nothing per track. Every render reloads the
-// staged files, so the same template serves every track.
+// aerender cannot render. Every render reloads the staged images and audio,
+// so those always follow the track being rendered.
 //
-// How to use it:
-//   1. Stage the files once: npm run render-track -- <track> --engine after-effects
-//      (the files land beside the data file, by default in your .aep's folder).
+// The text does not: After Effects 2026 gives expressions null for the staged
+// JSON at render time, so this script reads toshi-render-data.json itself and
+// writes the title, artist, key and BPM into the layers. The template is
+// therefore built for the track that is staged when it runs, and must be
+// rebuilt for each new track. It records which track in a marker
+// ("toshi-text-..." in the composition and Title layer comments); the adapter
+// refuses to render a template whose marker belongs to another track.
+//
+// How to use it, for each track:
+//   1. Stage the track: npm run render-track -- <track> --engine after-effects
+//      (the files land beside the data file, by default in your .aep's folder;
+//      the render stops there if the template was built for another track).
 //   2. In After Effects, start a NEW project, then File > Scripts > Run Script File...
 //      and choose this file. Pick the folder holding toshi-render-data.json.
 //   3. Save the project as the "project" in after-effects.local.json (in that same
-//      folder) and render again.
+//      folder), replacing the old one, and render again.
 //
 // ExtendScript (ES3): var only, no arrow functions, no let/const.
 
@@ -42,63 +51,58 @@
   var VINTAGE_GOLD = [0.722, 0.525, 0.043]; // #b8860b
   var WARM_CREAM = [0.957, 0.91, 0.816]; // #f4e8d0
 
-  // Must stay identical to TEMPLATE_DATA_LOADER / templateTextExpression in
-  // templateContract.mts (a test compares them).
-  var LOADER = [
-    'var TOSHI_DATA = "' + DATA + '";',
-    'var toshiStep = "footage";',
-    'var toshiInfo = { foot: "-", sd: "-", txt: "-", track: "-" };',
-    "var toshiItem = null;",
-    "var toshiFootageError = null;",
-    "try { toshiItem = footage(TOSHI_DATA); } catch (err) { toshiFootageError = err; }",
-    "function toshiKind(v) {",
-    '  if (v === null) { return "null"; }',
-    '  if (v === undefined) { return "undef"; }',
-    '  if (typeof v === "string") { return "str" + v.length; }',
-    '  if (typeof v !== "object") { return typeof v; }',
-    '  if (Object.prototype.toString.call(v) === "[object Array]") { return "arr" + v.length; }',
-    "  var keys = [];",
-    "  try { for (var k in v) { if (keys.length < 3) { keys.push(String(k).substring(0, 10)); } } } catch (err) {}",
-    '  return (typeof v.length === "number" ? "list" + v.length : "obj") + "{" + keys.join(",") + "}";',
-    "}",
-    "function toshiTrack() {",
-    '  toshiStep = "footage";',
-    '  toshiInfo.foot = toshiFootageError ? "err" : toshiItem === null ? "null" : toshiItem === undefined ? "undef" : "ok";',
-    "  if (toshiFootageError) { throw toshiFootageError; }",
-    '  toshiStep = "sourceData";',
-    "  var data = null;",
-    '  try { data = toshiItem.sourceData; toshiInfo.sd = toshiKind(data); } catch (err) { data = null; toshiInfo.sd = "err"; }',
-    '  toshiStep = "unwrap";',
-    "  if (data && !data.track && data.length > 0) { data = data[0]; }",
-    "  if (!data || !data.track) {",
-    '    toshiStep = "sourceText";',
-    "    var text = toshiItem.sourceText;",
-    "    toshiInfo.txt = toshiKind(text);",
-    '    toshiStep = "parse";',
-    '    data = typeof JSON !== "undefined" ? JSON.parse(text) : eval("(" + text + ")");',
-    "  }",
-    '  toshiStep = "track";',
-    "  var track = data.track;",
-    '  toshiInfo.track = track ? "yes" : "no";',
-    '  if (!track) { throw new Error("data.track is " + toshiKind(track)); }',
-    '  toshiStep = "field";',
-    "  return track;",
-    "}",
-    "function toshiReport(err) {",
-    "  var message = err && err.message !== undefined ? String(err.message) : String(err);",
-    '  return "[data " + toshiStep + "] foot:" + toshiInfo.foot + " sd:" + toshiInfo.sd + " txt:" + toshiInfo.txt +',
-    '    " track:" + toshiInfo.track + "\\r" + message.substring(0, 80);',
-    "}"
-  ].join("\n");
+  // The same rules as templateText / templateTextMarker in templateContract.mts
+  // (a test compares them).
+  function templateText(track) {
+    var parts = [];
+    if (track.key) {
+      parts.push(String(track.key));
+    }
+    if (track.bpm) {
+      parts.push(String(track.bpm) + " BPM");
+    }
+    return {
+      Title: track.title ? String(track.title) : "",
+      Artist: track.artist ? String(track.artist) : "",
+      "Key BPM": parts.join(" \u00b7 ")
+    };
+  }
 
-  // A failure is reported in two short lines at this size (TEMPLATE_DIAGNOSTIC_FONT_SIZE).
-  var DIAGNOSTIC_FONT_SIZE = 20;
+  function templateTextMarker(text) {
+    var source = text.Title + "\n" + text.Artist + "\n" + text["Key BPM"];
+    var hash = 0x811c9dc5;
+    for (var i = 0; i < source.length; i++) {
+      hash ^= source.charCodeAt(i);
+      hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+      hash = hash >>> 0;
+    }
+    var hex = hash.toString(16);
+    while (hex.length < 8) {
+      hex = "0" + hex;
+    }
+    return "toshi-text-" + hex;
+  }
 
-  function textExpression(body) {
-    return (
-      LOADER + "\ntry {\n  " + body + "\n} catch (err) {\n  var toshiMessage = toshiReport(err);\n" +
-      "  try { text.sourceText.style.setFontSize(" + DIAGNOSTIC_FONT_SIZE + ").setText(toshiMessage); } catch (styleErr) { toshiMessage; }\n}"
-    );
+  // The staged data, as the adapter wrote it. ExtendScript may have no JSON
+  // object; the file is the adapter's own output, so eval is the fallback.
+  function readTrack(folder) {
+    var file = stagedFile(folder, DATA);
+    file.encoding = "UTF-8";
+    if (!file.open("r")) {
+      throw new Error("Could not open " + file.fsName + ".");
+    }
+    var source = file.read();
+    file.close();
+    var data;
+    try {
+      data = typeof JSON !== "undefined" && JSON.parse ? JSON.parse(source) : eval("(" + source + ")");
+    } catch (parseError) {
+      throw new Error(DATA + " is not valid JSON (" + parseError.message + "). Render once with --engine after-effects to stage it again.");
+    }
+    if (!data || typeof data !== "object" || !data.track || typeof data.track !== "object") {
+      throw new Error(DATA + " has no track. Render once with --engine after-effects to stage it again.");
+    }
+    return data.track;
   }
 
   var warnings = [];
@@ -152,18 +156,18 @@
     warnings.push("Could not set " + names[0] + " on " + effect.name + ".");
   }
 
-  function addText(comp, name, size, color, position, expression) {
-    var layer = comp.layers.addText(name);
+  function addText(comp, name, size, color, position, value) {
+    var layer = comp.layers.addText(value);
     layer.name = name;
     var sourceText = layer.property("Source Text");
     var doc = sourceText.value;
+    doc.text = value;
     doc.fontSize = size;
     doc.applyFill = true;
     doc.fillColor = color;
     doc.applyStroke = false;
     doc.justification = ParagraphJustification.LEFT_JUSTIFY;
     sourceText.setValue(doc);
-    sourceText.expression = expression;
     layer.property("Position").setValue(position);
     return layer;
   }
@@ -192,13 +196,14 @@
 
   app.beginUndoGroup("Create Toshi template");
   try {
-    var data = importStaged(folder, DATA);
+    var text = templateText(readTrack(folder));
+    var marker = templateTextMarker(text);
     var cover = importStaged(folder, "toshi-cover.png");
     var audio = importStaged(folder, "toshi-audio.wav");
     var logo = importStaged(folder, "toshi-brand-logo.png");
 
     var comp = app.project.items.addComp(COMP_NAME, WIDTH, HEIGHT, 1, DURATION, FPS);
-    comp.comment = "toshi-template-contract: 2; data: " + data.name;
+    comp.comment = "toshi-template-contract: 3; " + marker;
 
     // Bottom to top: each add() goes on top of the previous one.
 
@@ -217,18 +222,10 @@
     fitInto(coverLayer, 640);
     coverLayer.outPoint = DURATION;
 
-    addText(comp, "Title", 96, WARM_CREAM, [960, 470], textExpression('var t = toshiTrack(); t.title ? String(t.title) : "";'));
-    addText(comp, "Artist", 56, VINTAGE_GOLD, [960, 560], textExpression('var t = toshiTrack(); t.artist ? String(t.artist) : "";'));
-    var keyBpm = addText(
-      comp,
-      "Key BPM",
-      40,
-      WARM_CREAM,
-      [960, 640],
-      textExpression(
-        'var t = toshiTrack(); var parts = []; if (t.key) { parts.push(String(t.key)); } if (t.bpm) { parts.push(t.bpm + " BPM"); } parts.join(" \\u00b7 ");'
-      )
-    );
+    var title = addText(comp, "Title", 96, WARM_CREAM, [960, 470], text.Title);
+    title.comment = marker;
+    addText(comp, "Artist", 56, VINTAGE_GOLD, [960, 560], text.Artist);
+    var keyBpm = addText(comp, "Key BPM", 40, WARM_CREAM, [960, 640], text["Key BPM"]);
     keyBpm.property("Opacity").setValue(80);
 
     var accent = comp.layers.addSolid(VINTAGE_GOLD, "Accent", 160, 4, 1, DURATION);
@@ -271,6 +268,8 @@
     comp.openInViewer();
     alert(
       'Toshi template created: composition "' + COMP_NAME + '".\n\n' +
+        "Text for this track: " + text.Title + " / " + text.Artist + " / " + text["Key BPM"] + " (" + marker + ").\n" +
+        "Rebuild the template whenever you render a different track.\n\n" +
         (warnings.length > 0 ? "Check by hand:\n- " + warnings.join("\n- ") + "\n\n" : "") +
         "Save the project in " + folder.fsName + ", set its path as \"project\" and \"" + COMP_NAME +
         "\" as \"composition\" in after-effects.local.json, then render again."

@@ -7,7 +7,6 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import vm from "node:vm";
 import { buildAerenderArgs, parseAerenderProgressFrame } from "../adapters/after-effects/aerenderCommand.mts";
 import {
   describeAerenderNotFound,
@@ -20,7 +19,11 @@ import {
   createAfterEffectsRenderEngine,
   probeStreamTypesWithFfprobe,
 } from "../adapters/after-effects/afterEffectsRenderEngine.mts";
-import { REQUIRED_TEMPLATE_FILES, TEMPLATE_EXPRESSIONS } from "../adapters/after-effects/templateContract.mts";
+import {
+  REQUIRED_TEMPLATE_FILES,
+  templateText,
+  templateTextMarker,
+} from "../adapters/after-effects/templateContract.mts";
 import { renderEngines } from "../adapters/renderEngines.mts";
 import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
 import { TrackError } from "../core/domain/tracks/errors.ts";
@@ -530,7 +533,7 @@ test("a project that does not use the staged files stops before aerender runs, w
     renderTrackVideo({ engine: ctx.engine, slug: ctx.f.slug, props: ctx.props, presetId: "youtube-16x9" }),
     trackErrorCode(
       "RENDERER_NOT_CONFIGURED",
-      /does not use toshi-render-data\.json, toshi-cover\.png, toshi-audio\.wav, so it would render without the track's title, artist, key and BPM; cover; or audio\. The files are staged in .*create-toshi-template\.jsx/,
+      /does not use toshi-cover\.png, toshi-audio\.wav, so it would render without the track's cover; or audio\. The files are staged in .*create-toshi-template\.jsx/,
     ),
   );
   await assert.rejects(readFile(ctx.argsFile), "aerender never ran");
@@ -572,23 +575,68 @@ test("a rendered video with picture and sound is published (real ffprobe)", asyn
 });
 
 /* ------------------------------------------------------------------ *
- * The sidecar the engine writes, read the way the template reads it
+ * The track's text, written into the template when it is built
  * ------------------------------------------------------------------ */
 
-test("the text expressions render the track from the very sidecar the engine wrote", async (t) => {
+/** The fixture track's text marker, as create-toshi-template.jsx records it. */
+const FIXTURE_MARKER = templateTextMarker(templateText({ title: "Fixture", artist: "Toshi", key: "F Minor", bpm: 100 }));
+
+test("the staged sidecar holds the track text the template builder writes in", async (t) => {
   const ctx = await setup(t);
   if (!ctx) return;
-  await renderTrackVideo({ engine: ctx.engine, slug: ctx.f.slug, props: ctx.props, presetId: "youtube-16x9" });
+  await renderTrackVideo({
+    engine: ctx.engine,
+    slug: ctx.f.slug,
+    props: ctx.props,
+    presetId: "youtube-16x9",
+    onEngineLog: (message) => ctx.logs.push(message),
+  });
 
-  const written = await readFile(ctx.tpl.dataFile, "utf8");
-  const text = (expression: string, footageItem: Record<string, unknown>) =>
-    vm.runInNewContext(expression, { footage: () => footageItem });
-  for (const footageItem of [{ sourceData: JSON.parse(written) }, { sourceData: [JSON.parse(written)] }, { sourceText: written }]) {
-    assert.deepEqual(
-      Object.fromEntries(Object.entries(TEMPLATE_EXPRESSIONS).map(([layer, expression]) => [layer, text(expression, footageItem)])),
-      { Title: "Fixture", Artist: "Toshi", "Key BPM": "F Minor · 100 BPM" },
-    );
-  }
+  const written = JSON.parse(await readFile(ctx.tpl.dataFile, "utf8"));
+  assert.deepEqual(templateText(written.track), { Title: "Fixture", Artist: "Toshi", "Key BPM": "F Minor · 100 BPM" });
+  assert.ok(
+    ctx.logs.includes(
+      `After Effects: this track's text: Title "Fixture", Artist "Toshi", Key BPM "F Minor · 100 BPM" (${FIXTURE_MARKER}).`,
+    ),
+    ctx.logs.join("\n"),
+  );
+});
+
+test("a template built for another track stops before aerender runs, with this track staged to rebuild it", async (t) => {
+  const ctx = await setup(t, {}, { references: [...REQUIRED_TEMPLATE_FILES, "toshi-text-0badc0de"] });
+  if (!ctx) return;
+  await assert.rejects(
+    renderTrackVideo({ engine: ctx.engine, slug: ctx.f.slug, props: ctx.props, presetId: "youtube-16x9" }),
+    trackErrorCode(
+      "RENDERER_NOT_CONFIGURED",
+      new RegExp(
+        `was built with another track's title, artist and key: .*does not match this track \\(${FIXTURE_MARKER}\\)\\. ` +
+          `This track's data is now staged in .*create-toshi-template\\.jsx`,
+      ),
+    ),
+  );
+  await assert.rejects(readFile(ctx.argsFile), "aerender never ran");
+  assert.equal(JSON.parse(await readFile(ctx.tpl.dataFile, "utf8")).track.title, "Fixture", "staged for the rebuild");
+  assert.deepEqual(libraryFor(ctx.f.slug), []);
+
+  // templateCheck: false is the way out for a template whose text comes from elsewhere.
+  const unchecked = await setup(t, { templateCheck: false }, { references: [...REQUIRED_TEMPLATE_FILES, "toshi-text-0badc0de"] });
+  if (!unchecked) return;
+  await renderTrackVideo({ engine: unchecked.engine, slug: unchecked.f.slug, props: unchecked.props, presetId: "youtube-16x9" });
+});
+
+test("a template built for this track renders and says so", async (t) => {
+  const ctx = await setup(t, {}, { references: [...REQUIRED_TEMPLATE_FILES, FIXTURE_MARKER] });
+  if (!ctx) return;
+  await renderTrackVideo({
+    engine: ctx.engine,
+    slug: ctx.f.slug,
+    props: ctx.props,
+    presetId: "youtube-16x9",
+    onEngineLog: (message) => ctx.logs.push(message),
+  });
+  assert.ok(ctx.logs.includes("After Effects: template text matches this track."), ctx.logs.join("\n"));
+  assert.ok(!ctx.logs.some((message) => message.includes("Toshi text marker")));
 });
 
 test("a template without the composition name or a waveform effect renders, with warnings in the log", async (t) => {
@@ -601,20 +649,14 @@ test("a template without the composition name or a waveform effect renders, with
     presetId: "square-1x1",
     onEngineLog: (message) => ctx.logs.push(message),
   });
-  // What the template should read, for comparison with any diagnostic in the frame.
-  assert.ok(
-    ctx.logs.some((message) =>
-      /^After Effects: [\w.-]+\.json track: title="Fixture" artist="Toshi" key="F Minor" bpm=100\.$/.test(message),
-    ),
-    ctx.logs.join("\n"),
-  );
   const warnings = ctx.logs.filter((message) => message.includes("warning:"));
-  assert.equal(warnings.length, 2);
-  assert.match(warnings[0], /composition "Toshi Visualizer" was not found in the project file/);
-  assert.match(warnings[1], /no Audio Waveform effect/);
+  assert.equal(warnings.length, 3);
+  assert.match(warnings[0], /carries no Toshi text marker, so its title, artist and key may not be this track's/);
+  assert.match(warnings[1], /composition "Toshi Visualizer" was not found in the project file/);
+  assert.match(warnings[2], /no Audio Waveform effect/);
 
-  // A project mentioning both draws no warnings.
-  const quiet = await setup(t, {}, { references: [...REQUIRED_TEMPLATE_FILES, "Toshi Visualizer", "ADBE AudWave"] });
+  // A project with all three draws no warnings.
+  const quiet = await setup(t, {}, { references: [...REQUIRED_TEMPLATE_FILES, FIXTURE_MARKER, "Toshi Visualizer", "ADBE AudWave"] });
   if (!quiet) return;
   await renderTrackVideo({
     engine: quiet.engine,
