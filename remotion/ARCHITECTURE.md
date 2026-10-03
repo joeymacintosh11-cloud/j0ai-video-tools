@@ -215,8 +215,11 @@ next to the data file (by default the project's folder):
 The first three are required. Text layers read the sidecar with expressions
 (`TEMPLATE_EXPRESSIONS`): a shared loader (`TEMPLATE_DATA_LOADER`) accepts the
 JSON as `sourceData` (an object or an array wrapping it) or as `sourceText`. A
-missing optional field renders as nothing, and unreadable data shows
-`[toshi-render-data.json: <reason>]` rather than a silent placeholder. Images and audio
+missing optional field renders as nothing. Unreadable data shows, for now, a
+short two-line diagnostic (the failing access step, what `footage()`,
+`sourceData` and `sourceText` returned, and the error) rather than a silent
+placeholder; it is temporary, until the real After Effects data shape is
+known. Images and audio
 are the staged files themselves, because an expression cannot change which
 file a footage item uses. After Effects reloads them every time `aerender`
 opens the project. The audio layer is time-remapped (`time - thisLayer.inPoint`)

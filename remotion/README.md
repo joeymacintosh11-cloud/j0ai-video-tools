@@ -249,20 +249,54 @@ then reads one field. This is the `Title` expression in full:
 
 ```js
 var TOSHI_DATA = "toshi-render-data.json";
+var toshiStep = "footage";
+var toshiInfo = { foot: "-", sd: "-", txt: "-", track: "-" };
+var toshiItem = null;
+var toshiFootageError = null;
+try { toshiItem = footage(TOSHI_DATA); } catch (err) { toshiFootageError = err; }
+function toshiKind(v) {
+  if (v === null) { return "null"; }
+  if (v === undefined) { return "undef"; }
+  if (typeof v === "string") { return "str" + v.length; }
+  if (typeof v !== "object") { return typeof v; }
+  if (Object.prototype.toString.call(v) === "[object Array]") { return "arr" + v.length; }
+  var keys = [];
+  try { for (var k in v) { if (keys.length < 3) { keys.push(String(k).substring(0, 10)); } } } catch (err) {}
+  return (typeof v.length === "number" ? "list" + v.length : "obj") + "{" + keys.join(",") + "}";
+}
 function toshiTrack() {
+  toshiStep = "footage";
+  toshiInfo.foot = toshiFootageError ? "err" : toshiItem === null ? "null" : toshiItem === undefined ? "undef" : "ok";
+  if (toshiFootageError) { throw toshiFootageError; }
+  toshiStep = "sourceData";
   var data = null;
-  try { data = footage(TOSHI_DATA).sourceData; } catch (err) { data = null; }
+  try { data = toshiItem.sourceData; toshiInfo.sd = toshiKind(data); } catch (err) { data = null; toshiInfo.sd = "err"; }
+  toshiStep = "unwrap";
   if (data && !data.track && data.length > 0) { data = data[0]; }
   if (!data || !data.track) {
-    var text = footage(TOSHI_DATA).sourceText;
+    toshiStep = "sourceText";
+    var text = toshiItem.sourceText;
+    toshiInfo.txt = toshiKind(text);
+    toshiStep = "parse";
     data = typeof JSON !== "undefined" ? JSON.parse(text) : eval("(" + text + ")");
   }
-  return data.track;
+  toshiStep = "track";
+  var track = data.track;
+  toshiInfo.track = track ? "yes" : "no";
+  if (!track) { throw new Error("data.track is " + toshiKind(track)); }
+  toshiStep = "field";
+  return track;
+}
+function toshiReport(err) {
+  var message = err && err.message !== undefined ? String(err.message) : String(err);
+  return "[data " + toshiStep + "] foot:" + toshiInfo.foot + " sd:" + toshiInfo.sd + " txt:" + toshiInfo.txt +
+    " track:" + toshiInfo.track + "\r" + message.substring(0, 80);
 }
 try {
   var t = toshiTrack(); t.title ? String(t.title) : "";
 } catch (err) {
-  "[" + TOSHI_DATA + ": " + err.message + "]";
+  var toshiMessage = toshiReport(err);
+  try { text.sourceText.style.setFontSize(20).setText(toshiMessage); } catch (styleErr) { toshiMessage; }
 }
 ```
 
@@ -270,11 +304,34 @@ try {
 `Key BPM` uses `var t = toshiTrack(); var parts = []; if (t.key) { parts.push(String(t.key)); } if (t.bpm) { parts.push(t.bpm + " BPM"); } parts.join(" \u00b7 ");`.
 The loader accepts the data however After Effects delivers it: as an object, as
 an array wrapping it, or only as text, on both the JavaScript and the legacy
-expression engines. A field that is missing renders as nothing. If the data
-can't be read at all, the layer shows `[toshi-render-data.json: <reason>]`
-instead of a silent placeholder. The definitive copies are `TEMPLATE_EXPRESSIONS`
-in `adapters/after-effects/templateContract.mts`, and a test keeps the script
-identical to them.
+expression engines. A field that is missing renders as nothing. The definitive
+copies are `TEMPLATE_EXPRESSIONS` in `adapters/after-effects/templateContract.mts`,
+and a test keeps the script identical to them.
+
+**If the text can't be read (temporary diagnostics).** Instead of a placeholder,
+each text layer shows two short lines, drawn at 20 px on the JavaScript
+expression engine so they fit in the frame:
+
+```
+[data <step>] foot:<ok|null|undef|err> sd:<kind> txt:<kind> track:<yes|no|->
+<the error message, at most 80 characters>
+```
+
+| Part | Meaning |
+| --- | --- |
+| `<step>` | The access that failed: `footage` (calling `footage("toshi-render-data.json")`), `sourceData`, `unwrap`, `sourceText`, `parse` (`JSON.parse` of the text), `track` (reading `.track`), or `field` (reading the title, artist, key or BPM) |
+| `foot` | What `footage(...)` returned: `ok`, `null`, `undef`, or `err` (it threw) |
+| `sd` | What `.sourceData` returned: `null`, `undef`, `err` (it threw), `arrN` (an array of N), `listN{keys}` (array-like), `obj{keys}` (an object; first three keys) |
+| `txt` | What `.sourceText` returned: `null`, `undef`, `strN` (N characters), or `-` (not needed) |
+| `track` | Whether the data has a `track`; `-` means it was never reached |
+
+For example, `[data track] foot:ok sd:null txt:null track:-` followed by
+`Cannot read properties of null (reading 'track')` means After Effects found the
+footage item but gave neither data nor text for it. The render log prints what
+the file holds (`After Effects: toshi-render-data.json track: title="Ghetto Geek" ...`)
+for comparison; an expression cannot write to aerender's output itself. On the
+legacy engine the same text appears at the layer's normal size and may be cut
+off.
 
 **The waveform.** The native **Audio Waveform** effect draws from the `Audio`
 layer's sound at render time, so it always follows the staged
