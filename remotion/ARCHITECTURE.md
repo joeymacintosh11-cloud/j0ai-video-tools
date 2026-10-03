@@ -143,6 +143,48 @@ POST /api/render-batches     ─┘      (render manager, journal, worker)     (
   (`render-missing`, `content-package`, `content-package-batch`) therefore
   refuse other engines rather than re-render into the wrong folder.
 
+### A track's preferred engine
+
+A track may also *prefer* a renderer: `metadata.json` `"renderer"`
+(`TrackMetadata.renderer`), set from the engine picker in Track info and
+validated against `RENDERER_IDS` like any other metadata field. Absent is the
+default (`resolveTrackRenderer()`), so no existing track changes or is
+migrated.
+
+```
+GET /api/renderers  ─> registry.status()  ─> per id: ready | unavailable | not_configured, + reason
+                         probe       (installed?)   — also feeds assertAvailable(), unchanged
+                         configured  (usable config?) — status() only; AE: readAfterEffectsConfig()
+```
+
+- **Who applies it.** The UI only: its Render panel names the track's engine in
+  `POST .../render` and in batch targets (`ui/api/engineRequest.ts`), and
+  disables itself with the reason when `GET /api/renderers` says that engine
+  is unavailable or not configured. The server never infers an engine from a
+  track, so the CLI and API callers that name none still get Remotion.
+- **What it changes in the view.** `TrackSummaryView.exportsRenderer` is the
+  resolved preference, and `exports[]` is `trackExportCoverage(slug, metadata,
+  exportsRenderer)`: that engine's own folder, so a Remotion export never
+  satisfies an After Effects track, or the other way round. For another
+  renderer the `visualizer` input is not re-checked, because its template hash
+  is only computable by the engine and `services/` must not reach into
+  `adapters/`. Metadata, cover, audio, format and the file's identity still
+  are.
+- **Remotion-only pipelines leave such a track out.** Calling
+  `trackExportCoverage` without a renderer still means Remotion, so every other
+  caller is unchanged. Where those pipelines meet a track that prefers another
+  renderer, they use one shared message (`remotionOnlyProblem()`) and code
+  (`RENDERER_NOT_SUPPORTED`):
+  - export missing and delivery planning list the track as invalid;
+  - `deliverExport` refuses (`renderer_not_supported`), which covers the
+    Deliver panel, fix plans, content packages and auto-delivery;
+  - `releaseBundleStateFor` reports a problem, so nothing is planned or
+    written;
+  - `deriveContentPackage` blocks every selected platform;
+  - a destination fix plan turns repairs into manual review;
+  - auto-delivery after any non-Remotion render reports the export as not
+    delivered. Before this change it copied the Remotion file.
+
 ## Adding a renderer (e.g. Premiere Pro, After Effects)
 
 1. Create `adapters/<name>/` and implement `RenderEngine` from
@@ -162,7 +204,10 @@ POST /api/render-batches     ─┘      (render manager, journal, worker)     (
    `RenderPreset.layout`, brand assets from `BRAND_ASSET_PATHS`, frame math
    from `secondsToFrames`.
 3. Register it under its renderer id in `adapters/renderEngines.mts`: a lazy
-   loader, plus a `probe` if it depends on installed software. From then on
+   loader, plus a `probe` if it depends on installed software, and a
+   `configured` check if it needs local configuration (shown by
+   `GET /api/renderers` and the engine picker; never part of
+   `assertAvailable`). From then on
    `--engine <id>`, the API's `engine` field and the render worker all reach
    it, and its exports land in their own folder. Nothing in `services/`,
    `server/` or `scripts/` changes. A renderer id outside `RENDERER_IDS` also

@@ -137,6 +137,41 @@ is refused as "not available", and anything else is an unknown engine.
 export records the engine that made it; see
 [ARCHITECTURE.md](ARCHITECTURE.md#choosing-the-engine-per-job).
 
+### Choosing a track's render engine in the app
+
+**Track info** has a **Render engine** picker beside the intended formats:
+Remotion or After Effects. (Premiere is reserved but not built, so it isn't
+offered.) The choice is saved in the track's `metadata.json` as
+`"renderer": "after-effects"`. Choosing Remotion stores nothing, so a track
+that never chose has no `renderer` key and behaves exactly as before.
+
+Availability comes from the server (`GET /api/renderers`), live:
+
+- an engine that can't run on this machine (After Effects not installed) is
+  shown dimmed and can't be picked; its tooltip says why;
+- After Effects installed but not configured (no valid
+  `after-effects.local.json`) can be picked, and the hint says exactly what is
+  missing. Renders stay unavailable until it's fixed.
+
+The **Render** panel (under *Advanced*) renders with the track's saved engine
+and names it on the button ("Render YouTube 16:9 · After Effects"). If that
+engine can't run here, the button is disabled with the reason. It never
+falls back to Remotion. Batches started there and **Show <format>** use the
+same engine.
+
+A track's export marks judge **its** engine's exports. After Effects' live in
+`out/<slug>/after-effects/`, so a Remotion export never counts for a track
+that chose After Effects, or the other way round. Export missing, delivery,
+release bundles, content packages and destination fix plans handle Remotion
+exports only. For a track that chose After Effects they leave it out with
+that reason, rather than rendering, copying or describing a Remotion video in
+its place. Auto-delivery after an After Effects render reports the export as
+not delivered, for the same reason.
+
+The preference is a default for the app only. On the command line and the API
+an engine is still named explicitly: `render-track` without `--engine` and
+`POST .../render` without `"engine"` render with Remotion, as they always did.
+
 ### Rendering with After Effects (proof of concept)
 
 `--engine after-effects` renders a track through your own After Effects
@@ -1168,17 +1203,18 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/health` | Liveness check |
+| GET | `/api/renderers` | Each render engine and whether it can run here: `ready`, `unavailable` or `not_configured`, with the reason |
 | GET | `/api/tracks` | List all tracks with asset/validation status |
 | POST | `/api/tracks` | Create a track from `{"title":"..."}` |
 | GET | `/api/tracks/:slug` | Full detail: metadata, assets, validation, render |
-| PATCH | `/api/tracks/:slug/metadata` | Update title/artist/key/bpm/subtitle/exportPresets/deliveryFolder |
+| PATCH | `/api/tracks/:slug/metadata` | Update title/artist/key/bpm/subtitle/exportPresets/renderer/deliveryFolder (`renderer: null` clears the engine preference) |
 | PUT | `/api/tracks/:slug/cover` | Upload `cover.png` (raw PNG body) |
 | PUT | `/api/tracks/:slug/beat` | Upload `beat.wav` (raw WAV body) |
 | POST | `/api/tracks/:slug/validate` | Structured validation result |
 | POST | `/api/tracks/:slug/prepare` | Validate + refresh `analysis.wav` |
 | GET | `/api/tracks/:slug/preview` | Composition config + `inputProps` + duration |
 | POST | `/api/tracks/:slug/render` | Start a render, returns a job id immediately; optional `{"preset":"...","engine":"remotion"}` |
-| POST | `/api/tracks/:slug/reveal` | Show the selected format in Finder (macOS) |
+| POST | `/api/tracks/:slug/reveal` | Show the selected format in Finder (macOS); optional `"engine"` picks whose export |
 | GET | `/api/renders` | All render jobs, newest first |
 | GET | `/api/renders/:jobId` | Job status and progress |
 | GET | `/api/renders/:jobId/events` | Live progress (Server-Sent Events) |
