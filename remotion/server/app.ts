@@ -19,6 +19,7 @@ import {
   handleReconcileDeliveryHistory,
 } from "./routes/deliveryHistory.ts";
 import { handleExportMissing } from "./routes/exportMissing.ts";
+import { handleListRenderers } from "./routes/renderers.ts";
 import { handleGetRenderHistory } from "./routes/renderHistory.ts";
 import {
   handleAdoptExistingExports,
@@ -95,6 +96,15 @@ const route = async (
     }
     const health: HealthView = { ok: true, service: "toshi-visualizer" };
     sendOk(response, health);
+    return;
+  }
+
+  if (collection === "renderers" && segments.length === 2) {
+    if (method !== "GET") {
+      sendNotFound(response, "Endpoint");
+      return;
+    }
+    handleListRenderers(response);
     return;
   }
 

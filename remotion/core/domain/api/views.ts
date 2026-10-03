@@ -1,4 +1,4 @@
-import type { RendererId } from "../video/renderers.ts";
+import type { RendererId, RendererStatus } from "../video/renderers.ts";
 import type {
   ExportFreshness,
   ExportMode,
@@ -104,6 +104,19 @@ export type ApiResponse<TData> = ApiSuccess<TData> | ApiFailure;
 export type HealthView = {
   readonly ok: boolean;
   readonly service: string;
+};
+
+/**
+ * GET /api/renderers
+ *
+ * Every renderer id with whether it can render on this machine right now.
+ * Reserved ids with no adapter (premiere) are listed as not implemented, so a
+ * client can leave them out rather than offer something that cannot work.
+ */
+export type RenderersView = {
+  /** What a render with no engine named uses. */
+  readonly defaultRenderer: RendererId;
+  readonly renderers: readonly RendererStatus[];
 };
 
 /** One row in GET /api/tracks. */

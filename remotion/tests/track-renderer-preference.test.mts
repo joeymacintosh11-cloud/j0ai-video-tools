@@ -2,8 +2,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
 import { handleRequest } from "../server/app.ts";
+import { TrackError } from "../core/domain/tracks/errors.ts";
+import type { RenderEngine } from "../core/ports/renderEngine.ts";
+import { createRenderEngineRegistry } from "../core/ports/renderEngineRegistry.ts";
 import {
   coerceMetadataDraft,
   serializeTrackMetadata,
@@ -155,4 +161,132 @@ test("an older track's view reports no preference and judges Remotion exports, e
   for (const output of view.exports) {
     assert.match(output.outputLabel, new RegExp(`^out/${f.slug}/[a-z0-9-]+\\.mp4$`));
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Availability: registry status and GET /api/renderers
+ * ------------------------------------------------------------------ */
+
+const stubEngine = (id: RenderEngine["id"]): RenderEngine => ({
+  id,
+  open: async () => {
+    throw new Error("not used");
+  },
+});
+
+const withEnv = (t: TestContext, values: Record<string, string | undefined>) => {
+  const before = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  t.after(() => {
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+};
+
+test("registry status separates ready, not installed, not configured and not implemented — loading nothing", () => {
+  let loads = 0;
+  let installed = true;
+  let configProblem: string | null = "after-effects.local.json is missing.";
+  const registry = createRenderEngineRegistry({
+    remotion: async () => {
+      loads += 1;
+      return stubEngine("remotion");
+    },
+    "after-effects": {
+      load: async () => {
+        loads += 1;
+        return stubEngine("after-effects");
+      },
+      probe: () => (installed ? null : "aerender was not found."),
+      configured: () => configProblem,
+    },
+  });
+
+  const byId = () => Object.fromEntries(registry.status().map((entry) => [entry.id, entry]));
+
+  assert.deepEqual(registry.status().map((entry) => entry.id), ["remotion", "premiere", "after-effects"]);
+  assert.deepEqual(byId().remotion, { id: "remotion", implemented: true, state: "ready", problem: null });
+  assert.equal(byId().premiere.implemented, false);
+  assert.equal(byId().premiere.state, "unavailable");
+  assert.deepEqual(byId()["after-effects"], {
+    id: "after-effects",
+    implemented: true,
+    state: "not_configured",
+    problem: "after-effects.local.json is missing.",
+  });
+
+  // A configuration problem never changes what a caller naming the engine
+  // gets: it is still "available", and the problem surfaces when it opens.
+  assert.equal(registry.assertAvailable("after-effects"), "after-effects");
+
+  configProblem = null;
+  assert.equal(byId()["after-effects"].state, "ready");
+
+  // Not installed outranks not configured: there is nothing to configure yet.
+  installed = false;
+  configProblem = "after-effects.local.json is missing.";
+  assert.deepEqual(byId()["after-effects"], {
+    id: "after-effects",
+    implemented: true,
+    state: "unavailable",
+    problem: "aerender was not found.",
+  });
+  assert.throws(
+    () => registry.assertAvailable("after-effects"),
+    (error: unknown) => error instanceof TrackError && error.code === "RENDERER_UNAVAILABLE",
+  );
+
+  assert.equal(loads, 0);
+});
+
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const FAKE_AERENDER = path.join(PROJECT_ROOT, "tests", "fake-aerender.mjs");
+
+const renderers = async (base: string) => {
+  const response = await fetch(`${base}/api/renderers`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()).data;
+  return { body, byId: Object.fromEntries(body.renderers.map((entry: { id: string }) => [entry.id, entry])) };
+};
+
+test("GET /api/renderers reports this machine's engines, live, with After Effects' exact problem", async (t) => {
+  const base = await api(t);
+  const dir = await fs.mkdtemp(path.join(tmpdir(), "toshi-renderers-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const config = path.join(dir, "after-effects.local.json");
+
+  // Not installed.
+  withEnv(t, { TOSHI_AERENDER_PATH: "/nonexistent/toshi-test/aerender", TOSHI_AE_CONFIG: config });
+  const first = await renderers(base);
+  let { byId } = first;
+  assert.equal(first.body.defaultRenderer, "remotion");
+  assert.equal(byId.remotion.state, "ready");
+  assert.equal(byId.premiere.implemented, false);
+  assert.equal(byId["after-effects"].state, "unavailable");
+  assert.match(byId["after-effects"].problem, /TOSHI_AERENDER_PATH points to/);
+
+  // Installed, but no configuration file yet.
+  process.env.TOSHI_AERENDER_PATH = FAKE_AERENDER;
+  ({ byId } = await renderers(base));
+  assert.equal(byId["after-effects"].state, "not_configured");
+  assert.match(byId["after-effects"].problem, /needs a template/);
+
+  // Installed and configured: picked up without a restart.
+  const project = path.join(dir, "Toshi.aep");
+  await fs.writeFile(project, "not really an aep");
+  await fs.writeFile(config, JSON.stringify({ project, composition: "Toshi Visualizer" }));
+  ({ byId } = await renderers(base));
+  assert.deepEqual(byId["after-effects"], {
+    id: "after-effects",
+    implemented: true,
+    state: "ready",
+    problem: null,
+  });
+
+  assert.equal((await fetch(`${base}/api/renderers`, { method: "POST" })).status, 404);
 });

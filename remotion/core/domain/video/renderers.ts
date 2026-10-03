@@ -20,6 +20,27 @@ export type RendererId = (typeof RENDERER_IDS)[number];
  */
 export const DEFAULT_RENDERER_ID: RendererId = "remotion";
 
+/**
+ * Whether a renderer can render on this machine right now.
+ *
+ * - ready:          installed and configured
+ * - unavailable:    not implemented in this installation, or its software is
+ *                   not installed — asking it to render is refused up front
+ * - not_configured: installed, but its local configuration (an After Effects
+ *                   template, say) is missing or wrong — a render would fail
+ *                   when the engine opens, with the same message
+ */
+export type RendererState = "ready" | "unavailable" | "not_configured";
+
+export type RendererStatus = {
+  readonly id: RendererId;
+  /** An adapter is registered for it. Reserved ids (premiere) are not. */
+  readonly implemented: boolean;
+  readonly state: RendererState;
+  /** Why it is not ready, in words for the person on this machine; null when ready. */
+  readonly problem: string | null;
+};
+
 /** How each renderer is named to a person, in the UI and in messages. */
 export const RENDERER_LABELS: Record<RendererId, string> = {
   remotion: "Remotion",
