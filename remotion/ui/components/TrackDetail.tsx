@@ -4,9 +4,14 @@ import type {
   TrackDetailView,
 } from "../../core/domain/api/views.ts";
 import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
+import {
+  DEFAULT_RENDERER_ID,
+  RENDERER_LABELS,
+} from "../../core/domain/video/renderers.ts";
 import { publicAssetUrl } from "../api/assetUrl.ts";
 import { deliveryFolderFor } from "../../core/domain/delivery/deliveryPaths.ts";
 import { revealDelivery } from "../api/client.ts";
+import { useRenderers } from "../hooks/useRenderers.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
 import { ContentPackagePanel } from "./ContentPackagePanel.tsx";
 import { DeliverPanel } from "./DeliverPanel.tsx";
@@ -55,6 +60,10 @@ export const TrackDetail: React.FC<{
   // Bumped only when an upload succeeds, so the cover's URL changes exactly
   // when the file behind it did.
   const [assetVersion, setAssetVersion] = useState(0);
+
+  // Asked again when the track or its saved metadata changes, so a newly
+  // installed or configured engine shows up without a reload.
+  const renderers = useRenderers(`${track.slug}:${track.metadataRevision ?? ""}`);
 
   // Delivery is only shown once a destination exists; before that there is
   // nothing to say, and the Delivery settings panel is where that is set.
@@ -109,6 +118,7 @@ export const TrackDetail: React.FC<{
         <MetadataForm
           track={track}
           contentMetadataSettings={contentMetadataSettings}
+          renderers={renderers}
           onSaved={onChanged}
         />
       </section>
@@ -185,6 +195,7 @@ export const TrackDetail: React.FC<{
           <RenderPanel
             track={track}
             formats={formats}
+            renderers={renderers}
             onChanged={onChanged}
             onBatchStarted={onBatchStarted}
           />
@@ -202,6 +213,17 @@ export const TrackDetail: React.FC<{
               </span>
             ) : null}
           </p>
+          {track.exportsRenderer !== DEFAULT_RENDERER_ID ? (
+            <p className="note note--info" role="status">
+              <span className="note__message">
+                These are {RENDERER_LABELS[track.exportsRenderer]} exports, the
+                engine this track prefers (out/{track.slug}/{track.exportsRenderer}/).
+                Remotion exports do not count for it. Export missing, delivery,
+                release bundles and content packages handle Remotion exports
+                only, so they leave this track out.
+              </span>
+            </p>
+          ) : null}
           <ExportStatus exports={track.exports} />
           <ExportMissingPanel
             label="Export missing"

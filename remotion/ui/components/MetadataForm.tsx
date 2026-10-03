@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type {
   ContentMetadataSettingsView,
   PartialMetadataTemplates,
+  RenderersView,
   TrackDetailView,
   TrackMetadataPatch,
 } from "../../core/domain/api/views.ts";
@@ -9,9 +10,16 @@ import {
   resolveExportPresets,
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
+import {
+  DEFAULT_RENDERER_ID,
+  RENDERER_LABELS,
+  resolveTrackRenderer,
+  type RendererId,
+} from "../../core/domain/video/renderers.ts";
 import { ApiRequestError, updateTrackMetadata } from "../api/client.ts";
 import { useStillCurrent } from "../hooks/useStillCurrent.ts";
 import { ContentMetadataOverridesEditor } from "./ContentMetadataOverridesEditor.tsx";
+import { EnginePicker } from "./EnginePicker.tsx";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 import { FormatPicker } from "./FormatPicker.tsx";
 import { decideSeed } from "./metadataSeed.ts";
@@ -25,6 +33,8 @@ type Fields = {
   readonly subtitle: string;
   /** Always a concrete list here: an undeclared track shows what it resolves to. */
   readonly exportPresets: readonly RenderPresetId[];
+  /** Always concrete here: an undeclared track shows the default it resolves to. */
+  readonly renderer: RendererId;
   /** Empty means "use the slug", which is what the placeholder shows. */
   readonly deliveryFolder: string;
   /** Empty object means "inherit everything". */
@@ -47,6 +57,7 @@ const toFields = (track: TrackDetailView): Fields => {
     // An undeclared track shows the formats it is treated as intending, so what
     // the boxes say is what "export missing" will actually do.
     exportPresets: resolveExportPresets(track.exportPresets),
+    renderer: resolveTrackRenderer(track.renderer),
     deliveryFolder: track.deliveryFolder ?? "",
     contentMetadataOverrides: draft?.contentMetadataOverrides ?? {},
   };
@@ -59,6 +70,9 @@ const toPatch = (fields: Fields): TrackMetadataPatch => ({
   bpm: fields.bpm.trim() === "" ? null : Number(fields.bpm),
   subtitle: fields.subtitle.trim(),
   exportPresets: fields.exportPresets,
+  // The default is stored as "no preference", so a track that never picked an
+  // engine keeps a metadata.json with no "renderer" key at all.
+  renderer: fields.renderer === DEFAULT_RENDERER_ID ? null : fields.renderer,
   deliveryFolder: fields.deliveryFolder.trim(),
   // The form is always the whole desired set: an empty object clears every
   // override (inherit everything), matching updateTrackMetadata's "replace
@@ -76,6 +90,7 @@ const sameFields = (a: Fields, b: Fields): boolean =>
   a.bpm === b.bpm &&
   a.subtitle === b.subtitle &&
   a.deliveryFolder === b.deliveryFolder &&
+  a.renderer === b.renderer &&
   a.exportPresets.length === b.exportPresets.length &&
   a.exportPresets.every((id, index) => id === b.exportPresets[index]) &&
   !templatesDiffer(a.contentMetadataOverrides, b.contentMetadataOverrides);
@@ -101,6 +116,23 @@ const Field: React.FC<{
   </label>
 );
 
+/** What the chosen engine means for this track, in one line under the picker. */
+const engineHint = (renderer: RendererId, renderers: RenderersView | null): string => {
+  const status = renderers?.renderers.find((entry) => entry.id === renderer);
+  const name = RENDERER_LABELS[renderer];
+
+  if (status?.state === "unavailable") {
+    return `${name} is not available on this machine: ${status.problem ?? "it is not installed."}`;
+  }
+  if (status?.state === "not_configured") {
+    return `${name} is not configured yet, so its renders stay unavailable until it is: ${status.problem ?? "check its local settings."}`;
+  }
+  if (renderer === DEFAULT_RENDERER_ID) {
+    return "Renders started here use Remotion — the default, which every track without a choice uses.";
+  }
+  return `Renders started here use ${name}, into their own folder. Delivery, release bundles, content packages and Export missing handle Remotion exports only, so they leave this track out.`;
+};
+
 /**
  * Edits metadata.json through the API.
  *
@@ -115,8 +147,10 @@ export const MetadataForm: React.FC<{
   readonly track: TrackDetailView;
   /** The global content-metadata templates; null while still loading. */
   readonly contentMetadataSettings: ContentMetadataSettingsView | null;
+  /** Engine availability from GET /api/renderers; null while loading. */
+  readonly renderers: RenderersView | null;
   readonly onSaved: () => void;
-}> = ({ track, contentMetadataSettings, onSaved }) => {
+}> = ({ track, contentMetadataSettings, renderers, onSaved }) => {
   const [initial, setInitial] = useState<Fields>(() => toFields(track));
   const [fields, setFields] = useState<Fields>(initial);
   const [saving, setSaving] = useState(false);
@@ -317,6 +351,20 @@ export const MetadataForm: React.FC<{
             ? "Not declared yet, so every format is assumed. Saving records this choice in metadata.json."
             : "Export missing queues only these formats for this track."}
         </span>
+      </div>
+
+      <div className="field">
+        <EnginePicker
+          className="formats--field"
+          selected={fields.renderer}
+          statuses={renderers?.renderers ?? null}
+          disabled={saving}
+          onChange={(next) => {
+            setFields((previous) => ({ ...previous, renderer: next }));
+            setSavedAt(null);
+          }}
+        />
+        <span className="field__hint">{engineHint(fields.renderer, renderers)}</span>
       </div>
 
       <ContentMetadataOverridesEditor

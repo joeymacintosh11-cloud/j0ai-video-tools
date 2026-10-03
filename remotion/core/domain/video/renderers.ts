@@ -92,7 +92,8 @@ export const remotionOnlyProblem = (
 ): string | null =>
   renderer === DEFAULT_RENDERER_ID
     ? null
-    : `This track prefers ${RENDERER_LABELS[renderer]}; ${operation} works with ${RENDERER_LABELS[DEFAULT_RENDERER_ID]} exports only, so it is left out. Render it from the track's Render panel.`;
+    : `This track prefers ${RENDERER_LABELS[renderer]}; ${operation} works with ${RENDERER_LABELS[DEFAULT_RENDERER_ID]} exports only, so it is left out. ` +
+      `Render it with ${RENDERER_LABELS[renderer]} from the track's Render panel (under Advanced), or with render-track --engine ${renderer}.`;
 
 /** Resolves a renderer id from untrusted input, defaulting when absent. */
 export const assertRendererId = (value: unknown): RendererId => {

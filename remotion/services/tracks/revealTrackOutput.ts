@@ -8,6 +8,10 @@ import {
   assertRenderPresetId,
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
+import {
+  assertRendererId,
+  DEFAULT_RENDERER_ID,
+} from "../../core/domain/video/renderers.ts";
 import { trackLocations, trackOutputLocation } from "./trackLocations.ts";
 
 const run = promisify(execFile);
@@ -34,18 +38,23 @@ export type RevealTrackOutputResult = {
 export const revealTrackOutput = async (
   slugInput: string,
   presetInput?: unknown,
+  /** Whose export to reveal; absent means Remotion's, as before. */
+  rendererInput?: unknown,
 ): Promise<RevealTrackOutputResult> => {
   const slug = assertValidSlug(slugInput);
   const presetId = assertRenderPresetId(presetInput);
+  // A known id is enough: revealing a file needs no installed engine.
+  const renderer = assertRendererId(rendererInput);
 
-  const output = trackOutputLocation(slug, presetId);
+  const output = trackOutputLocation(slug, presetId, renderer);
 
   // Fall back to a render made before presets existed, so an older output is
-  // still reachable rather than appearing to have vanished.
+  // still reachable rather than appearing to have vanished. Those were all
+  // Remotion renders, so another engine never falls back to one.
   const legacy = trackLocations(slug).legacyOutput;
   const target = existsSync(output.path)
     ? { path: output.path, label: output.label, presetId }
-    : existsSync(legacy)
+    : renderer === DEFAULT_RENDERER_ID && existsSync(legacy)
       ? { path: legacy, label: legacyOutputLabel(slug), presetId: null }
       : null;
 

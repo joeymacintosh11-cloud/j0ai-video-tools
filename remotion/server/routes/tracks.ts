@@ -410,6 +410,7 @@ export const handleRevealOutput = async (
   const payload: RevealOutputView = await revealTrackOutput(
     slugInput,
     body.preset,
+    body.engine,
   );
 
   sendOk(response, payload);

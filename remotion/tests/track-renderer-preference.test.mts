@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +40,16 @@ import { planDeliveries } from "../services/workflows/deliveryPlan.ts";
 import { planDestinationFix } from "../services/workflows/destinationFixPlan.ts";
 import { planMissingExports } from "../services/workflows/exportPlan.ts";
 import { planReleaseBundles } from "../services/workflows/releaseBundlePlan.ts";
+import { revealTrackOutput } from "../services/tracks/revealTrackOutput.ts";
+import type { RendererStatus } from "../core/domain/video/renderers.ts";
+import {
+  engineOptions,
+  engineStateLabel,
+  renderBlockedReason,
+  trackEngine,
+} from "../ui/components/engineModel.ts";
+import { batchTargets, startRenderBody } from "../ui/api/engineRequest.ts";
+import { Worker } from "./managerHarness.mts";
 import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
 import { fixture } from "./fixtures.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
@@ -559,4 +570,162 @@ test("a destination fix plan leaves a track that now prefers After Effects for a
     assert.equal(action.executable, false);
   }
   assert.ok(actions.some((action) => /prefers After Effects; Delivery repair works with Remotion exports only/.test(action.reason)));
+});
+
+/* ------------------------------------------------------------------ *
+ * UI: the engine picker and the render request it leads to
+ * ------------------------------------------------------------------ */
+
+const STATUSES = (ae: RendererStatus["state"], problem: string | null = null): readonly RendererStatus[] => [
+  { id: "remotion", implemented: true, state: "ready", problem: null },
+  { id: "premiere", implemented: false, state: "unavailable", problem: "not built" },
+  { id: "after-effects", implemented: true, state: ae, problem: ae === "ready" ? null : problem },
+];
+
+test("the picker offers Remotion and After Effects, never unbuilt Premiere, with After Effects' state", () => {
+  const ready = engineOptions(STATUSES("ready"), "remotion");
+  assert.deepEqual(ready.map((option) => option.id), ["remotion", "after-effects"]);
+  assert.deepEqual(ready.map((option) => option.selectable), [true, true]);
+  assert.deepEqual(ready.map((option) => option.label), ["Remotion", "After Effects"]);
+  assert.equal(engineStateLabel("ready"), null);
+});
+
+test("an engine that cannot run here is shown but not pickable; not configured is pickable and labelled", () => {
+  const unavailable = engineOptions(STATUSES("unavailable", "aerender was not found."), "remotion");
+  const ae = unavailable.find((option) => option.id === "after-effects")!;
+  assert.equal(ae.selectable, false);
+  assert.equal(ae.problem, "aerender was not found.");
+  assert.equal(engineStateLabel(ae.state), "not available");
+
+  const notConfigured = engineOptions(STATUSES("not_configured", "needs a template"), "remotion");
+  const aeNotConfigured = notConfigured.find((option) => option.id === "after-effects")!;
+  assert.equal(aeNotConfigured.selectable, true);
+  assert.equal(engineStateLabel(aeNotConfigured.state), "not configured");
+});
+
+test("a track's current engine is always shown and kept, even one unavailable or unbuilt here", () => {
+  const stuck = engineOptions(STATUSES("unavailable", "aerender was not found."), "after-effects");
+  assert.equal(stuck.find((option) => option.id === "after-effects")?.selectable, true);
+
+  // A hand-edited "premiere" is visible as the current, unavailable choice.
+  const premiere = engineOptions(STATUSES("ready"), "premiere");
+  assert.deepEqual(premiere.map((option) => option.id), ["remotion", "premiere", "after-effects"]);
+  assert.equal(premiere.find((option) => option.id === "premiere")?.state, "unavailable");
+});
+
+test("before availability loads, the default and the current choice show as checking, not unavailable", () => {
+  assert.deepEqual(
+    engineOptions(null, "remotion").map((option) => [option.id, option.state]),
+    [["remotion", "checking"]],
+  );
+  assert.deepEqual(
+    engineOptions(null, "after-effects").map((option) => [option.id, option.state, option.selectable]),
+    [
+      ["remotion", "checking", true],
+      ["after-effects", "checking", true],
+    ],
+  );
+});
+
+test("the Render panel is blocked, with the reason, when the chosen engine cannot run — never silently Remotion", () => {
+  assert.equal(renderBlockedReason("remotion", STATUSES("unavailable", "x")), null);
+  assert.equal(renderBlockedReason("after-effects", STATUSES("ready")), null);
+  assert.match(
+    renderBlockedReason("after-effects", STATUSES("not_configured", "after-effects.local.json is missing.")) ?? "",
+    /^After Effects is not configured: after-effects\.local\.json is missing\.$/,
+  );
+  assert.match(
+    renderBlockedReason("after-effects", STATUSES("unavailable", "aerender was not found.")) ?? "",
+    /^After Effects is not available here: aerender was not found\.$/,
+  );
+  // Unknown availability does not block; the server checks again.
+  assert.equal(renderBlockedReason("after-effects", null), null);
+});
+
+test("the app's render requests name the track's engine, and an old track's requests are byte-identical", () => {
+  assert.equal(trackEngine({ renderer: null }), "remotion");
+  assert.equal(trackEngine({ renderer: "after-effects" }), "after-effects");
+
+  assert.deepEqual(startRenderBody("square-1x1", "remotion"), { preset: "square-1x1" });
+  assert.deepEqual(startRenderBody(undefined, "remotion"), {});
+  assert.deepEqual(startRenderBody("square-1x1", "after-effects"), { preset: "square-1x1", engine: "after-effects" });
+
+  assert.deepEqual(batchTargets("x", ["youtube-16x9", "square-1x1"], "remotion"), [
+    { slug: "x", preset: "youtube-16x9" },
+    { slug: "x", preset: "square-1x1" },
+  ]);
+  assert.deepEqual(batchTargets("x", ["youtube-16x9"], "after-effects"), [
+    { slug: "x", preset: "youtube-16x9", engine: "after-effects" },
+  ]);
+});
+
+test("through the real API: the app's request renders with the track's engine; one naming none is still Remotion", async (t) => {
+  withEnv(t, { TOSHI_AERENDER_PATH: FAKE_AERENDER });
+  const childProcess = (await import("node:child_process")).default;
+  const forks: (readonly string[])[] = [];
+  t.mock.method(childProcess, "fork", (_modulePath: string, args: readonly string[]) => {
+    forks.push(args);
+    const worker = new Worker();
+    worker.pid = 4545;
+    return worker;
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const { renderManager } = await import("../services/workflows/renderManager.ts");
+
+  const base = await api(t);
+  const f = await renderableTrack(t, { renderer: "after-effects" });
+  const view = (await (await fetch(`${base}/api/tracks/${f.slug}`)).json()).data;
+  assert.equal(view.renderer, "after-effects");
+
+  const post = async (url: string, body: unknown) => {
+    const response = await fetch(`${base}${url}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, json: await response.json() };
+  };
+
+  // What RenderPanel sends for this track.
+  const fromApp = await post(`/api/tracks/${f.slug}/render`, startRenderBody("square-1x1", trackEngine(view)));
+  assert.equal(fromApp.status, 200);
+  assert.equal(fromApp.json.data.job.engine, "after-effects");
+  assert.equal(forks.at(-1)?.at(-1), "after-effects");
+
+  // An older API caller naming no engine: Remotion, preference notwithstanding.
+  const legacy = await post(`/api/tracks/${f.slug}/render`, { preset: "vertical-9x16" });
+  assert.equal(legacy.status, 200);
+  assert.equal(legacy.json.data.job.engine, "remotion");
+
+  // A batch from the app carries it per target.
+  const batch = await post("/api/render-batches", { targets: batchTargets(f.slug, ["youtube-16x9"], trackEngine(view)) });
+  assert.equal(batch.status, 200);
+  assert.equal(batch.json.data.batch.jobs[0].engine, "after-effects");
+
+  for (const jobId of [fromApp.json.data.jobId, legacy.json.data.jobId, batch.json.data.batch.jobs[0].id]) {
+    try {
+      renderManager.cancelRender(jobId);
+    } catch {
+      // Already settled.
+    }
+  }
+});
+
+test("Show <format> reveals the track's own engine's file, never another engine's", async (t) => {
+  const f = await renderableTrack(t, { renderer: "after-effects" });
+  await f.publish("remotion");
+
+  // Only a Remotion export exists: asking for the After Effects one names its
+  // own path and is refused — it does not fall back to the Remotion file.
+  await assert.rejects(revealTrackOutput(f.slug, "youtube-16x9", "after-effects"), (error: unknown) => {
+    assert.ok(error instanceof TrackError);
+    assert.equal(error.code, "TRACK_NOT_FOUND");
+    assert.match(error.message, new RegExp(`out/${f.slug}/after-effects/youtube-16x9\\.mp4`));
+    return true;
+  });
+  await assert.rejects(revealTrackOutput(f.slug, "youtube-16x9", "blender"), { code: "INVALID_RENDERER" });
 });

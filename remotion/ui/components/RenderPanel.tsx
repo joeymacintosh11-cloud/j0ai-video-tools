@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type {
+  RenderersView,
   RenderJobStatus,
   TrackDetailView,
 } from "../../core/domain/api/views.ts";
@@ -9,6 +10,10 @@ import {
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
 import {
+  DEFAULT_RENDERER_ID,
+  RENDERER_LABELS,
+} from "../../core/domain/video/renderers.ts";
+import {
   ApiRequestError,
   cancelRender,
   createRenderBatch,
@@ -16,8 +21,10 @@ import {
   revealTrackOutput,
   startRender,
 } from "../api/client.ts";
+import { batchTargets } from "../api/engineRequest.ts";
 import { useRenderJob } from "../hooks/useRenderJob.ts";
 import { useStillCurrent } from "../hooks/useStillCurrent.ts";
+import { renderBlockedReason, trackEngine } from "./engineModel.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 
 const asApiError = (cause: unknown): ApiRequestError =>
@@ -56,9 +63,11 @@ export const RenderPanel: React.FC<{
   readonly track: TrackDetailView;
   /** Formats picked in the toolbar. One means a single render, more a batch. */
   readonly formats: readonly RenderPresetId[];
+  /** Engine availability from GET /api/renderers; null while loading. */
+  readonly renderers: RenderersView | null;
   readonly onChanged: () => void;
   readonly onBatchStarted: (batchId: string) => void;
-}> = ({ track, formats, onChanged, onBatchStarted }) => {
+}> = ({ track, formats, renderers, onChanged, onBatchStarted }) => {
   const [jobId, setJobId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiRequestError | null>(null);
@@ -108,6 +117,14 @@ export const RenderPanel: React.FC<{
 
   const active = job !== null && ACTIVE.includes(job.status);
 
+  // The track's saved preference — never a silent fallback. An engine that
+  // cannot run here (not installed, or not configured) blocks the button with
+  // the reason, instead of queuing a render that would fail or quietly
+  // becoming a Remotion render.
+  const engine = trackEngine(track);
+  const engineName = RENDERER_LABELS[engine];
+  const blocked = renderBlockedReason(engine, renderers?.renderers ?? null);
+
   const begin = async () => {
     const slug = track.slug;
     const chosen = formats.length > 0 ? formats : [DEFAULT_RENDER_PRESET_ID];
@@ -119,9 +136,7 @@ export const RenderPanel: React.FC<{
       // Several formats become a batch, which the queue panel then follows.
       // A single format stays a single job, exactly as before.
       if (chosen.length > 1) {
-        const created = await createRenderBatch(
-          chosen.map((preset) => ({ slug, preset })),
-        );
+        const created = await createRenderBatch(batchTargets(slug, chosen, engine));
 
         if (stillCurrent(slug)) {
           onBatchStarted(created.batchId);
@@ -130,7 +145,7 @@ export const RenderPanel: React.FC<{
         return;
       }
 
-      const started = await startRender(slug, chosen[0]);
+      const started = await startRender(slug, chosen[0], engine);
 
       if (stillCurrent(slug)) {
         setJobId(started.jobId);
@@ -172,7 +187,7 @@ export const RenderPanel: React.FC<{
     setError(null);
 
     try {
-      await revealTrackOutput(slug, presetId);
+      await revealTrackOutput(slug, presetId, engine);
     } catch (cause) {
       if (stillCurrent(slug)) {
         setError(asApiError(cause));
@@ -213,19 +228,20 @@ export const RenderPanel: React.FC<{
         <button
           className="button"
           type="button"
-          disabled={busy || active || !track.validation.ok}
+          disabled={busy || active || !track.validation.ok || blocked !== null}
           title={
-            track.validation.ok
-              ? "Render this track to out/"
-              : "Fix the problems below before rendering"
+            !track.validation.ok
+              ? "Fix the problems below before rendering"
+              : blocked ?? `Render this track to out/ with ${engineName}`
           }
           onClick={() => void begin()}
         >
           {active
             ? "Rendering…"
-            : formats.length > 1
-              ? `Render ${formats.length} formats`
-              : `Render ${RENDER_PRESETS[formats[0] ?? DEFAULT_RENDER_PRESET_ID].shortLabel}`}
+            : (formats.length > 1
+                ? `Render ${formats.length} formats`
+                : `Render ${RENDER_PRESETS[formats[0] ?? DEFAULT_RENDER_PRESET_ID].shortLabel}`) +
+              (engine === DEFAULT_RENDERER_ID ? "" : ` · ${engineName}`)}
         </button>
 
         {active ? (
@@ -261,6 +277,19 @@ export const RenderPanel: React.FC<{
           </span>
         ) : null}
       </div>
+
+      {blocked !== null ? (
+        <p className="note note--warning" role="status">
+          <span className="note__message">
+            {blocked} This track prefers {engineName}, so nothing renders until
+            it can run here — choose another engine in Track info to render now.
+          </span>
+        </p>
+      ) : engine !== DEFAULT_RENDERER_ID ? (
+        <p className="muted">
+          Renders with {engineName}, this track&apos;s chosen engine (Track info).
+        </p>
+      ) : null}
 
       {missing ? (
         <p className="muted">
