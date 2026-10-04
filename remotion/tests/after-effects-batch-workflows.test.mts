@@ -27,6 +27,7 @@ import { readDeliveryReceipt } from "../services/delivery/deliveryReceipt.ts";
 import { deliverAfterRender } from "../services/delivery/autoDeliver.ts";
 import { deliverPlanned, planDeliveries } from "../services/workflows/deliveryPlan.ts";
 import { toSessionJobReferences, classifyRecoveredJob } from "../ui/batchSession.ts";
+import { syntheticTemplate } from "./syntheticTemplate.mts";
 
 await isolateRenderJournalForThisFile();
 
@@ -35,6 +36,7 @@ const READY: readonly RendererStatus[] = [
   { id: "after-effects", implemented: true, state: "ready", problem: null },
 ];
 const setup = async (t: TestContext, renderer?: RendererId) => {
+  const template = await syntheticTemplate(t);
   const f = await fixture(t, { ...(renderer ? { renderer } : {}), exportPresets: ["youtube-16x9"] });
   await fs.writeFile(f.cover, "cover");
   await fs.writeFile(f.beat, "audio");
@@ -44,7 +46,7 @@ const setup = async (t: TestContext, renderer?: RendererId) => {
     const props = buildTrackProps({ slug: f.slug, metadata, analysisAvailable: true });
     return publishExport(f.slug, "youtube-16x9",
       fingerprintInputs(props, "youtube-16x9", undefined, engine,
-        engine === "after-effects" ? { composition: "Track template", version: "aep-sha256:test" } : undefined),
+        engine === "after-effects" ? template : undefined),
       async (file) => { await fs.writeFile(file, `${engine} video`); }, undefined, undefined, engine);
   };
   return { ...f, publish };
