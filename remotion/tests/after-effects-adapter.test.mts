@@ -173,6 +173,10 @@ test("the config resolves paths relative to itself and fills in defaults", async
     dataFile,
     aerenderPath: null,
     templateCheck: true,
+    templatePreparation: "manual",
+    applicationBundleId: "com.adobe.AfterEffects.application",
+    preparationTimeoutMs: 120_000,
+    workingDirectory: path.join(path.dirname(dataFile), ".toshi-ae-work"),
   });
 });
 

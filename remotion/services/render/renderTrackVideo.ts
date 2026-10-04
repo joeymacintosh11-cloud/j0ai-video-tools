@@ -86,7 +86,7 @@ const renderToTarget = async ({
   };
   checkCancelled();
   onPhase?.("bundling");
-  const session = await engine.open({ log: onEngineLog });
+  const session = await engine.open({ log: onEngineLog, cancelSignal });
 
   try {
     checkCancelled();

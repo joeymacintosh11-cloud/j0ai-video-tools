@@ -229,8 +229,7 @@ from disk every time `aerender` opens the project:
 | `toshi-waveform-audio.wav` | Lighter audio for audio-reactive layers | Optional |
 | `toshi-brand-logo.png`, `toshi-brand-badge.png` | The brand marks | Optional |
 
-**Text is written into the template when it is built, so build it for each
-track.** In a real After Effects 2026 render, `footage("toshi-render-data.json")`
+**In manual mode (the default), text is written into the template when it is built, so build it for each track.** In a real After Effects 2026 render, `footage("toshi-render-data.json")`
 was found but its `sourceData` and `sourceText` were both `null`. So expressions
 can't read the title, artist, key and BPM at render time. Adobe's own notes say
 a render can miss a JSON file that only expressions use. Instead,
@@ -269,7 +268,7 @@ features (no plugins, nothing `aerender` can't render):
 3. **File > Save As** the `"project"` from `after-effects.local.json`, in that
    same folder (replacing the old one), and render again.
 
-**Rebuilding.** Run the script again (steps 1–3, in a new project) **for every
+**Manual rebuilding.** Run the script again (steps 1–3, in a new project) **for every
 new track**, and whenever this script changes. Template contract 3 writes the
 text in at build time. The composition's comment shows the contract and the
 track's text marker (`toshi-text-` plus 8 hex digits). The Title layer's comment
@@ -333,7 +332,82 @@ used, whether the template uses the staged files and matches this track's
 text, and why a render failed
 (including `aerender`'s exit code and last output lines).
 
-**Limits of this proof of concept:**
+**Automatic per-track preparation (opt-in).** After building a compatible base
+once, add these settings to `after-effects.local.json`:
+
+```json
+{
+  "project": "/Users/you/Toshi/ToshiVisualizer.aep",
+  "composition": "Toshi Visualizer",
+  "templatePreparation": "auto"
+}
+```
+
+Omitting `templatePreparation`, or setting it to `"manual"`, preserves the
+existing manual workflow. Auto mode never saves over the configured base. It
+opens a byte-for-byte temporary snapshot, relinks the staged footage using
+absolute paths, fills **Title**, **Artist** and **Key BPM**, and saves a per-track
+working copy under `<dataDir>/.toshi-ae-work/`. The base must already contain
+those text layers, the chosen composition, and `toshi-cover` / `toshi-audio`
+footage. Auto preparation does not build or redesign the base. Keyframed source
+text is rejected; source-text expressions are disabled on the working copy.
+
+Before using auto mode, enable **After Effects → Settings → Scripting &
+Expressions → Allow Scripts to Write Files and Access Network**. Toshi never
+changes that preference. It is needed for the JSON completion status, even
+though this Mac's AE 2026 can save projects with it disabled. If macOS asks for
+Automation permission, grant the calling host (for example Terminal when run
+there) access to After Effects under **System Settings → Privacy & Security →
+Automation**. No prompt appeared in the local feasibility spike; other execution
+contexts may need their own permission. Close any existing GUI project first:
+Toshi refuses to replace user work, including a saved project. The GUI can stay
+running with an empty project between tracks.
+
+Optional validated settings:
+
+- `applicationBundleId`: defaults to `com.adobe.AfterEffects.application`.
+- `preparationTimeoutMs`: defaults to `120000`; integer range `100`–`3600000`.
+- `workingDirectory`: defaults to `.toshi-ae-work` beside `dataFile`; relative
+  values resolve beside the config file. Use a controlled local directory.
+
+Each cache identity includes the full base SHA-256, preparation version,
+canonical text/marker, track asset identity, composition, and staged asset
+paths. A provenance record binds it to the prepared project's full SHA-256.
+Corrupt, missing or mismatched copies are cache misses; cache hits skip
+`osascript`. Changes to generated-project behavior must bump `PREPARATION_VERSION`. Exports report a stable template version comprising the base hash
+and preparation version. Existing renderer-aware freshness behavior is retained;
+this is not a new catalogue-wide template-change scan.
+
+The automatic lifecycle is: staging lock → stage assets → hash base → validate
+cache → on a miss, acquire the shared GUI lock, write a unique job, run headless
+JSX with `osascript` / `DoScriptFile` → validate the token-specific atomic JSON
+status and saved project identity → promote the partial copy and provenance →
+`aerender` → cleanup → release staging lock. JSX closes its project before
+publishing status. Stdout and JSX return text are never completion evidence.
+Mixed-engine and AE-only batches use the same serial queue and need no manual
+text rebuild between compatible AE tracks. Progress logs distinguish waiting,
+preparing, reusing and rendering.
+
+Successful runs and confirmed failures remove their run-specific jobs, status
+and partial files. **An interrupted sender does not prove JSX stopped inside
+AE.** Missing, malformed or wrong-token status, or timeout/cancellation without
+terminal proof, retains the staging lock, GUI lock and `run-<token>` directory.
+Verify AE scripting and `aerender` have stopped before removing those artifacts.
+The GUI lock is under the OS temporary directory at
+`toshi-ae-automation-<bundle-id-hash>/.toshi-ae-render.lock/`; it excludes other
+Node processes even when they stage in different data folders. Leftover run
+status is never accepted for a new token. Do not remove locks merely because
+the Node owner exited.
+
+Preparation reuses the installed/running GUI via its bundle identity and leaves
+an empty GUI project after completion. It does not require the GUI to remain
+open: you may quit it between renders; cache hits do not launch it, and a later
+cache miss can launch it again. Toshi does not automatically quit a GUI it may
+not own. On a 16 GB Mac, GUI plus `aerender` can consume substantial memory
+(the spike observed about 11 GB for AE); close the GUI when practical. Rendering
+uses a separate `aerender` instance, without `-reuse`.
+
+**Limits of this implementation:**
 - Batch planning, content packages and delivery support After Effects. Release
   bundles and automatic destination repair remain Remotion-only.
 - One After Effects render at a time per data folder, because they share the
@@ -343,11 +417,9 @@ text, and why a render failed
   references the staged files and that the video has picture and sound.
 - `create-toshi-template.jsx` builds the 16:9 composition only, uses After
   Effects' default font, and has no animation beyond the waveform.
-- The text is written in when the template is built, so each new track means
-  rerunning the script by hand in After Effects (the render stops and says so).
-  Batch planning preserves every track's engine, but unattended execution across
-  different AE tracks requires a future automated template rebuild. Today a
-  mismatched track/template fails explicitly; it never falls back to Remotion.
+- Manual mode still requires rebuilding text for each track. Auto mode handles
+  compatible text layers and footage, not arbitrary template scripting or plugin
+  dialogs. Neither mode ever falls back to Remotion.
 
 ### Export formats
 
@@ -1401,6 +1473,10 @@ A crashed owner leaves the lock in place: verify Adobe rendering has stopped
 before manually removing it. Shared footage must never be overwritten during
 an active render. Queue logs identify this serial execution policy.
 
-The configured AE project is still built for one track's text. Serialization
-does not rebuild it for a different track: the existing template marker check
-refuses mismatches and reports the manual rebuild steps, without a fallback.
+With `templatePreparation: "auto"`, sequential AE tracks prepare or reuse their
+own validated working copies inside this staging lock. A second, machine-wide
+GUI lock serializes preparation across data folders. Missing terminal status
+retains both locks for inspection because stopping `osascript` alone cannot
+prove AE stopped executing JSX. In default manual mode, the configured project
+remains built for one track's text; mismatches report manual rebuild steps.
+Neither mode substitutes another renderer.
