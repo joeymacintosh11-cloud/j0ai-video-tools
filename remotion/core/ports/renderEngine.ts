@@ -89,6 +89,8 @@ export type ResolvedVideo = {
 };
 
 export type RenderEngineOpenOptions = {
+  /** Also cancels engines that prepare external templates during resolve(). */
+  readonly cancelSignal?: CancelSignal;
   /**
    * Diagnostics for the person running the render: which binary, project,
    * composition and output an engine is using, and why it failed. Shown, not

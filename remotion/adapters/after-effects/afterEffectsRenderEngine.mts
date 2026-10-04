@@ -11,7 +11,7 @@ import { secondsToFrames } from "../../core/domain/video/compositionConfig.ts";
 import { DEFAULT_RENDER_PRESET_ID, renderPreset } from "../../core/domain/video/renderPresets.ts";
 import { buildTemplateData, type TemplateData } from "../../core/domain/video/templateData.ts";
 import type { VisualizerProps } from "../../core/domain/video/visualizerProps.ts";
-import type { RenderEngine, RenderSession } from "../../core/ports/renderEngine.ts";
+import { makeCancelSignal, type ResolvedVideo, type RenderEngine, type RenderSession } from "../../core/ports/renderEngine.ts";
 import { probeAudioDurationInSeconds } from "../../services/tracks/audioDuration.ts";
 import { buildAerenderArgs, parseAerenderProgressFrame } from "./aerenderCommand.mts";
 import {
@@ -30,6 +30,8 @@ import {
   templateWarnings,
 } from "./templateContract.mts";
 
+import { PREPARATION_VERSION, PreparationError } from "./afterEffectsScripting.mts";
+import { hashProject, prepareAfterEffectsTemplate } from "./templatePreparation.mts";
 import { acquireAfterEffectsStagingLock } from "./stagingLock.mts";
 
 export { STAGED_ASSET_NAMES };
@@ -54,7 +56,8 @@ export { STAGED_ASSET_NAMES };
  *             whose text marker belongs to another track, is
  *             RENDERER_NOT_CONFIGURED before aerender starts — it would
  *             render black and silent, or with another track's title
- *             (templateContract.mts).
+ *             (templateContract.mts). Auto mode prepares validated per-track
+ *             working copies from an immutable snapshot instead.
  *  render()   runs aerender for exactly those frames into a sibling of the
  *             staging path, reports its PROGRESS lines, and moves the file
  *             into place once ffprobe sees video and audio in it. A
@@ -83,6 +86,7 @@ export type AfterEffectsEngineDeps = {
   readonly probeStreamTypes: (file: string) => Promise<string[]>;
   readonly spawn: typeof nodeSpawn;
   readonly publicDir: string;
+  readonly prepareTemplate: typeof prepareAfterEffectsTemplate;
 };
 
 const execFileAsync = promisify(execFile);
@@ -107,6 +111,7 @@ const defaultDeps: AfterEffectsEngineDeps = {
   probeStreamTypes: probeStreamTypesWithFfprobe,
   spawn: nodeSpawn,
   publicDir: PUBLIC_DIR,
+  prepareTemplate: prepareAfterEffectsTemplate,
 };
 
 /** A content hash of the project, so editing the template stales its exports. */
@@ -177,7 +182,14 @@ export const createAfterEffectsRenderEngine = (
       // Read once: hashed as the template's version, and searched for the
       // staged files it must use (templateContract.mts).
       const projectBytes = await readFile(config.project);
-      const version = projectVersion(projectBytes);
+      let version = projectVersion(projectBytes);
+      let renderProject = config.project;
+      let resolving: Promise<ResolvedVideo> | null = null;
+      let closed = false;
+      let cancelled = false;
+      let uncertainPreparation = false;
+      const preparationCancel = makeCancelSignal();
+      options.cancelSignal?.(() => { cancelled = true; preparationCancel.cancel(); });
 
       let resolved: { composition: string; durationInFrames: number; fps: number } | null = null;
       let child: ReturnType<typeof nodeSpawn> | null = null;
@@ -188,104 +200,128 @@ export const createAfterEffectsRenderEngine = (
         // aerender reads the assets in place, through the sidecar's absolute paths.
         assetRoot: deps.publicDir,
 
-        resolve: async (props) => {
-          releaseStaging ??= acquireAfterEffectsStagingLock(config.dataFile);
-          log("After Effects: serial execution; shared staging lock held until aerender stops.");
-          const preset = renderPreset(props.presetId ?? DEFAULT_RENDER_PRESET_ID);
-          const composition = config.compositions[preset.id] ?? config.composition;
-          const seconds = await deps.probeAudioDurationInSeconds(path.join(deps.publicDir, props.audioSrc));
-          const durationInFrames = secondsToFrames(seconds, preset.fps);
+        resolve: (props) => {
+          if (resolving) return Promise.reject(renderFailed("After Effects session already resolving or resolved."));
+          const task = (async (): Promise<ResolvedVideo> => {
+            if (closed || cancelled) throw renderFailed("After Effects preparation cancelled.");
+            log("After Effects: Waiting for After Effects lock.");
+            releaseStaging ??= acquireAfterEffectsStagingLock(config.dataFile);
+            log("After Effects: serial execution; shared staging lock held until aerender stops.");
+            const preset = renderPreset(props.presetId ?? DEFAULT_RENDER_PRESET_ID);
+            const composition = config.compositions[preset.id] ?? config.composition;
+            const seconds = await deps.probeAudioDurationInSeconds(path.join(deps.publicDir, props.audioSrc));
+            const durationInFrames = secondsToFrames(seconds, preset.fps);
 
-          // A template cannot swap a footage item's file per render, so this
-          // track's images and audio are copied to fixed names beside the
-          // sidecar; the template imports those files as footage and After
-          // Effects reloads them when aerender opens it. The sidecar is what
-          // create-toshi-template.jsx reads the track's text from.
-          const staged = await stageAssets(props, path.dirname(config.dataFile), deps.publicDir);
-          const data = buildTemplateData({
-            props,
-            preset,
-            durationInFrames,
-            resolveAsset: (relative) => path.join(deps.publicDir, relative),
-          });
-          await writeAtomically(config.dataFile, `${JSON.stringify({ ...data, assets: staged }, null, 2)}\n`);
+            // A template cannot swap a footage item's file per render, so this
+            // track's images and audio are copied to fixed names beside the
+            // sidecar; the template imports those files as footage and After
+            // Effects reloads them when aerender opens it. The sidecar is what
+            // create-toshi-template.jsx reads the track's text from.
+            const staged = await stageAssets(props, path.dirname(config.dataFile), deps.publicDir);
+            const data = buildTemplateData({
+              props,
+              preset,
+              durationInFrames,
+              resolveAsset: (relative) => path.join(deps.publicDir, relative),
+            });
+            await writeAtomically(config.dataFile, `${JSON.stringify({ ...data, assets: staged }, null, 2)}\n`);
 
-          log(`After Effects: composition "${composition}", ${durationInFrames} frames @ ${preset.fps}fps.`);
-          log(`After Effects: template data and assets staged in ${path.dirname(config.dataFile)}.`);
-          // The template's text is written in when it is built (templateText),
-          // so this is the text it must have been built with.
-          const text = templateText(data.track);
-          const marker = templateTextMarker(text);
-          log(
-            `After Effects: this track's text: Title "${text.Title}", Artist "${text.Artist}", ` +
-              `Key BPM "${text["Key BPM"]}" (${marker}).`,
-          );
+            log(`After Effects: composition "${composition}", ${durationInFrames} frames @ ${preset.fps}fps.`);
+            log(`After Effects: template data and assets staged in ${path.dirname(config.dataFile)}.`);
+            // The template's text is written in when it is built (templateText),
+            // so this is the text it must have been built with.
+            const text = templateText(data.track);
+            const marker = templateTextMarker(text);
+            log(
+              `After Effects: this track's text: Title "${text.Title}", Artist "${text.Artist}", ` +
+                `Key BPM "${text["Key BPM"]}" (${marker}).`,
+            );
 
-          // Checked after staging, so the files a template needs are already
-          // there to import when this says they are not being used.
-          if (config.templateCheck) {
-            const missing = missingTemplateFiles(projectBytes);
-            if (missing.length > 0) {
-              throw new TrackError(
-                trackIssue(
-                  "RENDERER_NOT_CONFIGURED",
-                  `The After Effects template ${path.basename(config.project)} does not use ${missing.join(", ")}, ` +
-                    `so it would render without the track's ${describeMissing(missing)}. The files are staged in ` +
-                    `${path.dirname(config.dataFile)}: build the template with adapters/after-effects/template/create-toshi-template.jsx ` +
-                    `(After Effects: File > Scripts > Run Script File...) or import them by hand as the README describes, then save the project. ` +
-                    `If your template really does not need them, set "templateCheck": false in after-effects.local.json.`,
-                ),
-              );
+            // Checked after staging, so the files a template needs are already
+            // there to import when this says they are not being used.
+            if (config.templatePreparation === "auto") {
+              // Read under the staging lock; open() may have preceded a base edit.
+              const baseBytes = await readFile(config.project);
+              version = `aep-sha256:${hashProject(baseBytes)};prep:${PREPARATION_VERSION}`;
+              try {
+                renderProject = await deps.prepareTemplate({
+                  config, baseBytes, composition, marker, text,
+                  trackIdentity: JSON.stringify([props.audioSrc, props.coverSrc]),
+                  assets: Object.fromEntries(Object.entries(staged).map(([role, file]) =>
+                    [STAGED_ASSET_NAMES[role as keyof typeof STAGED_ASSET_NAMES], file])),
+                  cancelSignal: preparationCancel.cancelSignal, log,
+                });
+              } catch (error) {
+                uncertainPreparation = error instanceof PreparationError && error.uncertain;
+                throw error;
+              }
+            } else if (config.templateCheck) {
+              const missing = missingTemplateFiles(projectBytes);
+              if (missing.length > 0) {
+                throw new TrackError(
+                  trackIssue(
+                    "RENDERER_NOT_CONFIGURED",
+                    `The After Effects template ${path.basename(config.project)} does not use ${missing.join(", ")}, ` +
+                      `so it would render without the track's ${describeMissing(missing)}. The files are staged in ` +
+                      `${path.dirname(config.dataFile)}: build the template with adapters/after-effects/template/create-toshi-template.jsx ` +
+                      `(After Effects: File > Scripts > Run Script File...) or import them by hand as the README describes, then save the project. ` +
+                      `If your template really does not need them, set "templateCheck": false in after-effects.local.json.`,
+                  ),
+                );
+              }
+              log(`After Effects: template uses the staged cover and audio.`);
+              const textStatus = templateTextStatus(projectBytes, marker);
+              if (textStatus === "stale") {
+                throw new TrackError(
+                  trackIssue(
+                    "RENDERER_NOT_CONFIGURED",
+                    `The After Effects template ${path.basename(config.project)} was built with another track's title, artist and key: ` +
+                      `the text is written into the template when it is built, and it does not match this track (${marker}). ` +
+                      `This track's data is now staged in ${path.dirname(config.dataFile)}: in a new After Effects project, run ` +
+                      `adapters/after-effects/template/create-toshi-template.jsx (File > Scripts > Run Script File...), choose that folder, ` +
+                      `save the project over ${config.project}, and render again.`,
+                  ),
+                );
+              }
+              if (textStatus === "current") log(`After Effects: template text matches this track.`);
+              else {
+                log(
+                  `After Effects: warning: the project carries no Toshi text marker, so its title, artist and key may not be this track's; ` +
+                    `rebuild it with create-toshi-template.jsx to be sure.`,
+                );
+              }
+              for (const warning of templateWarnings(projectBytes, composition)) {
+                log(`After Effects: warning: ${warning}`);
+              }
             }
-            log(`After Effects: template uses the staged cover and audio.`);
-            const textStatus = templateTextStatus(projectBytes, marker);
-            if (textStatus === "stale") {
-              throw new TrackError(
-                trackIssue(
-                  "RENDERER_NOT_CONFIGURED",
-                  `The After Effects template ${path.basename(config.project)} was built with another track's title, artist and key: ` +
-                    `the text is written into the template when it is built, and it does not match this track (${marker}). ` +
-                    `This track's data is now staged in ${path.dirname(config.dataFile)}: in a new After Effects project, run ` +
-                    `adapters/after-effects/template/create-toshi-template.jsx (File > Scripts > Run Script File...), choose that folder, ` +
-                    `save the project over ${config.project}, and render again.`,
-                ),
-              );
-            }
-            if (textStatus === "current") log(`After Effects: template text matches this track.`);
-            else {
-              log(
-                `After Effects: warning: the project carries no Toshi text marker, so its title, artist and key may not be this track's; ` +
-                  `rebuild it with create-toshi-template.jsx to be sure.`,
-              );
-            }
-            for (const warning of templateWarnings(projectBytes, composition)) {
-              log(`After Effects: warning: ${warning}`);
-            }
-          }
 
-          resolved = { composition, durationInFrames, fps: preset.fps };
-          return {
-            durationInFrames,
-            fps: preset.fps,
-            width: preset.width,
-            height: preset.height,
-            template: { composition, version },
-          };
+            resolved = { composition, durationInFrames, fps: preset.fps };
+            return {
+              durationInFrames,
+              fps: preset.fps,
+              width: preset.width,
+              height: preset.height,
+              template: { composition, version },
+            };
+          })();
+          resolving = task;
+          return task;
         },
 
         render: ({ outputPath, cancelSignal, onProgress }) => {
-          if (!resolved) {
+          if (!resolved || closed) {
             return Promise.reject(new Error("RenderSession.render() called before resolve()."));
           }
           const { composition, durationInFrames } = resolved;
           const target = path.join(path.dirname(outputPath), RENDER_FILE_NAME);
           const args = buildAerenderArgs({
-            project: config.project,
+            project: renderProject,
             composition,
             output: target,
             durationInFrames,
             outputModule: config.outputModule,
           });
+          if (config.templatePreparation === "auto") log("After Effects: Rendering with After Effects.");
           log(`After Effects: rendering to ${outputPath}.`);
 
           return new Promise<void>((resolve, reject) => {
@@ -398,10 +434,14 @@ export const createAfterEffectsRenderEngine = (
         },
 
         close: async () => {
+          closed = true;
+          preparationCancel.cancel();
+          if (resolving) await resolving.catch(() => {});
           child?.kill("SIGKILL");
           if (childClosed !== null) await childClosed;
           child = null;
-          releaseStaging?.();
+          if (!uncertainPreparation) releaseStaging?.();
+          else log("After Effects: staging lock retained because JSX completion is unconfirmed.");
           releaseStaging = null;
         },
       };
