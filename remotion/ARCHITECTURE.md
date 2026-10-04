@@ -23,6 +23,7 @@ core/                   Platform-independent. Pure TypeScript: no node:*, no
   ports/                Extension points that adapters implement.
     renderEngine.ts     RenderEngine / RenderSession, CancelSignal.
     templateIdentity.ts Read-only current-template observation for freshness.
+    rendererWorkspace.ts Read-only inventory and explicit dry-run maintenance port.
     renderEngineRegistry.ts
                         Looks engines up by renderer id, with clear errors.
 
@@ -52,6 +53,8 @@ adapters/               Implementations of core ports for one technology.
     templateContract.mts           Staged file names, required files, track text and marker, checks (pure).
     templateIdentity.mts           Canonical base hash + preparation version/mode; observation without Adobe.
     templatePreparation.mts        Validated per-track working-copy cache and locked promotion.
+    stagingLock.mts                Guarded versioned ownership and confirmed-safe phases.
+    workspace.mts                  Scoped inspection, recovery and bounded cache retention.
     afterEffectsScripting.mts      Node → osascript and token-specific JSON completion protocol.
     template/create-toshi-template.jsx
                                    One-time ExtendScript bootstrap of the minimal template.
@@ -362,3 +365,32 @@ way `ui/` does, using the types in `core/domain/api/views.ts`.
 - `ui/` imports the composition for the in-browser `<Player>` preview. That's
   a deliberate UI-to-Remotion dependency: the preview is the renderer's own
   output, not a second implementation.
+
+## Renderer workspace housekeeping
+
+`services/render/rendererWorkspace.ts` exposes a registered core port, wired by
+`adapters/renderEngines.mts`. The API and CLI call this service; the UI consumes
+its typed API response. Adobe paths, PID/host checks, status validation and cache
+pair eviction stay in the AE adapter. Housekeeping does not participate in
+export fingerprinting or renderer selection.
+
+AE staging ownership spans resolve through confirmed child shutdown. Auto mode
+also holds a workspace fence across preparation, cache use, rendering and
+retention; GUI preparation has its existing shared machine-wide lock. Guarded
+ownership mutations prevent recovery from racing release or acquisition.
+Schema-2 records identify token, owner/host, phase, track, run and child. Dead
+owners are not enough: only explicit safe phases or matching terminal status
+permit recovery. Live children, uncertain Adobe completion, legacy ownership,
+unknown artifacts and crashed mutation guards remain manual. Recovery never
+promotes partial projects or kills an Adobe GUI it does not own.
+
+Inventory reads only immediate known workspace locations and shallow run/log
+sets; unchanged file hashes use the existing stat-aware memoization. Startup
+is read-only. Explicit cleanup defaults to dry-run and revalidates under the
+same workspace fence. UI apply additionally checks the preview path set.
+Normal auto-session close enforces 20 validated pairs ordered by last use,
+protecting the current project. Project and provenance move together into a
+quarantine before deletion; rename failures roll back or retain manual evidence.
+Invalid pairs are not recovery garbage. Cache eviction never affects existing
+export freshness; the next use prepares again. Manual AE and Remotion keep their
+existing paths. See README's AE housekeeping section for commands and limits.

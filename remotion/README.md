@@ -412,11 +412,11 @@ not once per track. Replacements and edits invalidate that cache; no watcher
 or persistent hash is used. Changes to external template dependencies/plugins
 without changing the base or preparation version are outside this identity.
 
-The automatic lifecycle is: staging lock → stage assets → hash base → validate
+The automatic lifecycle is: staging + workspace locks → stage assets → hash base → validate
 cache → on a miss, acquire the shared GUI lock, write a unique job, run headless
 JSX with `osascript` / `DoScriptFile` → validate the token-specific atomic JSON
 status and saved project identity → promote the partial copy and provenance →
-`aerender` → cleanup → release staging lock. JSX closes its project before
+`aerender` → cleanup and cache retention → release workspace + staging locks. JSX closes its project before
 publishing status. Stdout and JSX return text are never completion evidence.
 Mixed-engine and AE-only batches use the same serial queue and need no manual
 text rebuild between compatible AE tracks. Progress logs distinguish waiting,
@@ -425,13 +425,83 @@ preparing, reusing and rendering.
 Successful runs and confirmed failures remove their run-specific jobs, status
 and partial files. **An interrupted sender does not prove JSX stopped inside
 AE.** Missing, malformed or wrong-token status, or timeout/cancellation without
-terminal proof, retains the staging lock, GUI lock and `run-<token>` directory.
+terminal proof, retains the staging, workspace and GUI locks and `run-<token>` directory.
 Verify AE scripting and `aerender` have stopped before removing those artifacts.
 The GUI lock is under the OS temporary directory at
 `toshi-ae-automation-<bundle-id-hash>/.toshi-ae-render.lock/`; it excludes other
 Node processes even when they stage in different data folders. Leftover run
 status is never accepted for a new token. Do not remove locks merely because
 the Node owner exited.
+
+### AE workspace recovery and housekeeping
+
+Inspection and maintenance are local and do not launch Adobe:
+
+```bash
+npm run ae-workspace                         # read-only inventory
+npm run ae-workspace -- --cleanup            # dry-run safe recovery
+npm run ae-workspace -- --prune --dry-run     # safe recovery + cache retention preview
+npm run ae-workspace -- --cleanup --prune --apply # explicit deletion
+npm run ae-workspace -- --json               # structured inventory
+```
+
+All deletion commands default to dry-run unless `--apply` is explicit. Previews
+list exact candidate paths, related project/provenance/log paths and reasons.
+Changes in ownership are checked again under an exclusive mutation guard.
+Failures report `cleanup_failed`, and repeated successful cleanup is idempotent.
+The API server performs **read-only** startup inspection and reports attention
+items; startup never deletes files or breaks a retained lock.
+
+The controlled `.toshi-ae-work` directory contains:
+
+- `run-<token>/`: owner record, job JSON, token-specific status JSON, generated
+  JSX, immutable base snapshot, cancellation request and partial project or
+  provenance. These are one recovery set; cleanup never promotes a partial.
+- `toshi-prepared-<identity>.aep` and `.aep.json`: validated prepared project
+  plus provenance, including creation and last-use timestamps. Old provenance
+  without timestamps remains readable; file timestamps provide retention order.
+- `.toshi-ae-workspace.lock/`: fences prepared files from preparation through
+  confirmed render shutdown and retention. The staging lock stays beside the
+  data file; the GUI preparation lock stays in the OS temporary directory.
+- `evict-<token>/`: quarantine used to remove a project/provenance pair safely.
+  Incomplete eviction or rollback failures remain manual evidence. Only proven
+  completed, unowned quarantines can be removed by safe cleanup.
+- Atomic staging `*.tmp-<pid>` files beside `dataFile`: recognised by known
+  staged filenames, but retained for manual inspection without run-token ownership
+  proof; ordinary staged inputs and unrelated files are never swept.
+- Adobe `*.aep Logs` directories: flat regular log files can be removed with
+  their evicted cache entry; unknown or nested/symlinked artifacts stay manual.
+
+Versioned owner records carry a token, renderer, local host/PID, track identity,
+creation time, phase, run identity, prepared path, child PID and explicit
+completion-safety flag. Multiple locks for one workflow count as one active job.
+**Age alone never releases a lock.** A live Node owner or child is preserved;
+a dead local owner is recoverable only with a confirmed safe phase or a matching
+terminal job/status result proving JSX closed. Dead `rendering` owners remain
+manual because a missing launcher does not prove Adobe stopped. Foreign-host,
+legacy, malformed or inaccessible ownership and interrupted `.guard` directories
+fail closed. Unknown files and symlinks are never swept recursively.
+
+Normal auto-session cleanup retains at most **20 validated prepared pairs** by
+last-use time, always keeping the current copy. Failed pruning is reported rather
+than failing a completed render. Explicit pruning uses the same workspace lock;
+active or uncertain locks block run cleanup and cache eviction. Pair removal
+first moves both files into a unique quarantine; a second rename failure rolls
+back, and rollback failure retains evidence. Valid pairs are never crash garbage.
+Invalid or orphaned cache files remain manual; normal preparation rebuilds an
+invalid requested entry. Eviction simply causes preparation on next use and
+**does not change the freshness of an existing export**. Retention bounds entries,
+not total bytes, and does not aggressively remove uncertain evidence.
+
+`GET /api/ae-workspace` inspects; `POST /api/ae-workspace/cleanup` accepts
+`{ "dryRun": true, "prune": true }`. Deletion requires `dryRun: false`.
+An optional `expectedPaths` list fences application to the previewed path set;
+if it changed, the API requests a fresh preview without deleting anything.
+The AE render panel shows cache size, active/recoverable/manual counts and a
+preview followed by a separate **Apply safe cleanup + cache pruning** action.
+No operation edits track metadata or the configured base, switches engines,
+or changes Remotion/manual-mode rendering. Maintenance requires a readable local
+AE configuration/base; invalid configuration reports unavailable inspection.
 
 Preparation reuses the installed/running GUI via its bundle identity and leaves
 an empty GUI project after completion. It does not require the GUI to remain
@@ -1510,7 +1580,7 @@ an active render. Queue logs identify this serial execution policy.
 With `templatePreparation: "auto"`, sequential AE tracks prepare or reuse their
 own validated working copies inside this staging lock. A second, machine-wide
 GUI lock serializes preparation across data folders. Missing terminal status
-retains both locks for inspection because stopping `osascript` alone cannot
+retains staging, workspace and GUI locks for inspection because stopping `osascript` alone cannot
 prove AE stopped executing JSX. In default manual mode, the configured project
 remains built for one track's text; mismatches report manual rebuild steps.
 Neither mode substitutes another renderer.
