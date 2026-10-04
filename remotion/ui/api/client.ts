@@ -1,4 +1,5 @@
 import type { ExportMode } from "../../core/domain/video/exportFreshness.ts";
+import type { WorkspaceInspection, WorkspaceMaintenance } from "../../core/ports/rendererWorkspace.ts";
 import type { ContentPackageMode } from "../../core/domain/content/contentPackage.ts";
 import type { PlatformId } from "../../core/domain/content/platformProfiles.ts";
 import type {
@@ -89,6 +90,9 @@ export class ApiRequestError extends Error {
     this.details = error.details;
   }
 }
+
+export const inspectWorkspace = () => request<WorkspaceInspection>("/api/ae-workspace");
+export const maintainWorkspace = (dryRun: boolean, prune: boolean, expectedPaths?: readonly string[]) => request<WorkspaceMaintenance>("/api/ae-workspace/cleanup", { method: "POST", body: JSON.stringify({ dryRun, prune, expectedPaths }) });
 
 /**
  * The API server not running is the single most likely failure in local use, so
