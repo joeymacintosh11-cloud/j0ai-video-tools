@@ -10,7 +10,7 @@ import {
   resolveExportPresets,
 } from "../../core/domain/video/renderPresets.ts";
 import {
-  remotionOnlyProblem,
+  workflowRendererProblem,
   resolveTrackRenderer,
 } from "../../core/domain/video/renderers.ts";
 import { deliveryStateForTarget } from "../delivery/deliverExport.ts";
@@ -73,10 +73,9 @@ export const toTrackSummaryView = (
   const declaredRenderer =
     inspection.metadata?.renderer ?? inspection.metadataDraft?.renderer ?? null;
   const exportsRenderer = resolveTrackRenderer(declaredRenderer);
-  // Delivery and release bundles handle Remotion's exports only. For a track
-  // that prefers another renderer they report that, rather than describing a
-  // Remotion file as if it were the export this track asked for.
-  const remotionOnly = remotionOnlyProblem(exportsRenderer, "Delivery");
+  // Delivery follows the preferred renderer; reserved engines remain unsupported.
+  // Release bundles independently retain their Remotion-only restriction.
+  const rendererProblem = workflowRendererProblem(exportsRenderer);
   // Computed once and shared with the release bundle status below, which needs
   // exactly the same facts; reading manifests twice per track would be waste.
   // Judged against the renderer this track prefers, so a Remotion export never
@@ -133,13 +132,14 @@ export const toTrackSummaryView = (
           active: state === "active",
           intended: intended.has(facts.presetId),
           delivery:
-            remotionOnly === null
+            rendererProblem === null
               ? deliveryStateForTarget(
                   inspection.slug,
                   facts.presetId,
                   facts,
                   inspection.metadata === null ? null : deliveryRoot,
                   inspection.metadata?.deliveryFolder,
+                  exportsRenderer,
                 )
               : {
                   status: "not_configured",

@@ -1,3 +1,4 @@
+import { DEFAULT_RENDERER_ID, RENDERER_LABELS, resolveTrackRenderer } from "../../core/domain/video/renderers.ts";
 import { useState } from "react";
 import type {
   RenderBatchView,
@@ -68,6 +69,7 @@ const JobRow: React.FC<{
 
       <span className="queue__preset">
         {RENDER_PRESETS[job.presetId].shortLabel}
+        {resolveTrackRenderer(job.engine) === DEFAULT_RENDERER_ID ? "" : ` · ${RENDERER_LABELS[resolveTrackRenderer(job.engine)]}`}
       </span>
 
       <span className="queue__bar">
@@ -95,7 +97,7 @@ const JobRow: React.FC<{
             type="button"
             disabled={busy}
             title={job.outputPath ?? undefined}
-            onClick={() => void act(() => revealTrackOutput(job.slug, job.presetId))}
+            onClick={() => void act(() => revealTrackOutput(job.slug, job.presetId, resolveTrackRenderer(job.engine)))}
           >
             Show
           </button>
@@ -154,6 +156,7 @@ export const QueueDrawer: React.FC<{
     <section className="queue" aria-label="Render queue">
       <header className="queue__head">
         <h2 className="queue__title">Render queue</h2>
+        {batch?.jobs.some((job) => job.engine === "after-effects") ? <span className="muted">Serial execution · one render at a time</span> : null}
 
         {batch ? (
           <>

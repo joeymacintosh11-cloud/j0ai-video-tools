@@ -294,8 +294,8 @@ test("stale planning skips queued and active replacements before considering dis
     slugs: [f.slug],
     mode: "missing-and-stale",
     inFlight: new Map([
-      [`${f.slug}::youtube-16x9`, "active"],
-      [`${f.slug}::vertical-9x16`, "queued"],
+      [`${f.slug}::youtube-16x9::remotion`, "active"],
+      [`${f.slug}::vertical-9x16::remotion`, "queued"],
     ]),
   });
   assert.equal(plan.skippedActive.length, 1);

@@ -138,10 +138,9 @@ POST /api/render-batches     ─┘      (render manager, journal, worker)     (
   to an export's visualizer fingerprint, and an engine-reported template
   (`ResolvedVideo.template`: composition + version) is added too. Both add
   nothing for Remotion, so every existing manifest keeps its exact fingerprint
-  and stays current. Coverage, delivery, release bundles and content packages
-  judge Remotion's exports only; the commands that plan from them
-  (`render-missing`, `content-package`, `content-package-batch`) therefore
-  refuse other engines rather than re-render into the wrong folder.
+  and stays current. Coverage, delivery and content packages use the preferred
+  renderer explicitly. Release bundles and automatic destination repair retain
+  their Remotion-only restriction.
 
 ### A track's preferred engine
 
@@ -157,12 +156,13 @@ GET /api/renderers  ─> registry.status()  ─> per id: ready | unavailable | n
                          configured  (usable config?) — status() only; AE: readAfterEffectsConfig()
 ```
 
-- **Who applies it.** The UI only: its Render panel names the track's engine in
+- **Who applies it.** The UI Render panel names the track's engine in
   `POST .../render` and in batch targets (`ui/api/engineRequest.ts`). Catalogue
   queueing rereads each selected track's saved preference before building targets.
   The Render panel disables itself with the reason when `GET /api/renderers` says that engine
-  is unavailable or not configured. The server never infers an engine from a
-  track, so the CLI and API callers that name none still get Remotion.
+  is unavailable or not configured. Workflow planners read the saved preference
+  and carry an optional `engine` on each target (omitted for legacy Remotion
+  shapes). Direct CLI/API render requests naming none still get Remotion.
 - **What it changes in the view.** `TrackSummaryView.exportsRenderer` is the
   resolved preference, and `exports[]` is `trackExportCoverage(slug, metadata,
   exportsRenderer)`: that engine's own folder, so a Remotion export never
@@ -173,21 +173,25 @@ GET /api/renderers  ─> registry.status()  ─> per id: ready | unavailable | n
   are. Queue status uses `exportStatusKey(slug, preset, renderer)` through
   `inFlightExports()`, so only a matching engine marks an export queued/rendering.
   Pair-only `inFlightTargets()` and track/format locks remain contention checks.
-- **Remotion-only pipelines leave such a track out.** Calling
-  `trackExportCoverage` without a renderer still means Remotion, so every other
-  caller is unchanged. Where those pipelines meet a track that prefers another
-  renderer, they use one shared message (`remotionOnlyProblem()`) and code
-  (`RENDERER_NOT_SUPPORTED`):
-  - export missing and delivery planning list the track as invalid;
-  - `deliverExport` refuses (`renderer_not_supported`), which covers the
-    Deliver panel, fix plans, content packages and auto-delivery. It rechecks the
-    preference after staging, before publishing the copy;
-  - `releaseBundleStateFor` reports a problem, so nothing is planned or
-    written;
-  - `deriveContentPackage` blocks every selected platform;
-  - a destination fix plan turns repairs into manual review;
-  - auto-delivery after any non-Remotion render reports the export as not
-    delivered. Before this change it copied the Remotion file.
+- **Workflow support.** Export-missing and content-package planners carry engine
+  identity through targets, adopted jobs and recovered batch sessions. Only
+  matching-engine jobs satisfy in-flight status; pair locks still prevent
+  simultaneous writes to the same track/format. Missing/stale exports require
+  a locally ready engine; current exports can be packaged without one.
+- **Delivery safety.** Coverage and receipts come from the preferred engine's
+  folder. `deliverExport` pins that renderer, checks a planner/auto-delivery
+  renderer constraint, and rereads metadata and source identity after staging
+  before publish. Legacy receipts without a renderer mean Remotion. Destination
+  health also reads old-engine receipts after a preference change, preserving
+  evidence of previous deliveries. Release bundles and automatic destination
+  repair still use `remotionOnlyProblem()` and require manual AE review.
+- **Serial execution.** The manager runs one worker globally and waits for its
+  exit before starting another; CLI batches also run sequentially. AE sessions
+  acquire an exclusive lock beside the configured data file before staging,
+  across processes and aliases. The lock stays held until the Adobe child exits.
+  An interrupted owner is not reclaimed automatically: confirm no aerender
+  remains before manually removing `.toshi-ae-render.lock`. Queue logs identify
+  serial AE execution; the drawer labels each AE job.
 
 ## Adding a renderer (e.g. Premiere Pro, After Effects)
 
@@ -287,8 +291,10 @@ Mechanisms considered: expressions alone cannot load images or audio, and
 file names for media. Expressions reading the JSON were tried and get `null`
 under `aerender`, so the text is written in by the ExtendScript bootstrap
 (`template/create-toshi-template.jsx`), rerun for each track. Automating that
-rebuild (driving After Effects itself, not `aerender`) is the next step if
-batch After Effects renders are wanted.
+rebuild (driving After Effects itself, not `aerender`) remains necessary for
+unattended batches across different AE tracks. Current batches preserve engine
+identity and fail explicitly if the staged track differs from the template
+marker; they do not rebuild templates or substitute Remotion.
 
 **Checks.** Before `aerender` starts, the project's bytes must mention the
 cover and audio file names: footage paths are stored as text in `.aep` and

@@ -1,3 +1,4 @@
+import { resolveTrackRenderer } from "../core/domain/video/renderers.ts";
 import { renderEngines } from "../adapters/renderEngines.mts";
 import { assertExportMode } from "../core/domain/video/exportFreshness.ts";
 import { TrackError, trackIssue } from "../core/domain/tracks/errors.ts";
@@ -38,7 +39,8 @@ import {
  *
  * Work queued in a running server is invisible from here — this is a separate
  * process with no view of that queue — so a render started in the app and one
- * started here can overlap. Use one or the other for a given track.
+ * started here can contend. Track/format locks protect exports; the AE staging
+ * lock also protects shared footage across tracks and processes.
  */
 
 const printUsage = () => {
@@ -139,7 +141,6 @@ runCli("rendering missing exports", async () => {
   const { slug, allTracks, presetIds, dryRun, mode, replace, engineId } = parseArgs(
     process.argv.slice(2),
   );
-  assertPlanningEngine(engineId, "render-missing");
 
   if (!slug && !allTracks) {
     printUsage();
@@ -150,8 +151,12 @@ runCli("rendering missing exports", async () => {
     mode,
     slugs: allTracks ? undefined : [slug as string],
     presetIds,
+    renderers: renderEngines.status(),
   });
 
+  if (process.argv.includes("--engine")) {
+    for (const target of plan.intendedTargets) assertPlanningEngine(engineId, "render-missing", resolveTrackRenderer(target.engine));
+  }
   describePlan(plan);
 
   if (dryRun) {
@@ -195,7 +200,7 @@ runCli("rendering missing exports", async () => {
     let lastLoggedPercentage = -1;
 
     const { outputLabel } = await renderTrackVideo({
-      engine: await renderEngines.resolve(engineId),
+      engine: await renderEngines.resolve(target.engine),
       slug: target.slug,
       props,
       onRecorded: printLibraryOutcome,

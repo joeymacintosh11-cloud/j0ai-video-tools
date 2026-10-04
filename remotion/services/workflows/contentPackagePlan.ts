@@ -1,3 +1,4 @@
+import type { RendererStatus } from "../../core/domain/video/renderers.ts";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import type { TrackInspection } from "../../core/domain/tracks/types.ts";
@@ -73,6 +74,7 @@ export const namedBatchSlugs = (
 };
 
 export type ContentPackageBatchContext = {
+  readonly renderers?: readonly RendererStatus[];
   readonly inFlight: ReadonlyMap<string, "queued" | "active">;
   readonly deliveryRoot: string | null;
   readonly globalTemplates: PartialMetadataTemplates | null;
@@ -91,13 +93,14 @@ export type ContentPackageBatchContext = {
  * only affects the *displayed* plan, never what actually gets queued.
  */
 export const loadContentPackageBatchContext =
-  async (): Promise<ContentPackageBatchContext> => {
+  async (renderers?: readonly RendererStatus[]): Promise<ContentPackageBatchContext> => {
     const [deliveryRoot, templateSettings] = await Promise.all([
       deliveryRootForView(),
       readContentMetadataSettings(),
     ]);
 
     return {
+      renderers,
       inFlight: renderManager.inFlightExports(),
       deliveryRoot,
       globalTemplates: templateSettings.settings.templates,
@@ -147,6 +150,7 @@ export const buildContentPackagesForSlugs = async (
       metadata: detail.metadata,
       exports: detail.exports,
       renderer: detail.exportsRenderer,
+      renderers: context.renderers,
       contentMetadataOverrides: detail.metadata?.contentMetadataOverrides,
     };
 

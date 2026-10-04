@@ -1,3 +1,6 @@
+import { renderEngines } from "../../adapters/renderEngines.mts";
+import { exportStatusKey } from "../../core/domain/render/exportStatus.ts";
+import { resolveTrackRenderer } from "../../core/domain/video/renderers.ts";
 import { assertExportMode } from "../../core/domain/video/exportFreshness.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ExportMissingView } from "../../core/domain/api/views.ts";
@@ -111,20 +114,21 @@ export const handleExportMissing = async (
     mode: assertExportMode(body.mode),
     slugs: readSlugs(body),
     presetIds: readPresets(body),
-    inFlight: renderManager.inFlightTargets(),
+    inFlight: renderManager.inFlightExports(),
+    renderers: renderEngines.status(),
   });
 
   // Inspection is asynchronous; another request may have queued the same
   // target meanwhile. Recheck immediately before the synchronous batch enqueue.
-  const live = renderManager.inFlightTargets();
+  const live = renderManager.inFlightExports();
   const newlyQueued = plan.selected.filter(
-    (target) => live.get(`${target.slug}::${target.presetId}`) === "queued",
+    (target) => live.get(exportStatusKey(target.slug, target.presetId, resolveTrackRenderer(target.engine))) === "queued",
   );
   const newlyActive = plan.selected.filter(
-    (target) => live.get(`${target.slug}::${target.presetId}`) === "active",
+    (target) => live.get(exportStatusKey(target.slug, target.presetId, resolveTrackRenderer(target.engine))) === "active",
   );
   const selected = plan.selected.filter(
-    (target) => !live.has(`${target.slug}::${target.presetId}`),
+    (target) => !live.has(exportStatusKey(target.slug, target.presetId, resolveTrackRenderer(target.engine))),
   );
 
   const common = {
@@ -157,14 +161,14 @@ export const handleExportMissing = async (
     return;
   }
 
-  const { batch, locked } = renderManager.startBatch(
+  const { batch, locked, skipped } = renderManager.startBatch(
     toRenderTargets({ ...plan, selected }),
   );
   const queuedKeys = new Set(
     batch.jobs.map((job) => `${job.slug}::${job.presetId}`),
   );
   const lockedKeys = new Set(
-    locked.map((target) => `${target.slug}::${target.preset}`),
+    [...locked, ...skipped].map((target) => `${target.slug}::${target.preset}`),
   );
 
   const payload: ExportMissingView = {

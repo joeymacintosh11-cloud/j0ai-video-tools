@@ -68,7 +68,7 @@ export const DELIVERY_REASON_LABELS: Record<DeliveryReason, string> = {
   source_changed: "Export changed while delivering",
   copy_failed: "Copy failed",
   not_configured: "No destination configured",
-  renderer_not_supported: "Delivery handles Remotion exports only",
+  renderer_not_supported: "Export renderer no longer matches the track",
 };
 
 /** How long a track's delivery folder name may be. */

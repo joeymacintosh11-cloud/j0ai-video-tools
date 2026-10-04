@@ -1,3 +1,4 @@
+import { exportStatusKey } from "../../core/domain/render/exportStatus.ts";
 import {
   assertExportMode,
   type ExportMode,
@@ -15,7 +16,11 @@ import {
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
 import {
-  remotionOnlyProblem,
+  workflowRendererProblem,
+  workflowEngineField,
+  rendererRunProblem,
+  type RendererId,
+  type RendererStatus,
   resolveTrackRenderer,
 } from "../../core/domain/video/renderers.ts";
 import { trackExportCoverage } from "../tracks/exportCoverage.ts";
@@ -44,6 +49,7 @@ import { listTracks } from "../tracks/listTracks.ts";
  */
 
 export type PlannedTarget = {
+  readonly engine?: RendererId;
   readonly staleReasons?: readonly StaleReason[];
   readonly slug: string;
   readonly presetId: RenderPresetId;
@@ -89,11 +95,12 @@ export type PlanMissingExportsInput = {
    */
   readonly presetIds?: readonly RenderPresetId[] | null;
   /**
-   * Work already in flight, keyed "<slug>::<presetId>". Passed in rather than
+   * Work already in flight, keyed by exportStatusKey(slug, presetId, renderer). Passed in rather than
    * read from the render manager here, so this module stays free of the
    * server's queue: the API route supplies the live map, and the CLI — a
    * separate process that knows nothing of a running server — supplies nothing.
    */
+  readonly renderers?: readonly RendererStatus[];
   readonly inFlight?: ReadonlyMap<string, "queued" | "active">;
 };
 
@@ -189,13 +196,8 @@ export const planMissingExports = async (
       continue;
     }
 
-    // This planner renders and judges Remotion exports only. A track that
-    // prefers another renderer is reported rather than given Remotion renders
-    // it did not ask for; it is rendered from its own Render panel instead.
-    const rendererProblem = remotionOnlyProblem(
-      resolveTrackRenderer(inspection.metadata?.renderer),
-      "Export missing",
-    );
+    const renderer = resolveTrackRenderer(inspection.metadata?.renderer);
+    const rendererProblem = workflowRendererProblem(renderer);
     if (rendererProblem !== null) {
       invalid.push({ slug, code: "RENDERER_NOT_SUPPORTED", reason: rendererProblem });
       continue;
@@ -203,11 +205,12 @@ export const planMissingExports = async (
 
     const presetIds =
       override ?? resolveExportPresets(inspection.metadata?.exportPresets);
-    const coverage = trackExportCoverage(slug, inspection.metadata);
+    const coverage = trackExportCoverage(slug, inspection.metadata, renderer);
 
     for (const presetId of presetIds) {
       const facts = coverage.find((entry) => entry.presetId === presetId);
       const target: PlannedTarget = {
+        ...workflowEngineField(renderer),
         slug,
         presetId,
         label: RENDER_PRESETS[presetId].shortLabel,
@@ -219,7 +222,7 @@ export const planMissingExports = async (
 
       intendedTargets.push(target);
 
-      const state = inFlight.get(`${slug}::${presetId}`);
+      const state = inFlight.get(exportStatusKey(slug, presetId, renderer));
       if (state === "active") {
         skippedActive.push(target);
         continue;
@@ -250,11 +253,19 @@ export const planMissingExports = async (
     }
   }
 
+  const runnable = selected.filter((target) => {
+    const reason = rendererRunProblem(resolveTrackRenderer(target.engine), input.renderers);
+    if (reason === null) return true;
+    if (!invalid.some((entry) => entry.slug === target.slug)) {
+      invalid.push({ slug: target.slug, code: "RENDERER_UNAVAILABLE", reason });
+    }
+    return false;
+  });
   return {
     mode,
     stale,
     current,
-    selected,
+    selected: runnable,
     catalogue,
     tracks: inspections.length,
     intendedTargets,
@@ -271,4 +282,5 @@ export const toRenderTargets = (plan: ExportPlan): readonly RenderTarget[] =>
   plan.selected.map((target) => ({
     slug: target.slug,
     preset: target.presetId,
+    ...workflowEngineField(resolveTrackRenderer(target.engine)),
   }));

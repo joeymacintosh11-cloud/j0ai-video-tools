@@ -1,3 +1,4 @@
+import { resolveTrackRenderer } from "../../core/domain/video/renderers.ts";
 import { readdirSync } from "node:fs";
 import {
   DELIVERY_HISTORY_DEFAULT_LIMIT,
@@ -160,14 +161,15 @@ export type ReconcileDeliveryHistoryResult = {
 };
 
 /**
- * Every delivery receipt this project holds, oldest delivery first.
+ * Each track's current renderer receipts, oldest delivery first.
  *
  * A shallow read of `out/` — our own directory, one entry per track — and then
- * one small file read per known format. Deliberately not a scan of the
- * destination: receipts are the record of what was delivered, and an MP4 at the
- * destination has never been evidence of anything on its own.
+ * one track inspection and one small file read per known format. An old-engine
+ * receipt never substitutes for the preferred engine's receipt. This is not
+ * a scan of the destination: receipts record what was delivered; an MP4 at
+ * the destination has never been evidence of anything on its own.
  */
-const allReceipts = (): readonly DeliveryReceipt[] => {
+const allReceipts = async (): Promise<readonly DeliveryReceipt[]> => {
   let slugs: readonly string[];
 
   try {
@@ -178,10 +180,19 @@ const allReceipts = (): readonly DeliveryReceipt[] => {
     return [];
   }
 
-  return slugs
-    .flatMap((slug) =>
-      RENDER_PRESET_IDS.map((presetId) => readDeliveryReceipt(slug, presetId)),
-    )
+  const inspections = await Promise.all(slugs.map((slug) => inspectTrack(slug)));
+  return inspections
+    .flatMap((inspection) => {
+      // A draft preserves a declared preference even when another metadata
+      // field is invalid. Missing metadata keeps legacy Remotion resolution;
+      // the reconciliation loop still reports that it cannot reconstruct it.
+      const renderer = resolveTrackRenderer(
+        inspection.metadata?.renderer ?? inspection.metadataDraft?.renderer,
+      );
+      return RENDER_PRESET_IDS.map((presetId) =>
+        readDeliveryReceipt(inspection.slug, presetId, renderer),
+      );
+    })
     .filter((receipt): receipt is DeliveryReceipt => receipt !== null)
     .sort((a, b) => Date.parse(a.deliveredAt) - Date.parse(b.deliveredAt));
 };
@@ -245,7 +256,7 @@ export const reconcileDeliveryHistory = async ({
   }
 
   const recorded = new Set(read.events.map((event) => event.deliveryId));
-  const receipts = allReceipts();
+  const receipts = await allReceipts();
   const appended: DeliveryLogEvent[] = [];
   const unreconcilable: UnreconciledDelivery[] = [];
   let alreadyRecorded = 0;

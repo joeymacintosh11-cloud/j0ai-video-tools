@@ -30,6 +30,8 @@ import {
   templateWarnings,
 } from "./templateContract.mts";
 
+import { acquireAfterEffectsStagingLock } from "./stagingLock.mts";
+
 export { STAGED_ASSET_NAMES };
 
 /**
@@ -179,12 +181,16 @@ export const createAfterEffectsRenderEngine = (
 
       let resolved: { composition: string; durationInFrames: number; fps: number } | null = null;
       let child: ReturnType<typeof nodeSpawn> | null = null;
+      let childClosed: Promise<void> | null = null;
+      let releaseStaging: (() => void) | null = null;
 
       return {
         // aerender reads the assets in place, through the sidecar's absolute paths.
         assetRoot: deps.publicDir,
 
         resolve: async (props) => {
+          releaseStaging ??= acquireAfterEffectsStagingLock(config.dataFile);
+          log("After Effects: serial execution; shared staging lock held until aerender stops.");
           const preset = renderPreset(props.presetId ?? DEFAULT_RENDER_PRESET_ID);
           const composition = config.compositions[preset.id] ?? config.composition;
           const seconds = await deps.probeAudioDurationInSeconds(path.join(deps.publicDir, props.audioSrc));
@@ -296,6 +302,7 @@ export const createAfterEffectsRenderEngine = (
 
             const running = deps.spawn(discovery.path, args, { stdio: ["ignore", "pipe", "pipe"] });
             child = running;
+            childClosed = new Promise<void>((done) => running.once("close", () => done()));
 
             const read = (stream: NodeJS.ReadableStream | null) => {
               if (!stream) return;
@@ -392,7 +399,10 @@ export const createAfterEffectsRenderEngine = (
 
         close: async () => {
           child?.kill("SIGKILL");
+          if (childClosed !== null) await childClosed;
           child = null;
+          releaseStaging?.();
+          releaseStaging = null;
         },
       };
     },

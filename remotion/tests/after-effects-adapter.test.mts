@@ -507,7 +507,7 @@ test("render-track --engine after-effects: unavailable, then unconfigured, then 
   );
 });
 
-test("planning commands refuse another engine instead of re-rendering forever", async () => {
+test("planning commands refuse an explicit engine that conflicts with saved Remotion intent", async () => {
   for (const [script, args] of [
     ["render-missing", ["--all-tracks", "--dry-run"]],
     ["content-package", ["ghetto-geek"]],
@@ -515,8 +515,8 @@ test("planning commands refuse another engine instead of re-rendering forever", 
   ] as const) {
     const result = await runScript(script, [...args, "--engine", "after-effects"], { TOSHI_AERENDER_PATH: FAKE_AERENDER });
     assert.equal(result.code, 1, script);
-    assert.match(result.output, new RegExp(`${script} plans against remotion exports and cannot render with "after-effects" yet`), script);
-    assert.match(result.output, /npm run render-track -- <track-slug> --engine after-effects/, script);
+    assert.match(result.output, new RegExp(`${script} cannot override preferred renderer remotion with after-effects`), script);
+    assert.match(result.output, /Change the track's saved preference first/, script);
   }
 });
 
@@ -666,4 +666,21 @@ test("a template without the composition name or a waveform effect renders, with
     onEngineLog: (message) => quiet.logs.push(message),
   });
   assert.deepEqual(quiet.logs.filter((message) => message.includes("warning:")), []);
+});
+
+
+test("overlapping AE sessions cannot overwrite staged footage; a closed session permits the next", async (t) => {
+  const f = await setup(t);
+  if (!f) return;
+  const first = await f.engine.open();
+  const second = await f.engine.open();
+  try {
+    await first.resolve(f.props);
+    await assert.rejects(second.resolve(f.props), trackErrorCode("RENDER_TARGET_LOCKED", /AE renders run serially/));
+    await first.close();
+    await second.resolve(f.props);
+  } finally {
+    await first.close();
+    await second.close();
+  }
 });

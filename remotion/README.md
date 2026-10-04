@@ -133,7 +133,8 @@ Rendering uses the Remotion engine. `render-track` also takes an optional
 as before) or `after-effects` (see below). `premiere` is a reserved name that
 is refused as "not available", and anything else is an unknown engine.
 `render-missing`, `content-package` and `content-package-batch` accept
-`--engine remotion` only, because they plan from Remotion's exports. Each
+an optional `--engine` constraint; with no flag they follow each track's saved
+preference. A conflicting flag is refused, never used to override it. Each
 export records the engine that made it; see
 [ARCHITECTURE.md](ARCHITECTURE.md#choosing-the-engine-per-job).
 
@@ -163,16 +164,18 @@ track read refuses the batch.
 
 A track's export marks judge **its** engine's exports. After Effects' live in
 `out/<slug>/after-effects/`, so a Remotion export never counts for a track
-that chose After Effects, or the other way round. Export missing, delivery,
-release bundles, content packages and destination fix plans handle Remotion
-exports only. For a track that chose After Effects they leave it out with
-that reason, rather than rendering, copying or describing a Remotion video in
-its place. Auto-delivery after an After Effects render reports the export as
-not delivered, for the same reason.
+that chose After Effects, or the other way round. Export missing, stale
+re-export, content packages, delivery and auto-delivery follow that preference.
+A current AE export can be packaged and delivered even on a machine without
+AE installed. Required renders stay blocked with the local availability or
+configuration reason. Delivery pins the renderer and rechecks the preference
+before publishing, so changing engines cannot publish the previous engine's
+video. Delivery receipts live beside each engine's source export.
 
-The preference is a default for the app only. On the command line and the API
-an engine is still named explicitly: `render-track` without `--engine` and
-`POST .../render` without `"engine"` render with Remotion, as they always did.
+Release bundles and destination repair plans remain Remotion-only; AE repairs
+require manual review. Direct `render-track` without `--engine` and direct API
+render requests without `"engine"` still render with Remotion. Workflow planners
+apply saved preferences explicitly to every target, including mixed batches.
 
 ### Rendering with After Effects (proof of concept)
 
@@ -331,9 +334,8 @@ text, and why a render failed
 (including `aerender`'s exit code and last output lines).
 
 **Limits of this proof of concept:**
-- Only `render-track` and the API render with After Effects. Freshness
-  checks, delivery, release bundles and content packages still look at
-  Remotion exports only.
+- Batch planning, content packages and delivery support After Effects. Release
+  bundles and automatic destination repair remain Remotion-only.
 - One After Effects render at a time per data folder, because they share the
   data file and staged assets.
 - Nothing checks that a composition's canvas, frame rate or length matches the
@@ -343,8 +345,9 @@ text, and why a render failed
   Effects' default font, and has no animation beyond the waveform.
 - The text is written in when the template is built, so each new track means
   rerunning the script by hand in After Effects (the render stops and says so).
-  Batch renders across tracks would need that rebuild to be automated.
-- The UI does not offer engine selection yet.
+  Batch planning preserves every track's engine, but unattended execution across
+  different AE tracks requires a future automated template rebuild. Today a
+  mismatched track/template fails explicitly; it never falls back to Remotion.
 
 ### Export formats
 
@@ -940,7 +943,10 @@ committed, so an event can never describe a file that is not there — and if th
 log itself cannot be written, the delivery still succeeded and says
 "not recorded in the delivery log" rather than pretending to have failed.
 `npm run delivery-history-reconcile` puts that right from the receipts, marking
-anything it reconstructs as such.
+anything it reconstructs as such. It resolves each track's saved renderer
+preference and reads that engine's receipts only; a missing AE receipt never
+substitutes a Remotion receipt, or vice versa. Tracks without a preference
+continue to use Remotion.
 
 **If the log is damaged** it says so, with line numbers, and still shows what it
 could read — a bad line never costs you the rest, and no view reports a damaged
@@ -963,6 +969,10 @@ destination. Nothing checks that against what is actually there — until now. A
 health scan compares the two: every delivered file a receipt names, every
 track's release bundle, and (for a catalogue-wide scan) every folder at the
 destination root that looks like one of this app's own.
+For each destination filename, the scan considers only receipts matching that
+root and path. If both engines have delivered there, the most recent matching
+receipt is checked with its own renderer's export facts. A receipt for another
+destination cannot hide a missing file.
 
 ```console
 npm run destination-health
@@ -1380,3 +1390,17 @@ Found an issue with Remotion? [File an issue here](https://github.com/remotion-d
 ## License
 
 Note that for some entities a company license is needed. [Read the terms here](https://github.com/remotion-dev/remotion/blob/main/LICENSE.md).
+
+### After Effects batch execution safety
+
+The API render queue runs one worker at a time, including mixed-engine batches.
+CLI batch commands also render sequentially. After Effects additionally holds
+`.toshi-ae-render.lock/` beside its configured data file from staging until
+`aerender` has stopped; another CLI/API session using that folder is refused.
+A crashed owner leaves the lock in place: verify Adobe rendering has stopped
+before manually removing it. Shared footage must never be overwritten during
+an active render. Queue logs identify this serial execution policy.
+
+The configured AE project is still built for one track's text. Serialization
+does not rebuild it for a different track: the existing template marker check
+refuses mismatches and reports the manual rebuild steps, without a fallback.

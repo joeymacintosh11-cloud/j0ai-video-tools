@@ -1,10 +1,8 @@
 import {
-  RENDER_PRESETS,
   type RenderPresetId,
 } from "../../core/domain/video/renderPresets.ts";
 import {
   DEFAULT_RENDERER_ID,
-  RENDERER_LABELS,
   type RendererId,
 } from "../../core/domain/video/renderers.ts";
 import { updateReleaseBundleAfterDelivery } from "./autoReleaseBundle.ts";
@@ -29,9 +27,8 @@ export const deliverAfterRender = async (
   presetId: RenderPresetId,
   report?: (outcome: DeliveryOutcome) => void,
   /**
-   * The engine that just rendered. Delivery copies Remotion's export, so after
-   * any other engine's render it would ship a different video than the one
-   * just made; that is reported as not delivered instead.
+   * The engine that just rendered; pin delivery to it so a preference change
+   * cannot substitute another engine's export.
    */
   renderer: RendererId = DEFAULT_RENDERER_ID,
   /** Read from delivery.local.json when omitted, as deliverExport does. */
@@ -42,25 +39,7 @@ export const deliverAfterRender = async (
 
     if (!settings.autoDeliver || settings.root === null) return null;
 
-    if (renderer !== DEFAULT_RENDERER_ID) {
-      const skipped: DeliveryOutcome = {
-        slug,
-        presetId,
-        label: RENDER_PRESETS[presetId].shortLabel,
-        status: "failed",
-        reason: "renderer_not_supported",
-        destinationPath: null,
-        destinationRelativePath: null,
-        bytes: null,
-        message: `Auto-delivery copies ${RENDERER_LABELS[DEFAULT_RENDERER_ID]} exports only, so this ${RENDERER_LABELS[renderer]} export was not delivered.`,
-        historyEventId: null,
-        historyProblem: null,
-      };
-      report?.(skipped);
-      return skipped;
-    }
-
-    const outcome = await deliverExport({ slug, presetId, settings });
+    const outcome = await deliverExport({ slug, presetId, settings, engine: renderer });
     report?.(outcome);
 
     // After the delivery has released the target lock, and only when asked for.

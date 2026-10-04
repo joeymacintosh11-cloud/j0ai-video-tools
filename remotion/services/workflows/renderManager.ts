@@ -199,6 +199,9 @@ class RenderManager {
         ? `Queued ${presetId} render for "${slug}".`
         : `Queued ${presetId} render for "${slug}" with the ${engine} engine.`,
     );
+    if (engine === "after-effects") {
+      this.appendLog(job, "info", "After Effects runs serially: one worker at a time, with shared staging protected across CLI/API processes.");
+    }
     void recordRenderJournalEvent({
       jobId: job.id,
       batchId: job.batchId,

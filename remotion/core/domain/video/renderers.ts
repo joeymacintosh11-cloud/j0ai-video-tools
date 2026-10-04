@@ -5,7 +5,7 @@ import { TrackError, trackIssue } from "../tracks/errors.ts";
  *
  * An id here is a *name*, not an implementation: which of them can actually
  * render on this machine is decided by the adapters that are registered
- * (adapters/renderEngines.mts). Today only "remotion" has one. The others are
+ * (adapters/renderEngines.mts). Remotion and After Effects have adapters; Premiere remains
  * reserved so that jobs, journals and library records can already carry them,
  * and so that asking for one fails with "not available" rather than "unknown".
  */
@@ -80,7 +80,7 @@ export const parseTrackRenderer = (
 /**
  * Why a Remotion-only pipeline leaves a track out, or null when it doesn't.
  *
- * Coverage, delivery, release bundles, content packages and their planners
+ * Release bundles and automatic destination repair
  * judge Remotion's exports (out/<slug>/<preset>.mp4) only. For a track that
  * prefers another renderer, acting on those exports would let a Remotion video
  * stand in for the one the track asked for, so each of them leaves the track
@@ -133,3 +133,22 @@ export const storedRendererId = (value: unknown): RendererId | null =>
  */
 export const rendererFingerprintParts = (renderer: RendererId): readonly string[] =>
   renderer === "remotion" ? [] : [`renderer:${renderer}`];
+
+/** Workflow support is independent of whether an engine is installed here. */
+export const workflowRendererProblem = (renderer: RendererId): string | null =>
+  renderer === "remotion" || renderer === "after-effects"
+    ? null
+    : `${RENDERER_LABELS[renderer]} workflows are not implemented.`;
+
+/** Keep legacy Remotion request shapes unchanged. */
+export const workflowEngineField = (renderer: RendererId): { readonly engine?: RendererId } =>
+  renderer === DEFAULT_RENDERER_ID ? {} : { engine: renderer };
+
+export const rendererRunProblem = (
+  renderer: RendererId,
+  statuses?: readonly RendererStatus[] | null,
+): string | null => {
+  const status = statuses?.find((entry) => entry.id === renderer);
+  return status === undefined || status.state === "ready" ? null
+    : `${RENDERER_LABELS[renderer]} is ${status.state === "unavailable" ? "unavailable" : "not configured"}: ${status.problem ?? "check local settings"}`;
+};

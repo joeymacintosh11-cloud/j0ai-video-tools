@@ -156,9 +156,8 @@ export type TrackSummaryView = {
    * Whose exports `exports` describes: the renderer this track resolves to.
    * Remotion's live at out/<slug>/<preset>.mp4, any other renderer's at
    * out/<slug>/<renderer>/<preset>.mp4, so a Remotion export never counts for
-   * a track that prefers After Effects, or the other way round. Delivery and
-   * release bundles handle Remotion exports only, so for any other renderer
-   * each export's `delivery` and the `releaseBundle` say so.
+   * a track that prefers After Effects, or the other way round. Delivery uses
+   * the same preferred renderer. Release bundles remain Remotion-only.
    */
   readonly exportsRenderer: RendererId;
   /**
@@ -852,6 +851,7 @@ export type ContentPackageBatchApplyBody = ContentPackageBatchBody & {
 
 /** One platform/preset target's planned action, at plan or apply time. */
 export type ContentPackagePlannedActionView = {
+  readonly engine?: RendererId;
   readonly slug: string;
   readonly platformId: PlatformId;
   readonly presetId: RenderPresetId;
@@ -908,6 +908,7 @@ export type ContentPackageBatchApplyView = {
 };
 
 export type ContentPackageBatchJobReferenceView = {
+  readonly engine?: RendererId;
   readonly actionId: string;
   readonly slug: string;
   readonly platformId: PlatformId;

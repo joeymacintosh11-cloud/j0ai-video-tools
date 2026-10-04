@@ -131,7 +131,7 @@ const engineHint = (renderer: RendererId, renderers: RenderersView | null): stri
   if (renderer === DEFAULT_RENDERER_ID) {
     return "Renders started here use Remotion — the default, which every track without a choice uses.";
   }
-  return `Renders started here use ${name}, into their own folder. Delivery, release bundles, content packages and Export missing handle Remotion exports only, so they leave this track out.`;
+  return `Renders started here use ${name}, into their own folder. Content packages, Export missing and delivery use this engine. After Effects renders run serially with a template built for this track; release bundles and destination repair remain Remotion-only.`;
 };
 
 /**

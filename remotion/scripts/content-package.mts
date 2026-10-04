@@ -124,7 +124,8 @@ const buildPackage = async (
 
   const settings = await readDeliverySettings();
   const { root } = resolveDeliveryRoot(settings);
-  const coverage = trackExportCoverage(slug, inspection.metadata);
+  const renderer = resolveTrackRenderer(inspection.metadata?.renderer ?? inspection.metadataDraft?.renderer);
+  const coverage = trackExportCoverage(slug, inspection.metadata, renderer);
   const intended = new Set(resolveExportPresets(inspection.metadata?.exportPresets));
 
   const input: ContentPackageInput = {
@@ -133,11 +134,8 @@ const buildPackage = async (
     validationOk: inspection.validation.ok,
     metadata: inspection.metadata,
     contentMetadataOverrides: inspection.metadata?.contentMetadataOverrides,
-    // A track that prefers another renderer is blocked with that reason, the
-    // same as in the app — never planned as Remotion renders.
-    renderer: resolveTrackRenderer(
-      inspection.metadata?.renderer ?? inspection.metadataDraft?.renderer,
-    ),
+    renderer,
+    renderers: renderEngines.status(),
     exports: coverage.map((facts) => ({
       presetId: facts.presetId,
       status: facts.freshness,
@@ -149,6 +147,7 @@ const buildPackage = async (
         facts,
         inspection.metadata === null ? null : root,
         inspection.metadata?.deliveryFolder,
+        renderer,
       ),
     })),
   };
@@ -194,7 +193,6 @@ const describeBuildPlan = (plan: ExportPlan): void => {
 
 runCli("inspecting content package", async () => {
   const { slug, mode, platforms, json, apply, engineId } = parseArgs(process.argv.slice(2));
-  assertPlanningEngine(engineId, "content-package");
 
   if (!slug) {
     printUsage();
@@ -202,6 +200,7 @@ runCli("inspecting content package", async () => {
   }
 
   const pkg = await buildPackage(slug, mode, platforms);
+  if (process.argv.includes("--engine")) assertPlanningEngine(engineId, "content-package", resolveTrackRenderer(pkg.renderer));
 
   if (json) {
     console.log(JSON.stringify(pkg, null, 2));
@@ -244,7 +243,7 @@ runCli("inspecting content package", async () => {
     let lastLoggedPercentage = -1;
 
     const { outputLabel } = await renderTrackVideo({
-      engine: await renderEngines.resolve(engineId),
+      engine: await renderEngines.resolve(target.engine),
       slug: target.slug,
       props,
       onRecorded: printLibraryOutcome,
