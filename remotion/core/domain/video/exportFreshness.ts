@@ -11,6 +11,9 @@ export type StaleReason =
   | "audio_changed"
   | "preset_changed"
   | "visualizer_changed"
+  | "template_changed"
+  | "template_identity_missing"
+  | "template_unavailable"
   | "manifest_missing"
   | "manifest_invalid"
   | "output_changed";
@@ -21,6 +24,9 @@ export const STALE_REASON_LABELS: Record<StaleReason, string> = {
   audio_changed: "Audio changed",
   preset_changed: "Format changed",
   visualizer_changed: "Visualizer or brand changed",
+  template_changed: "Template changed",
+  template_identity_missing: "Earlier export — template identity unknown; re-export required",
+  template_unavailable: "Template unavailable — freshness unknown; check renderer settings",
   manifest_missing: "Earlier export — no manifest",
   manifest_invalid: "Manifest unreadable or incompatible",
   output_changed: "Output changed outside the renderer",

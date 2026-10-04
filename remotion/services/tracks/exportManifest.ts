@@ -28,7 +28,7 @@ import { PUBLIC_DIR } from "./trackLocations.ts";
 
 export type ExportInputs = Readonly<
   Record<"metadata" | "cover" | "audio" | "preset" | "visualizer", string>
->;
+> & { readonly template?: string };
 export type ExportManifest = {
   readonly schemaVersion: typeof EXPORT_MANIFEST_VERSION;
   readonly slug: string;
@@ -51,6 +51,7 @@ export const inputFingerprint = (inputs: ExportInputs): string =>
     inputs.audio,
     inputs.preset,
     inputs.visualizer,
+    ...(inputs.template === undefined ? [] : [inputs.template]),
   ]);
 
 // Bounded, process-local content cache. Stat every time; hash in 1 MiB chunks
@@ -75,10 +76,12 @@ export const fileContentHash = (file: string): string => {
     while ((bytes = readSync(fd, buffer, 0, buffer.length, null)) > 0)
       digest.update(buffer.subarray(0, bytes));
     const after = fstatSync(fd);
+    const atPath = statSync(file);
     if (
       [after.dev, after.ino, after.size, after.mtimeMs, after.ctimeMs].join(
         ":",
-      ) !== identity
+      ) !== identity ||
+      [atPath.dev, atPath.ino, atPath.size, atPath.mtimeMs, atPath.ctimeMs].join(":") !== identity
     ) {
       throw new Error(`Input changed while fingerprinting: ${file}`);
     }
@@ -97,9 +100,9 @@ export const fileContentHash = (file: string): string => {
  * renderer is the engine that produced (or would produce) the export; its
  * part of the visualizer fingerprint is empty for Remotion, so every existing
  * Remotion manifest keeps exactly the fingerprint it was written with.
- * template is the engine-reported template (RenderTemplateIdentity), absent
- * for the built-in visualizer; when present, a change to it is a visualizer
- * change.
+ * The engine-reported template is a separate AE input, so its changes can be
+ * explained independently of brand changes. Other renderers retain their
+ * existing visualizer fingerprint behavior and Remotion's shape is unchanged.
  */
 export const fingerprintInputs = (
   props: VisualizerProps,
@@ -130,10 +133,12 @@ export const fingerprintInputs = (
     visualizer: hash([
       VISUALIZER_VERSION,
       ...rendererFingerprintParts(renderer),
-      ...(template === undefined ? [] : [`template:${template.composition}`, `template-version:${template.version}`]),
+      ...(template === undefined || renderer === "after-effects" ? [] : [`template:${template.composition}`, `template-version:${template.version}`]),
       fileContentHash(path.join(publicRoot, props.brandLogoSrc)),
       fileContentHash(path.join(publicRoot, props.brandBadgeSrc)),
     ]),
+    ...(renderer === "after-effects" && template !== undefined
+      ? { template: hash([template.composition, template.version]) } : {}),
   };
 };
 
@@ -180,6 +185,7 @@ export const readExportManifest = (
       value.presetId !== presetId ||
       !Number.isFinite(Date.parse(value.renderedAt)) ||
       !keys.every((key) => /^[a-f0-9]{64}$/.test(value.inputs?.[key])) ||
+      (value.inputs?.template !== undefined && !/^[a-f0-9]{64}$/.test(value.inputs.template)) ||
       value.inputFingerprint !== inputFingerprint(value.inputs) ||
       !(value.output?.bytes > 0) ||
       !Number.isFinite(value.output.mtimeMs) ||

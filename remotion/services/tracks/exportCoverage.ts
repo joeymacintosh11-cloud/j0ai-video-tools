@@ -21,6 +21,7 @@ import {
   type RendererId,
 } from "../../core/domain/video/renderers.ts";
 import { trackLocations, trackOutputLocation } from "./trackLocations.ts";
+import { currentTemplateIdentity } from "../render/templateIdentity.ts";
 
 /**
  * Export presence and input freshness, read from disk and sidecar manifests.
@@ -104,13 +105,8 @@ const fileFacts = (
  * renderer's exports live in their own folder (trackOutputLocation), so one
  * engine's file can never be reported as another's.
  *
- * For another renderer the visualizer input is not re-checked: its
- * fingerprint includes the engine's template identity (an After Effects
- * project's content hash, say), which only that engine can compute, and the
- * engine runtime must not reach into adapters for it. Everything the track
- * itself owns — metadata, cover, audio, format — and the file's own identity
- * still are, so a track edit or a file touched outside the renderer is
- * reported as stale; a rebuilt template is not, until the next render.
+ * Template-driven freshness uses the observation port wired by the host,
+ * without launching a renderer or requiring a prepared working copy.
  */
 export const trackExportCoverage = (
   slug: string,
@@ -157,17 +153,21 @@ export const trackExportCoverage = (
         inputFingerprint: manifest.inputFingerprint,
       };
     try {
+      const expected = renderer === "after-effects" ? currentTemplateIdentity(renderer, preset.id) : null;
       const current = fingerprintInputs(
         buildTrackProps({ slug, metadata, analysisAvailable: true }),
         preset.id,
         undefined,
         renderer,
+        expected?.template ?? undefined,
       );
       const staleReasons = compareInputs(manifest.inputs, current).filter(
-        // See above: only the engine can recompute another renderer's
-        // visualizer (template) input.
-        (reason) => renderer === DEFAULT_RENDERER_ID || reason !== "visualizer_changed",
+        // Legacy records lack this separate input; give a specific safe reason.
+        (reason) => (renderer === DEFAULT_RENDERER_ID || renderer === "after-effects" || reason !== "visualizer_changed") &&
+          (reason !== "template_changed" || manifest.inputs.template !== undefined),
       );
+      if (renderer === "after-effects" && manifest.inputs.template === undefined) staleReasons.push("template_identity_missing");
+      if (expected?.template === null) staleReasons.push("template_unavailable");
       const identity = outputIdentity(output.path);
       if (
         identity.bytes !== manifest.output.bytes ||

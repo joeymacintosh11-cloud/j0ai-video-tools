@@ -375,8 +375,42 @@ canonical text/marker, track asset identity, composition, and staged asset
 paths. A provenance record binds it to the prepared project's full SHA-256.
 Corrupt, missing or mismatched copies are cache misses; cache hits skip
 `osascript`. Changes to generated-project behavior must bump `PREPARATION_VERSION`. Exports report a stable template version comprising the base hash
-and preparation version. Existing renderer-aware freshness behavior is retained;
-this is not a new catalogue-wide template-change scan.
+and preparation version. Normal catalogue/status inspection now compares the
+configured base template with the identity stored in each AE export; no render
+is needed to discover a template change.
+
+**AE export freshness.** The canonical template version is
+`aep-sha256:<full SHA-256>;prep:<PREPARATION_VERSION>;mode:<manual|auto>`.
+The selected composition is part of the export's template input too. This
+identity describes the configured base and preparation contract, independent
+of the track or generated working-copy bytes. Two tracks using the same base,
+mode, version and composition share this identity.
+
+AE manifests store a separate `inputs.template` digest of the composition and
+canonical version. Editing/replacing the base, changing the preparation
+contract version, switching manual/auto mode or changing the selected
+composition reports **Template changed**. Metadata, audio, cover, format,
+renderer, visualizer and brand checks still apply. Remotion's input fingerprints
+and historical manifests keep their existing behavior.
+
+Older AE exports without this explicit template input report **Earlier export —
+template identity unknown; re-export required**. They are never silently
+certified current. A missing, unreadable or unconfigured base reports
+**Template unavailable — freshness unknown; check renderer settings** and
+prevents readiness/delivery; it never selects Remotion instead. Both manual
+and auto modes can inspect freshness without launching Adobe, even when
+`aerender` is unavailable. These observations feed detail/catalogue status,
+stale/missing-and-stale planning and content-package readiness.
+
+Preparation-cache validity asks whether a working copy can safely be reused;
+export freshness asks whether an output used the currently expected template
+and track inputs. Deleting prepared copies does not stale an export, and a
+valid prepared copy does not certify an old export. Hashing uses a bounded
+process-local content cache, checking file device/inode, size, modification
+and change times on every observation. The base is hashed once while unchanged,
+not once per track. Replacements and edits invalidate that cache; no watcher
+or persistent hash is used. Changes to external template dependencies/plugins
+without changing the base or preparation version are outside this identity.
 
 The automatic lifecycle is: staging lock → stage assets → hash base → validate
 cache → on a miss, acquire the shared GUI lock, write a unique job, run headless

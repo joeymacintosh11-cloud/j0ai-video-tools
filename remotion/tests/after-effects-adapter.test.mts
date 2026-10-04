@@ -355,7 +355,7 @@ test("an After Effects render writes the sidecar, runs aerender, and publishes t
   const [record] = libraryFor(ctx.f.slug);
   assert.equal(record.template.renderer, "after-effects");
   assert.equal(record.template.composition, "Toshi 9x16");
-  assert.match(record.template.visualizerVersion, /^aep-sha256:[0-9a-f]{16}$/);
+  assert.match(record.template.visualizerVersion, /^aep-sha256:[0-9a-f]{64};prep:toshi-ae-prep-1;mode:manual$/);
   assert.equal(record.output.path, ae.label);
   assert.doesNotMatch(JSON.stringify(record), new RegExp(tmpdir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
@@ -363,11 +363,12 @@ test("an After Effects render writes the sidecar, runs aerender, and publishes t
   const { manifest } = readExportManifest(ae.manifest, ctx.f.slug, "vertical-9x16");
   assert.ok(manifest);
   assert.notEqual(manifest.inputs.visualizer, fingerprintInputs(ctx.props, "vertical-9x16").visualizer);
-  assert.notEqual(
+  assert.equal(
     manifest.inputs.visualizer,
     fingerprintInputs(ctx.props, "vertical-9x16", PUBLIC_DIR, "after-effects").visualizer,
-    "the template identity is part of it too",
+    "brand/renderer fingerprint is separate from template identity",
   );
+  assert.match(manifest.inputs.template!, /^[a-f0-9]{64}$/);
 
   // Diagnostics name the binary, project, composition and output.
   const logText = ctx.logs.join("\n");
@@ -387,7 +388,7 @@ test("editing the After Effects project changes the template version", async (t)
   assert.equal(first.template.composition, "Toshi Visualizer");
   assert.notEqual(first.template.visualizerVersion, second.template.visualizerVersion);
   assert.equal(second.exportKind, "reexport");
-  assert.ok(second.replaces?.changed.includes("visualizer_changed"));
+  assert.ok(second.replaces?.changed.includes("template_changed"));
 });
 
 for (const [mode, pattern] of [

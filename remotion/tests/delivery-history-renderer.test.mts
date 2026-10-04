@@ -17,8 +17,10 @@ import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
 import { fixture } from "./fixtures.mts";
+import { syntheticTemplate } from "./syntheticTemplate.mts";
 
 const setup = async (t: TestContext) => {
+  const template = await syntheticTemplate(t);
   const f = await fixture(t, { exportPresets: ["youtube-16x9"] });
   await writeFile(f.cover, "cover");
   await writeFile(f.beat, "audio");
@@ -35,7 +37,7 @@ const setup = async (t: TestContext) => {
     await updateTrackMetadata(f.slug, { renderer: renderer === "remotion" ? null : renderer });
     const metadata = (await inspectTrack(f.slug)).metadata!;
     const props = buildTrackProps({ slug: f.slug, metadata, analysisAvailable: true });
-    await publishExport(f.slug, "youtube-16x9", fingerprintInputs(props, "youtube-16x9", undefined, renderer),
+    await publishExport(f.slug, "youtube-16x9", fingerprintInputs(props, "youtube-16x9", undefined, renderer, renderer === "after-effects" ? template : undefined),
       async (file) => { await writeFile(file, `${renderer} video`); }, undefined, undefined, renderer);
     const outcome = await deliverExport({ slug: f.slug, presetId: "youtube-16x9", settings });
     assert.equal(outcome.status, "delivered", outcome.message ?? "");

@@ -54,6 +54,7 @@ import { managerWithWorkers, tick, Worker } from "./managerHarness.mts";
 import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
 import { fixture } from "./fixtures.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
+import { syntheticTemplate } from "./syntheticTemplate.mts";
 
 await isolateRenderJournalForThisFile();
 
@@ -327,6 +328,7 @@ test("GET /api/renderers reports this machine's engines, live, with After Effect
 
 /** A track with real cover/audio, and helpers to publish either engine's export. */
 const renderableTrack = async (t: TestContext, extra: Record<string, unknown> = {}) => {
+  const template = await syntheticTemplate(t);
   const f = await fixture(t, extra);
   await fs.writeFile(f.cover, "cover");
   await fs.writeFile(f.beat, "audio");
@@ -349,7 +351,7 @@ const renderableTrack = async (t: TestContext, extra: Record<string, unknown> = 
         undefined,
         renderer,
         // What the After Effects engine reports for its template.
-        renderer === "remotion" ? undefined : { composition: "Toshi Visualizer", version: "aep-sha256:0123456789abcdef" },
+        renderer === "remotion" ? undefined : template,
       ),
       async (file) => {
         await fs.writeFile(file, `${renderer} video`);
