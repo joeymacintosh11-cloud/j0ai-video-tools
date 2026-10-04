@@ -48,6 +48,11 @@ export type AfterEffectsConfig = {
    * and audio files (templateContract.mts). On unless set to false.
    */
   readonly templateCheck: boolean;
+  /** Opt-in; older configurations retain the manual builder workflow. */
+  readonly templatePreparation: "manual" | "auto";
+  readonly applicationBundleId: string;
+  readonly preparationTimeoutMs: number;
+  readonly workingDirectory: string;
 };
 
 export const afterEffectsConfigFile = (
@@ -134,6 +139,23 @@ export const readAfterEffectsConfig = (file: string = afterEffectsConfigFile()):
     }
   }
 
+  if (value.templatePreparation !== undefined && !["manual", "auto"].includes(String(value.templatePreparation))) {
+    throw notConfigured(`${where} "templatePreparation" must be "manual" or "auto".`);
+  }
+  if (value.applicationBundleId !== undefined &&
+      (typeof value.applicationBundleId !== "string" || !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(value.applicationBundleId))) {
+    throw notConfigured(`${where} "applicationBundleId" must be a bundle identity such as com.adobe.AfterEffects.application.`);
+  }
+  if (value.preparationTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(value.preparationTimeoutMs) || Number(value.preparationTimeoutMs) < 100 || Number(value.preparationTimeoutMs) > 3_600_000)) {
+    throw notConfigured(`${where} "preparationTimeoutMs" must be an integer from 100 to 3600000.`);
+  }
+  if (value.workingDirectory !== undefined && (typeof value.workingDirectory !== "string" || value.workingDirectory.trim() === "")) {
+    throw notConfigured(`${where} "workingDirectory" must be a non-empty path.`);
+  }
+  const dataFile = value.dataFile === undefined
+    ? path.join(path.dirname(project), TEMPLATE_DATA_FILE_NAME) : resolve(value.dataFile as string);
+
   return {
     project,
     composition: value.composition,
@@ -145,5 +167,10 @@ export const readAfterEffectsConfig = (file: string = afterEffectsConfigFile()):
         : resolve(value.dataFile as string),
     aerenderPath: value.aerenderPath === undefined ? null : resolve(value.aerenderPath as string),
     templateCheck: value.templateCheck !== false,
+    templatePreparation: (value.templatePreparation as "manual" | "auto" | undefined) ?? "manual",
+    applicationBundleId: (value.applicationBundleId as string | undefined) ?? "com.adobe.AfterEffects.application",
+    preparationTimeoutMs: (value.preparationTimeoutMs as number | undefined) ?? 120_000,
+    workingDirectory: value.workingDirectory === undefined
+      ? path.join(path.dirname(dataFile), ".toshi-ae-work") : resolve(value.workingDirectory as string),
   };
 };
