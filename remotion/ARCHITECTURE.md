@@ -22,6 +22,7 @@ core/                   Platform-independent. Pure TypeScript: no node:*, no
                         The sidecar JSON template-driven renderers read.
   ports/                Extension points that adapters implement.
     renderEngine.ts     RenderEngine / RenderSession, CancelSignal.
+    templateIdentity.ts Read-only current-template observation for freshness.
     renderEngineRegistry.ts
                         Looks engines up by renderer id, with clear errors.
 
@@ -49,6 +50,9 @@ adapters/               Implementations of core ports for one technology.
     afterEffectsConfig.mts         Reads after-effects.local.json (project, comps).
     aerenderCommand.mts            aerender arguments and progress parsing (pure).
     templateContract.mts           Staged file names, required files, track text and marker, checks (pure).
+    templateIdentity.mts           Canonical base hash + preparation version/mode; observation without Adobe.
+    templatePreparation.mts        Validated per-track working-copy cache and locked promotion.
+    afterEffectsScripting.mts      Node → osascript and token-specific JSON completion protocol.
     template/create-toshi-template.jsx
                                    One-time ExtendScript bootstrap of the minimal template.
 
@@ -135,8 +139,8 @@ POST /api/render-batches     ─┘      (render manager, journal, worker)     (
   still per slug and preset, so two engines rendering the same format are
   serialised.
 - **Freshness distinguishes it.** `rendererFingerprintParts()` adds the renderer
-  to an export's visualizer fingerprint, and an engine-reported template
-  (`ResolvedVideo.template`: composition + version) is added too. Both add
+  to an export's visualizer fingerprint; AE's engine-reported template
+  (`ResolvedVideo.template`: composition + version) is a separate input. Both add
   nothing for Remotion, so every existing manifest keeps its exact fingerprint
   and stays current. Coverage, delivery and content packages use the preferred
   renderer explicitly. Release bundles and automatic destination repair retain
@@ -166,11 +170,13 @@ GET /api/renderers  ─> registry.status()  ─> per id: ready | unavailable | n
 - **What it changes in the view.** `TrackSummaryView.exportsRenderer` is the
   resolved preference, and `exports[]` is `trackExportCoverage(slug, metadata,
   exportsRenderer)`: that engine's own folder, so a Remotion export never
-  satisfies an After Effects track, or the other way round. For another
-  renderer the `visualizer` input is not re-checked, because its template hash
-  is only computable by the engine and `services/` must not reach into
-  `adapters/`. Metadata, cover, audio, format and the file's identity still
-  are. Queue status uses `exportStatusKey(slug, preset, renderer)` through
+  satisfies an After Effects track, or the other way round. The adapter registry
+  wires a `TemplateIdentityReader` into `services/render/templateIdentity.ts`.
+  Coverage reads that port to compare AE's explicit `inputs.template`, without
+  importing an adapter, loading an engine or consulting prepared-copy caches.
+  Missing readers/templates fail closed as unknown freshness. Metadata, cover,
+  audio, format, visualizer/brand and file identity are checked too.
+  Queue status uses `exportStatusKey(slug, preset, renderer)` through
   `inFlightExports()`, so only a matching engine marks an export queued/rendering.
   Pair-only `inFlightTargets()` and track/format locks remain contention checks.
 - **Workflow support.** Export-missing and content-package planners carry engine
@@ -242,7 +248,7 @@ architecture test checks this).
 render-track --engine after-effects
   -> registry probe: aerender found?            no  -> RENDERER_UNAVAILABLE (what was searched, how to set it)
   -> open(): after-effects.local.json valid?    no  -> RENDERER_NOT_CONFIGURED (what to put in it)
-             hash the .aep -> template version "aep-sha256:<16 hex>"
+             hash the .aep -> canonical template version (full SHA-256 + prep version + mode)
   -> resolve(): composition for the format; frames from the track's audio (ffprobe)
              copy cover/audio/brand marks to fixed names beside the data file
              write the template-data sidecar (buildTemplateData) there
@@ -290,11 +296,34 @@ Mechanisms considered: expressions alone cannot load images or audio, and
 `aerender` cannot run scripts at render time, so the render path is fixed
 file names for media. Expressions reading the JSON were tried and get `null`
 under `aerender`, so the text is written in by the ExtendScript bootstrap
-(`template/create-toshi-template.jsx`), rerun for each track. Automating that
-rebuild (driving After Effects itself, not `aerender`) remains necessary for
-unattended batches across different AE tracks. Current batches preserve engine
-identity and fail explicitly if the staged track differs from the template
-marker; they do not rebuild templates or substitute Remotion.
+(`template/create-toshi-template.jsx`), rerun for each track in default manual
+mode. Opt-in `templatePreparation: "auto"` prepares a per-track working copy
+from a byte-for-byte base snapshot using the GUI's DoScriptFile interface.
+Staging and GUI locks serialize shared mutations. Token-specific atomic JSON
+status proves the script closed the project before promotion/rendering; missing
+terminal proof retains locks and recovery files. Neither mode substitutes Remotion.
+
+**Canonical identity and freshness.** Both modes report
+`aep-sha256:<full base SHA-256>;prep:<PREPARATION_VERSION>;mode:<manual|auto>`.
+This version describes the template, not the generated per-track project;
+the selected composition participates in the separate `inputs.template` digest.
+AE manifests append that digest to their aggregate input fingerprint. Remotion
+keeps its original five-input fingerprint and schema compatibility.
+
+Normal coverage compares this digest using the registry-wired observation port.
+Base edits/replacements, preparation contract changes, mode and composition
+changes produce `template_changed`. Legacy AE manifests missing the separate
+input produce `template_identity_missing`; unreadable/unconfigured templates
+produce `template_unavailable`. Both prevent current readiness/delivery and
+never fall back across engines. A readable base can establish freshness even
+without Adobe installed. The existing bounded file-content hash cache checks
+device/inode, size, mtime and ctime each time, avoiding repeated full hashes
+across a catalogue without retaining stale hashes after changes.
+
+Prepared-project cache validation remains separate: it binds the full generated
+project digest to track text/assets/base/version and protects reuse. Export
+freshness never depends on a working copy's presence. External dependency or
+plugin changes without a base/version change are not detected by this milestone.
 
 **Checks.** Before `aerender` starts, the project's bytes must mention the
 cover and audio file names: footage paths are stored as text in `.aep` and
