@@ -1,5 +1,4 @@
 import { execFile, spawn as nodeSpawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { constants, existsSync, readdirSync, statSync } from "node:fs";
 import { copyFile, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -30,9 +29,10 @@ import {
   templateWarnings,
 } from "./templateContract.mts";
 
-import { PREPARATION_VERSION, PreparationError } from "./afterEffectsScripting.mts";
+import { PreparationError } from "./afterEffectsScripting.mts";
 import { hashProject, prepareAfterEffectsTemplate } from "./templatePreparation.mts";
 import { acquireAfterEffectsStagingLock } from "./stagingLock.mts";
+import { afterEffectsTemplateIdentity } from "./templateIdentity.mts";
 
 export { STAGED_ASSET_NAMES };
 
@@ -114,10 +114,6 @@ const defaultDeps: AfterEffectsEngineDeps = {
   prepareTemplate: prepareAfterEffectsTemplate,
 };
 
-/** A content hash of the project, so editing the template stales its exports. */
-const projectVersion = (bytes: Uint8Array): string =>
-  `aep-sha256:${createHash("sha256").update(bytes).digest("hex").slice(0, 16)}`;
-
 /** Written beside its destination and renamed over it, so a reader never sees half a file. */
 const writeAtomically = async (destination: string, content: string | null, copyFrom?: string): Promise<void> => {
   const temporary = `${destination}.tmp-${process.pid}`;
@@ -182,7 +178,7 @@ export const createAfterEffectsRenderEngine = (
       // Read once: hashed as the template's version, and searched for the
       // staged files it must use (templateContract.mts).
       const projectBytes = await readFile(config.project);
-      let version = projectVersion(projectBytes);
+      let baseHash = hashProject(projectBytes);
       let renderProject = config.project;
       let resolving: Promise<ResolvedVideo> | null = null;
       let resolvingActive = false;
@@ -246,7 +242,7 @@ export const createAfterEffectsRenderEngine = (
             if (config.templatePreparation === "auto") {
               // Read under the staging lock; open() may have preceded a base edit.
               const baseBytes = await readFile(config.project);
-              version = `aep-sha256:${hashProject(baseBytes)};prep:${PREPARATION_VERSION}`;
+              baseHash = hashProject(baseBytes);
               try {
                 renderProject = await deps.prepareTemplate({
                   config, baseBytes, composition, marker, text,
@@ -305,7 +301,7 @@ export const createAfterEffectsRenderEngine = (
               fps: preset.fps,
               width: preset.width,
               height: preset.height,
-              template: { composition, version },
+              template: afterEffectsTemplateIdentity(config, preset.id, baseHash),
             };
           })().finally(() => { resolvingActive = false; });
           resolving = task;
