@@ -37,7 +37,8 @@
     var source;
     try { source = input.read(); } finally { input.close(); }
     // Node-owned JSON, never an arbitrary user script. ExtendScript may have no JSON.
-    job = typeof JSON !== "undefined" && JSON.parse ? JSON.parse(source) : eval("(" + source + ")");
+    job = typeof JSON !== "undefined" && JSON.parse ? JSON.parse(source) :
+      eval("(" + source.replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029") + ")");
     result = { token: job.token, success: false, preparedProject: job.preparedProject,
       marker: job.marker, identity: job.identity, composition: job.composition, prepVersion: job.prepVersion };
     writableStatus(); // Check write permission before opening/mutating any project.
@@ -50,7 +51,11 @@
     }
     checkpoint();
     app.beginSuppressDialogs(); suppressed = true;
-    app.open(base); opened = true;
+    opened = true; // Even a partially failed open must be closed before status.
+    app.open(base);
+    if (!app.project || !app.project.file || app.project.file.fsName !== base.fsName) {
+      fail("PROJECT_OPEN_FAILED", "The snapshot did not open correctly.");
+    }
     checkpoint();
     var comp = null, replaced = {};
     for (var i = 1; i <= app.project.numItems; i++) {
@@ -95,7 +100,14 @@
     // The terminal status is published only AFTER the GUI stops touching this
     // project. Node must retain locks when no valid terminal status arrives.
     if (opened) {
-      try { app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES); }
+      try {
+        var active = app.project && app.project.file;
+        if (active && active.fsName !== base.fsName && active.fsName !== output.fsName) {
+          throw new Error("Refusing to close an unrelated GUI project.");
+        }
+        if (app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES) === false ||
+            (app.project && app.project.file)) throw new Error("Project remains open.");
+      }
       catch (closeError) { result.success = false; result.errorCode = "PROJECT_CLOSE_FAILED"; result.errorMessage = String(closeError); result = null; }
     }
     if (suppressed) app.endSuppressDialogs(false);

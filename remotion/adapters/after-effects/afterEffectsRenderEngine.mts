@@ -185,6 +185,7 @@ export const createAfterEffectsRenderEngine = (
       let version = projectVersion(projectBytes);
       let renderProject = config.project;
       let resolving: Promise<ResolvedVideo> | null = null;
+      let resolvingActive = false;
       let closed = false;
       let cancelled = false;
       let uncertainPreparation = false;
@@ -201,7 +202,10 @@ export const createAfterEffectsRenderEngine = (
         assetRoot: deps.publicDir,
 
         resolve: (props) => {
-          if (resolving) return Promise.reject(renderFailed("After Effects session already resolving or resolved."));
+          if (resolvingActive || resolved || uncertainPreparation) {
+            return Promise.reject(renderFailed("After Effects session already resolving, resolved or awaiting recovery."));
+          }
+          resolvingActive = true;
           const task = (async (): Promise<ResolvedVideo> => {
             if (closed || cancelled) throw renderFailed("After Effects preparation cancelled.");
             log("After Effects: Waiting for After Effects lock.");
@@ -303,7 +307,7 @@ export const createAfterEffectsRenderEngine = (
               height: preset.height,
               template: { composition, version },
             };
-          })();
+          })().finally(() => { resolvingActive = false; });
           resolving = task;
           return task;
         },

@@ -56,7 +56,7 @@ const setup = async (t: TestContext) => {
 test("auto config is validated and manual remains the default", async (t) => {
   const c = await setup(t);
   assert.equal(c.config.templatePreparation, "auto");
-  for (const settings of [{ templatePreparation: "fallback" }, { applicationBundleId: 'bad"id' }, { preparationTimeoutMs: -1 }, { workingDirectory: "" }]) {
+  for (const settings of [{ templatePreparation: "fallback" }, { templatePreparation: ["auto"] }, { applicationBundleId: 'bad"id' }, { preparationTimeoutMs: -1 }, { workingDirectory: "" }]) {
     await writeFile(c.file, JSON.stringify({ project: c.project, composition: "C", ...settings }));
     assert.throws(() => readAfterEffectsConfig(c.file), /must be/);
   }

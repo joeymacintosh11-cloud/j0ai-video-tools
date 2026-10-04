@@ -139,7 +139,7 @@ export const readAfterEffectsConfig = (file: string = afterEffectsConfigFile()):
     }
   }
 
-  if (value.templatePreparation !== undefined && !["manual", "auto"].includes(String(value.templatePreparation))) {
+  if (value.templatePreparation !== undefined && value.templatePreparation !== "manual" && value.templatePreparation !== "auto") {
     throw notConfigured(`${where} "templatePreparation" must be "manual" or "auto".`);
   }
   if (value.applicationBundleId !== undefined &&

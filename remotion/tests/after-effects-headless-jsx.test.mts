@@ -10,11 +10,11 @@ import { validatePreparationStatus, PREPARATION_VERSION } from "../adapters/afte
 
 const source = await readFile(new URL("../adapters/after-effects/template/prepare-toshi-template.jsx", import.meta.url), "utf8");
 
-for (const scenario of ["success", "busy", "missing-comp", "missing-layer", "save-fail", "write-disabled", "close-fail", "cancelled"] as const) {
+for (const scenario of ["success", "success-without-json", "busy", "missing-comp", "missing-layer", "save-fail", "write-disabled", "close-fail", "close-false", "cancelled"] as const) {
   test(`actual headless JSX with fake Adobe host: ${scenario}`, async (t) => {
     const dir = await mkdtemp(path.join(tmpdir(), "toshi-jsx-"));
     t.after(() => rm(dir, { recursive: true, force: true }));
-    const text = templateText({ title: 'Synthetic "雪"\ntrack', artist: "Toshi", key: "C", bpm: 120 });
+    const text = templateText({ title: 'Synthetic "雪"\ntrack\u2028more', artist: "Toshi", key: "C", bpm: 120 });
     const job = { token: "unique-current-run", baseProject: path.join(dir, "snapshot.aep"), configuredBaseProject: path.join(dir, "base.aep"),
       preparedProject: path.join(dir, "partial.aep"), statusFile: path.join(dir, "status.json"), cancelFile: path.join(dir, "cancel"),
       composition: "Toshi Visualizer", marker: templateTextMarker(text), identity: "toshi-prepared-current", prepVersion: PREPARATION_VERSION,
@@ -77,6 +77,7 @@ for (const scenario of ["success", "busy", "missing-comp", "missing-layer", "sav
       close(option: string) {
         events.push("project-closed"); assert.equal(option, "discard");
         if (scenario === "close-fail") throw new Error("Close failed");
+        if (scenario === "close-false") return false;
         this.file = null; this.numItems = 0;
       },
     };
@@ -85,16 +86,16 @@ for (const scenario of ["success", "busy", "missing-comp", "missing-layer", "sav
       beginSuppressDialogs() { events.push("suppress"); }, endSuppressDialogs(show: boolean) { assert.equal(show, false); },
     };
     vm.runInNewContext(source, { app, File, CompItem, FootageItem, TOSHI_PREP_JOB_FILE: jobFile,
-      CloseOptions: { DO_NOT_SAVE_CHANGES: "discard" } }, { timeout: 1000 });
+      CloseOptions: { DO_NOT_SAVE_CHANGES: "discard" }, ...(scenario === "success-without-json" ? { JSON: undefined } : {}) }, { timeout: 1000 });
     assert.equal(await readFile(job.configuredBaseProject, "utf8"), "UNTOUCHABLE BASE");
-    if (scenario === "write-disabled" || scenario === "close-fail") {
+    if (scenario === "write-disabled" || scenario === "close-fail" || scenario === "close-false") {
       assert.equal(existsSync(job.statusFile), false, "no terminal proof if writes/close failed");
       if (scenario === "write-disabled") assert.equal(events.includes("open"), false);
       return;
     }
     const status = validatePreparationStatus(JSON.parse(await readFile(job.statusFile, "utf8")), job);
-    assert.equal(status.success, scenario === "success");
-    if (scenario === "success") {
+    assert.equal(status.success, (scenario === "success" || scenario === "success-without-json"));
+    if ((scenario === "success" || scenario === "success-without-json")) {
       for (const name of ["Title", "Artist", "Key BPM"] as const) assert.equal(documents[name].value.text, text[name]);
       assert.ok(comp.comment.includes(job.marker)); assert.ok(comp.comment.includes(job.identity));
       assert.equal(layers.Title.comment, `${job.marker}; ${job.identity}`);
