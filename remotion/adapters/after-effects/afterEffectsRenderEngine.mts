@@ -1,6 +1,6 @@
 import { execFile, spawn as nodeSpawn } from "node:child_process";
 import { constants, existsSync, readdirSync, statSync } from "node:fs";
-import { copyFile, readFile, rename, writeFile } from "node:fs/promises";
+import { copyFile, readFile, rename, open, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -31,7 +31,8 @@ import {
 
 import { PreparationError } from "./afterEffectsScripting.mts";
 import { hashProject, prepareAfterEffectsTemplate } from "./templatePreparation.mts";
-import { acquireAfterEffectsStagingLock } from "./stagingLock.mts";
+import { acquireAfterEffectsStagingLock, type WorkspaceLock } from "./stagingLock.mts";
+import { prunePreparedCache } from "./workspace.mts";
 import { afterEffectsTemplateIdentity } from "./templateIdentity.mts";
 
 export { STAGED_ASSET_NAMES };
@@ -117,9 +118,15 @@ const defaultDeps: AfterEffectsEngineDeps = {
 /** Written beside its destination and renamed over it, so a reader never sees half a file. */
 const writeAtomically = async (destination: string, content: string | null, copyFrom?: string): Promise<void> => {
   const temporary = `${destination}.tmp-${process.pid}`;
-  if (copyFrom !== undefined) await copyFile(copyFrom, temporary, constants.COPYFILE_FICLONE);
-  else await writeFile(temporary, content ?? "");
-  await rename(temporary, destination);
+  let owned = false;
+  try {
+    if (copyFrom !== undefined) { await copyFile(copyFrom, temporary, constants.COPYFILE_FICLONE | constants.COPYFILE_EXCL); owned = true; }
+    else {
+      const file = await open(temporary, "wx", 0o600); owned = true;
+      try { await file.writeFile(content ?? ""); } finally { await file.close(); }
+    }
+    await rename(temporary, destination);
+  } finally { if (owned) await rm(temporary, {force:true}); }
 };
 
 const stageAssets = async (
@@ -191,7 +198,11 @@ export const createAfterEffectsRenderEngine = (
       let resolved: { composition: string; durationInFrames: number; fps: number } | null = null;
       let child: ReturnType<typeof nodeSpawn> | null = null;
       let childClosed: Promise<void> | null = null;
-      let releaseStaging: (() => void) | null = null;
+      let releaseStaging: WorkspaceLock | null = null;
+      let releaseWorkspace: WorkspaceLock | null = null;
+      const ownership = (changes: Parameters<WorkspaceLock["update"]>[0]) => {
+        releaseWorkspace?.update(changes); releaseStaging?.update(changes);
+      };
 
       return {
         // aerender reads the assets in place, through the sidecar's absolute paths.
@@ -206,6 +217,11 @@ export const createAfterEffectsRenderEngine = (
             if (closed || cancelled) throw renderFailed("After Effects preparation cancelled.");
             log("After Effects: Waiting for After Effects lock.");
             releaseStaging ??= acquireAfterEffectsStagingLock(config.dataFile);
+            if (config.templatePreparation === "auto") {
+              await mkdir(config.workingDirectory, { recursive: true, mode: 0o700 });
+              releaseWorkspace ??= acquireAfterEffectsStagingLock(path.join(config.workingDirectory, "workspace.json"), ".toshi-ae-workspace.lock");
+            }
+            ownership({ trackIdentity: JSON.stringify([props.audioSrc, props.coverSrc]) });
             log("After Effects: serial execution; shared staging lock held until aerender stops.");
             const preset = renderPreset(props.presetId ?? DEFAULT_RENDER_PRESET_ID);
             const composition = config.compositions[preset.id] ?? config.composition;
@@ -249,7 +265,7 @@ export const createAfterEffectsRenderEngine = (
                   trackIdentity: JSON.stringify([props.audioSrc, props.coverSrc]),
                   assets: Object.fromEntries(Object.entries(staged).map(([role, file]) =>
                     [STAGED_ASSET_NAMES[role as keyof typeof STAGED_ASSET_NAMES], file])),
-                  cancelSignal: preparationCancel.cancelSignal, log,
+                  cancelSignal: preparationCancel.cancelSignal, log, onOwnership: ownership,
                 });
               } catch (error) {
                 uncertainPreparation = error instanceof PreparationError && error.uncertain;
@@ -296,6 +312,7 @@ export const createAfterEffectsRenderEngine = (
             }
 
             resolved = { composition, durationInFrames, fps: preset.fps };
+            ownership({ phase: "ready", safeToDelete: true, preparedProject: renderProject, childPid: null });
             return {
               durationInFrames,
               fps: preset.fps,
@@ -331,11 +348,11 @@ export const createAfterEffectsRenderEngine = (
             const settle = (error: Error | null) => {
               if (settled) return;
               settled = true;
-              child = null;
               if (error) reject(error);
               else resolve();
             };
 
+            ownership({ phase: "rendering", safeToDelete: false, childPid: null });
             const running = deps.spawn(discovery.path, args, { stdio: ["ignore", "pipe", "pipe"] });
             child = running;
             childClosed = new Promise<void>((done) => running.once("close", () => done()));
@@ -376,6 +393,8 @@ export const createAfterEffectsRenderEngine = (
             });
 
             running.on("close", (code, signal) => {
+              try { ownership({ phase: "rendered", safeToDelete: true, childPid: null }); }
+              catch (error) { settle(renderFailed(`Could not record confirmed child shutdown: ${String(error)}`)); return; }
               if (cancelled) {
                 settle(new Error("aerender got cancelled"));
                 return;
@@ -430,6 +449,7 @@ export const createAfterEffectsRenderEngine = (
                     settle(error instanceof TrackError ? error : renderFailed(`Could not move aerender's output into place: ${error.message}`)),
                 );
             });
+            ownership({ childPid: running.pid ?? null });
           });
         },
 
@@ -440,9 +460,20 @@ export const createAfterEffectsRenderEngine = (
           child?.kill("SIGKILL");
           if (childClosed !== null) await childClosed;
           child = null;
-          if (!uncertainPreparation) releaseStaging?.();
+          if (!uncertainPreparation) {
+            if (releaseWorkspace) {
+              try {
+                const result = prunePreparedCache(config, renderProject, releaseWorkspace.token);
+                for (const error of result.failures) log(`After Effects: cleanup_failed: ${error.message}`);
+                if (result.removed.length) log(`After Effects: cache retention removed ${result.removed.length} artifacts.`);
+              } catch (error) { log(`After Effects: cleanup_failed: ${String(error)}`); }
+              try { releaseWorkspace(); } finally { releaseStaging?.(); }
+            }
+            else releaseStaging?.();
+          }
           else log("After Effects: staging lock retained because JSX completion is unconfirmed.");
           releaseStaging = null;
+          releaseWorkspace = null;
         },
       };
     },

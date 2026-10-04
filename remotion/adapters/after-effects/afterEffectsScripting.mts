@@ -66,6 +66,7 @@ export const runAfterEffectsPreparation = async (input: {
   readonly timeoutMs: number;
   readonly cancelSignal?: CancelSignal;
   readonly spawn?: typeof nodeSpawn;
+  readonly onChild?: (pid: number | null) => void;
 }): Promise<PreparationStatus> => {
   let cancelled = false;
   let running: ReturnType<typeof nodeSpawn> | null = null;
@@ -95,6 +96,12 @@ export const runAfterEffectsPreparation = async (input: {
       throw new PreparationError(`Could not launch osascript: ${String(error)}`);
     }
     const child = running;
+    try { input.onChild?.(child.pid ?? null); }
+    catch (error) {
+      child.kill("SIGKILL");
+      await new Promise<void>((done) => { child.once("error", () => {}); child.once("close", () => done()); });
+      throw new PreparationError(`Could not persist sender ownership: ${String(error)}`, true);
+    }
     child.stderr?.on("data", (bytes) => { stderr = (stderr + String(bytes)).slice(-4000); });
     const stop = () => {
       child.kill("SIGTERM");
@@ -112,6 +119,8 @@ export const runAfterEffectsPreparation = async (input: {
       child.once("close", (code) => { exitCode = code; done(); });
     });
     running = null;
+    try { input.onChild?.(null); }
+    catch (error) { throw new PreparationError(`Could not persist sender termination: ${String(error)}`, true); }
     // Never release locks based on exit/stdout alone. Only a matching terminal
     // status proves the JSX has closed its project and finished all mutation.
     if (launchError) throw new PreparationError(`Could not launch osascript: ${String(launchError)}`);

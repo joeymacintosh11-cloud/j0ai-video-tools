@@ -42,6 +42,7 @@
     "render-missing": "node scripts/render-missing.mts",
     "render-catalogue-missing": "node scripts/render-missing.mts --all-tracks",
     "render-locks": "node scripts/render-locks.mts",
+    "ae-workspace": "node scripts/ae-workspace.mts",
     "deliver-track": "node scripts/deliver.mts",
     "deliver-catalogue": "node scripts/deliver.mts --all-tracks",
     "release-bundle": "node scripts/release-bundle.mts",

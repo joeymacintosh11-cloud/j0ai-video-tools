@@ -19,6 +19,8 @@ import { createAfterEffectsRenderEngine } from "../adapters/after-effects/afterE
 import { PreparationError, PREPARATION_VERSION, runAfterEffectsPreparation } from "../adapters/after-effects/afterEffectsScripting.mts";
 import { hashProject, prepareAfterEffectsTemplate, type PrepareTemplateInput } from "../adapters/after-effects/templatePreparation.mts";
 import { templateText, templateTextMarker } from "../adapters/after-effects/templateContract.mts";
+import { acquireAfterEffectsStagingLock } from "../adapters/after-effects/stagingLock.mts";
+import { prunePreparedCache } from "../adapters/after-effects/workspace.mts";
 import { makeCancelSignal } from "../core/ports/renderEngine.ts";
 
 const FAKE = fileURLToPath(new URL("./fake-osascript.mjs", import.meta.url));
@@ -151,10 +153,12 @@ test("launch ENOENT is a confirmed non-start and cleans job/partial files", asyn
 test("cancellation stops the sender before failing closed; pre-launch cancel leaves no partials", async (t) => {
   const c = await setup(t); c.setMode("hang");
   const cancel = makeCancelSignal();
-  const task = c.prepare({ cancelSignal: cancel.cancelSignal });
-  const timer = setTimeout(cancel.cancel, 150);
-  try { await assert.rejects(task, (error: unknown) => error instanceof PreparationError && error.uncertain); }
-  finally { clearTimeout(timer); }
+  let launched = false;
+  const task = c.prepare({ cancelSignal: cancel.cancelSignal, onOwnership: (owner) => {
+    if (owner.childPid !== null && owner.childPid !== undefined) { launched = true; cancel.cancel(); }
+  } });
+  await assert.rejects(task, (error: unknown) => error instanceof PreparationError && error.uncertain);
+  assert.equal(launched, true, "cancel only after the sender is owned, rather than racing preparation startup");
   const d = await setup(t); const already = makeCancelSignal(); already.cancel();
   await assert.rejects(prepareAfterEffectsTemplate({ ...d.input, cancelSignal: already.cancelSignal }, { run: d.run }), /cancelled before launch/);
   assert.deepEqual(await readdir(d.config.workingDirectory), []);
@@ -294,4 +298,15 @@ test("engine close after unconfirmed prep retains staging lock and never starts 
   await second.close();
   assert.equal(aerenderCalls, 0);
   assert.deepEqual(await readFile(c.project), c.baseBytes);
+});
+
+
+test("evicted prepared project causes preparation on next use without touching the base", async (t) => {
+  const c = await setup(t); const project = await c.prepare();
+  const lock = acquireAfterEffectsStagingLock(path.join(c.config.workingDirectory,"workspace.json"),".toshi-ae-workspace.lock");
+  try { assert.equal(prunePreparedCache(c.config,null,lock.token,0).removed.length,2); } finally {lock();}
+  await assert.rejects(readFile(project),{code:"ENOENT"});
+  assert.equal(await c.prepare(),project);
+  assert.equal((await readFile(c.calls,"utf8")).trim().split("\n").length,2);
+  assert.deepEqual(await readFile(c.project),c.baseBytes);
 });

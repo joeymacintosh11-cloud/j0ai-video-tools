@@ -7,8 +7,11 @@ import { readAfterEffectsConfig } from "./after-effects/afterEffectsConfig.mts";
 import { readAfterEffectsTemplateIdentity } from "./after-effects/templateIdentity.mts";
 import { registerTemplateIdentityReader } from "../services/render/templateIdentity.ts";
 
+import { afterEffectsWorkspace } from "./after-effects/workspace.mts";
+import { registerRendererWorkspace } from "../services/render/rendererWorkspace.ts";
 // Observation is available independently of aerender installation/availability.
 registerTemplateIdentityReader("after-effects", readAfterEffectsTemplateIdentity);
+registerRendererWorkspace(afterEffectsWorkspace);
 
 /**
  * Every render engine this installation has, by renderer id.
