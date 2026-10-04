@@ -11,6 +11,8 @@ delivery.local.json
 
 # Machine-local After Effects template and aerender settings.
 after-effects.local.json
+# Machine-local prepared AE projects, provenance and interrupted preparation runs.
+.toshi-ae-work/
 
 # Machine/person-local content-package metadata template overrides.
 content-metadata.local.json
