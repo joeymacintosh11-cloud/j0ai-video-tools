@@ -396,3 +396,38 @@ quarantine before deletion; rename failures roll back or retain manual evidence.
 Invalid pairs are not recovery garbage. Cache eviction never affects existing
 export freshness; the next use prepares again. Manual AE and Remotion keep their
 existing paths. See README's AE housekeeping section for commands and limits.
+
+### V2 production workflow integration
+
+`tests/production-workflow.test.mts` connects saved metadata and intended formats
+through export planning, the real render manager, `renderTrackVideo`, atomic
+publication/library recording, freshness, content packages and local delivery,
+receipts/history/destination health. `productionWorkflowHarness.mts` substitutes
+only renderer output and the worker transport; it adds no production fake mode.
+Delivery still forks its real copy worker with the original process options.
+The suite includes mixed engines, three formats, duplicate submissions,
+failure/cancellation preservation, retry, renderer changes and template changes.
+Adobe-specific preparation/recovery remains covered by the adapter suites.
+
+The track render panel adopts active work by slug **and renderer**, and by
+format when recovering a duplicate single-render request. Changing preference
+invalidates late UI responses for the old renderer; the existing job keeps its
+original identity in the queue. A renderer change does not cancel another job
+or make its export satisfy the new preference. Pair-level queue contention is
+still deliberately shared across engines, independently of engine-specific
+export status. The toolbar’s immediate formats are distinct from saved intended
+formats used by missing-export and package planners.
+
+Finished exports are authoritative on disk. Queue/job history alone cannot
+make a package ready. Journal recovery is historical state, not a resumed
+worker; workspace cleanup is a previewed ownership-fenced operation, not a
+scheduler. V2 remains local: release bundles/destination repair are Remotion-only,
+and publishing, Premiere, cloud rendering, analytics and general scheduling are
+future work. AE template canvas/frame-rate correctness remains an operator
+setup requirement rather than a media-dimension check.
+
+The recent-render endpoint excludes only active manager jobs, so settled jobs
+appear immediately without waiting for in-memory retention eviction or restart.
+The history panel refreshes with the track snapshot and names each renderer.
+After applied workspace maintenance the UI performs a fresh inspection because
+the maintenance response contains the preview’s pre-operation inspection.
