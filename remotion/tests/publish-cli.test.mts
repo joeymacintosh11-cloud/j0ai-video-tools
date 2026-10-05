@@ -67,3 +67,26 @@ test("CLI: destinations, plan, publish and history", async (t) => {
   assert.match(jobs.output, /published/);
   assert.match(jobs.output, /failed/);
 });
+
+test("CLI JSON is parseable and blocked or failed operations exit unsuccessfully", async (t) => {
+  const iso = await isolatePublishing(t);
+  const f = await publishingTrack(t);
+  await f.render("remotion");
+  const args = [f.slug, "--destination", "local-mock", "--json"];
+  const published = await cli(["--publish", ...args]);
+  assert.equal(published.code, 0, published.output);
+  assert.equal(JSON.parse(published.output).state, "published", "no adapter progress mixed into stdout");
+  const blocked = await cli(["--plan", ...args, "--renderer", "after-effects"]);
+  assert.equal(blocked.code, 1);
+  assert.equal(JSON.parse(blocked.output).ok, false);
+  await iso.writeSettings({ schemaVersion: 1, destinations: { "local-mock": { simulate: "failure" } } });
+  const failed = await cli(["--publish", ...args]);
+  assert.equal(failed.code, 1);
+  const job = JSON.parse(failed.output);
+  assert.equal(job.state, "failed");
+  for (const flags of [["--json"], []]) {
+    const retry = await cli(["--publish", "--job", job.jobId, "--retry", ...flags]);
+    assert.equal(retry.code, 1, retry.output);
+    if (flags.length) assert.equal(JSON.parse(retry.output).state, "failed");
+  }
+});

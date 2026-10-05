@@ -120,7 +120,7 @@ const main = async () => {
     console.log(USAGE);
     return;
   }
-  const publishing = createPublishingService(publishDestinations, { log: (message) => console.log(`  · ${message}`) });
+  const publishing = createPublishingService(publishDestinations, { log: (message) => { if (!json) console.log(`  · ${message}`); } });
 
   if (command === "--destinations") {
     const view = publishing.destinations();
@@ -166,6 +166,7 @@ const main = async () => {
       : args.flags.has("--recover") ? await publishing.recover(jobId)
       : args.flags.has("--retry") ? await publishing.execute(jobId)
       : await publishing.getJob(jobId);
+    if (args.flags.has("--retry") && job.state !== "published") process.exitCode = 1;
     if (json) return void console.log(JSON.stringify(job, null, 2));
     printJob(job);
     if ("recovery" in job) console.log(`  ${job.recovery}`);
@@ -193,22 +194,22 @@ const main = async () => {
   if (!json) console.log(`→ ${slug} / ${presetId} / ${RENDERER_LABELS[renderer]} export → ${destinationId}`);
   if (command === "--plan") {
     const plan = await publishing.plan(input);
+    if (!plan.ok) process.exitCode = 1;
     if (json) return void console.log(JSON.stringify(plan, null, 2));
     console.log(`  source:   ${plan.sourceStatus.outputLabel} (${plan.sourceStatus.freshness})`);
     if (plan.metadata) console.log(`  title:    ${plan.metadata.title}\n  tags:     ${plan.metadata.tags.join(", ") || "—"}\n  mode:     ${plan.mode ?? "—"}`);
     if (plan.ok) console.log("✓ Ready to publish. Nothing was published (plan only).");
     else {
       printProblems(plan.problems);
-      process.exitCode = 1;
     }
     return;
   }
 
   const created = await publishing.createJob(input);
   const job = created.state === "ready" ? await publishing.execute(created.jobId) : created;
+  if (job.state !== "published") process.exitCode = 1;
   if (json) return void console.log(JSON.stringify(job, null, 2));
   printJob(job);
-  if (job.state !== "published") process.exitCode = 1;
 };
 
 runCli("publishing", main);
