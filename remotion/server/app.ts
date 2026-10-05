@@ -20,6 +20,7 @@ import {
 } from "./routes/deliveryHistory.ts";
 import { handleExportMissing } from "./routes/exportMissing.ts";
 import { handleListRenderers } from "./routes/renderers.ts";
+import { handleInspectWorkspace, handleMaintainWorkspace } from "./routes/rendererWorkspace.ts";
 import { handleGetRenderHistory } from "./routes/renderHistory.ts";
 import {
   handleAdoptExistingExports,
@@ -106,6 +107,12 @@ const route = async (
     }
     handleListRenderers(response);
     return;
+  }
+
+  if (collection === "ae-workspace") {
+    if (segments.length === 2 && method === "GET") { await handleInspectWorkspace(response); return; }
+    if (segments.length === 3 && second === "cleanup" && method === "POST") { await handleMaintainWorkspace(request, response); return; }
+    sendNotFound(response, "Endpoint"); return;
   }
 
   if (collection === "tracks") {

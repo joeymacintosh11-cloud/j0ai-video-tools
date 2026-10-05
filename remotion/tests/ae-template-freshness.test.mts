@@ -8,6 +8,8 @@ import test, { type TestContext } from "node:test";
 import { renderEngines } from "../adapters/renderEngines.mts";
 import { readAfterEffectsConfig } from "../adapters/after-effects/afterEffectsConfig.mts";
 import { afterEffectsTemplateIdentity, readAfterEffectsTemplateIdentity } from "../adapters/after-effects/templateIdentity.mts";
+import { acquireAfterEffectsStagingLock } from "../adapters/after-effects/stagingLock.mts";
+import { prunePreparedCache } from "../adapters/after-effects/workspace.mts";
 import { PREPARATION_VERSION } from "../adapters/after-effects/afterEffectsScripting.mts";
 import { registerTemplateIdentityReader } from "../services/render/templateIdentity.ts";
 import { fingerprintInputs, fileContentHash, inputFingerprint, readExportManifest } from "../services/tracks/exportManifest.ts";
@@ -189,4 +191,15 @@ test("replacement during hashing is rejected rather than caching the old open fi
   syncBuiltinESMExports();
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
   assert.throws(() => fileContentHash(c.project), /Input changed while fingerprinting/);
+});
+
+
+test("actual cache eviction does not change AE export freshness or real track inputs",async(t)=>{
+  const c=await setup(t),f=await c.track();await f.publish();const metadata=await readFile(f.metadata);const base=await readFile(c.project);
+  const config=readAfterEffectsConfig(c.configFile);await fs.promises.mkdir(config.workingDirectory);
+  const identity=`toshi-prepared-${"0".repeat(64)}`,project=path.join(config.workingDirectory,`${identity}.aep`);await writeFile(project,"RIFX cached copy");
+  await writeFile(`${project}.json`,JSON.stringify({identity,baseHash:fileContentHash(c.project),projectHash:fileContentHash(project),marker:"marker",composition:config.composition,prepVersion:PREPARATION_VERSION}));
+  const lock=acquireAfterEffectsStagingLock(path.join(config.workingDirectory,"workspace.json"),".toshi-ae-workspace.lock");
+  try {assert.equal(prunePreparedCache(config,null,lock.token,0).removed.length,2);}finally{lock();}
+  assert.equal(f.state().freshness,"current");assert.deepEqual(await readFile(f.metadata),metadata);assert.deepEqual(await readFile(c.project),base);
 });

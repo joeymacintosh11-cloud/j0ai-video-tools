@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { chmodSync } from "node:fs";
+import { execFile, spawn, type SpawnOptions } from "node:child_process";
+import { chmodSync, existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -688,4 +688,24 @@ test("overlapping AE sessions cannot overwrite staged footage; a closed session 
     await first.close();
     await second.close();
   }
+});
+
+
+test("cancellation waits for delayed aerender shutdown before releasing staging ownership", async (t) => {
+  const ctx = await setup(t); if (!ctx) return;
+  withEnv(t,{FAKE_AERENDER_MODE:"hang-delayed"});
+  const lock = path.join(ctx.tpl.dir,".toshi-ae-render.lock");
+  let closed = false;
+  const engine = createAfterEffectsRenderEngine({readConfig:()=>readAfterEffectsConfig(ctx.tpl.file),
+    discover:()=>({found:true,path:FAKE_AERENDER,source:"env"}),
+    probeAudioDurationInSeconds:async()=>1,probeStreamTypes:async()=>["video","audio"],
+    spawn: ((command:string,args:readonly string[],options:SpawnOptions)=> {
+      const child=spawn(command,args,options); child.once("close",()=>{assert.ok(existsSync(lock),"ownership must outlive child");closed=true;});return child;
+    }) as typeof spawn,
+  });
+  const cancel=makeCancelSignal();
+  await assert.rejects(renderTrackVideo({engine,slug:ctx.f.slug,props:ctx.props,cancelSignal:cancel.cancelSignal,onProgress:()=>cancel.cancel()}),/got cancelled/);
+  assert.equal(closed,true); assert.equal(existsSync(lock),false);
+  await assert.rejects(readFile(trackOutputLocation(ctx.f.slug,"youtube-16x9","after-effects").path));
+  assert.deepEqual(libraryFor(ctx.f.slug),[]);
 });

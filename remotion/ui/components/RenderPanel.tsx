@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { WorkspacePanel } from "./WorkspacePanel.tsx";
 import type {
   RenderersView,
   RenderJobStatus,
@@ -222,6 +223,7 @@ export const RenderPanel: React.FC<{
 
   return (
     <div className="render">
+      {engine === "after-effects" ? <WorkspacePanel key={track.slug} /> : null}
       {error ? <ErrorBanner error={error} title="Render request failed" /> : null}
 
       <div className="form__actions">

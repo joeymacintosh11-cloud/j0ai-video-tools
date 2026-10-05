@@ -15,7 +15,7 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import process from "node:process";
-import { setInterval } from "node:timers";
+import { setInterval, setTimeout } from "node:timers";
 
 const args = process.argv.slice(2);
 const option = (name) => {
@@ -61,6 +61,12 @@ switch (process.env.FAKE_AERENDER_MODE ?? "success") {
     writeFileSync(output.replace(/\.mp4$/, ".mov"), "quicktime");
     break;
   case "silent":
+    break;
+  case "hang-delayed":
+    writeFileSync(output, "incomplete video");
+    process.on("SIGTERM", () => setTimeout(() => process.exit(143), 100));
+    progress(first);
+    setInterval(() => {}, 1_000);
     break;
   case "hang":
     progress(first);
