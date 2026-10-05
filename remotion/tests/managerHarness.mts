@@ -1,4 +1,4 @@
-import childProcess, { type ChildProcess } from "node:child_process";
+import childProcess, { type ChildProcess, type ForkOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -40,13 +40,13 @@ export type Manager =
 export const manager = async (
   t: TestContext,
   /** Receives fork()'s module path and argv, for tests that check what a job asked for. */
-  spawn: (modulePath: string, args: readonly string[]) => Worker,
+  spawn: (modulePath: string, args: readonly string[], options?: ForkOptions) => Worker,
 ): Promise<Manager> => {
   t.mock.method(
     childProcess,
     "fork",
-    ((modulePath: string, args: readonly string[] = []) =>
-      spawn(modulePath, args) as unknown as ChildProcess) as unknown as typeof childProcess.fork,
+    ((modulePath: string, args: readonly string[] = [], options?: ForkOptions) =>
+      spawn(modulePath, args, options) as unknown as ChildProcess) as unknown as typeof childProcess.fork,
   );
   syncBuiltinESMExports();
   t.after(() => {

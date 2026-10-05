@@ -1,6 +1,7 @@
 import { parseRelativePeriod, type DeliveryLogEvent } from "../delivery/deliveryHistory.ts";
 import { TrackError, trackIssue } from "../tracks/errors.ts";
 import { isValidSlug } from "../tracks/slug.ts";
+import { storedRendererId } from "../video/renderers.ts";
 import {
   STALE_REASON_LABELS,
   type ExportFreshness,
@@ -514,6 +515,21 @@ export type LiveExportFacts = {
 
 export const libraryTargetKey = (slug: string, presetId: string): string => `${slug}|${presetId}`;
 
+/**
+ * Which canonical export a record is a version of: its track, format and
+ * renderer. Each renderer publishes to its own path, so an After Effects
+ * export never supersedes, or is judged against, a Remotion one. A renderer
+ * id this version does not know keys apart from every live export.
+ */
+export const libraryRecordKey = (record: ContentLibraryRecord): string =>
+  `${libraryTargetKey(record.track.slug, record.preset.id)}|${
+    storedRendererId(record.template.renderer) ?? `unknown:${String(record.template.renderer)}`
+  }`;
+
+/** The live-facts key for one renderer's canonical export. */
+export const liveExportKey = (slug: string, presetId: string, renderer: string): string =>
+  `${libraryTargetKey(slug, presetId)}|${renderer}`;
+
 const holdsThisVersion = (record: ContentLibraryRecord, live: LiveExportFacts | undefined): boolean =>
   live?.manifest !== null &&
   live?.manifest !== undefined &&
@@ -613,7 +629,7 @@ export const buildLibraryEntries = (
   const nextGeneratedAt = new Map<string, string>();
   const latestByKey = new Map<string, ContentLibraryRecord>();
   for (const record of ordered) {
-    const key = libraryTargetKey(record.track.slug, record.preset.id);
+    const key = libraryRecordKey(record);
     const previous = latestByKey.get(key);
     if (previous !== undefined) {
       successor.set(previous.recordId, record.recordId);
@@ -626,7 +642,7 @@ export const buildLibraryEntries = (
     deliveryEvents === null ? null : attributeDeliveries(ordered, nextGeneratedAt, deliveryEvents);
 
   return records.map((record) => {
-    const facts = live.get(libraryTargetKey(record.track.slug, record.preset.id));
+    const facts = live.get(libraryRecordKey(record));
     const supersededBy = successor.get(record.recordId) ?? null;
 
     let status: LibraryEntryStatus;

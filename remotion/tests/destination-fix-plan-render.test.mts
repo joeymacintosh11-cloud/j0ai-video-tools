@@ -21,9 +21,10 @@ import { DELIVERY_SETTINGS_FILE, type DeliverySettings } from "../services/deliv
 import { publishExport } from "../services/render/publishExport.ts";
 import { buildTrackProps } from "../services/tracks/buildTrackProps.ts";
 import { fingerprintInputs } from "../services/tracks/exportManifest.ts";
-import { trackOutputLocation } from "../services/tracks/trackLocations.ts";
+import { trackLocations, trackOutputLocation } from "../services/tracks/trackLocations.ts";
 import { parseTrackMetadata } from "../core/domain/tracks/metadata.ts";
 import { scanDestinationHealth } from "../services/workflows/destinationHealth.ts";
+import { registerTemplateIdentityReader } from "../services/render/templateIdentity.ts";
 import { Worker } from "./managerHarness.mts";
 import { fixture } from "./fixtures.mts";
 import { isolateRenderJournalForThisFile } from "./renderJournalTestIsolation.mts";
@@ -209,6 +210,56 @@ test("a rerender_and_deliver action followed with waitForCompletion reaches comp
 
   const health = await scanDestinationHealth({ slugs: [f.slug], settings: settingsFor(root) });
   assert.equal(health.status, "healthy");
+});
+
+test("a preference switched to After Effects during a followed repair render never delivers the AE export through the Remotion-only repair", async (t) => {
+  const root = await destination(t);
+  const f = await setup(t);
+  await makeStaleDelivery(f, root);
+
+  const workers: Worker[] = [];
+  fakeRenderWorkers(t, () => {
+    const w = new Worker();
+    w.pid = 9010;
+    workers.push(w);
+    return w;
+  });
+  t.after(() => settleAnyRemainingJob(f.slug, "youtube-16x9"));
+  const template = { composition: "Toshi Visualizer", version: "aep-sha256:fixture;prep:1;mode:manual" };
+  t.after(registerTemplateIdentityReader("after-effects", () => ({ template, problem: null })));
+
+  const plan = await planDestinationFix({ slugs: [f.slug], settings: settingsFor(root) });
+  const rerender = action(plan, "rerender_and_deliver", f.slug)!;
+  const applyPromise = applyDestinationFixPlan({
+    slugs: [f.slug],
+    settings: settingsFor(root),
+    actionIds: [rerender.id],
+    waitForCompletion: true,
+    timeoutMs: 5000,
+  });
+
+  await waitUntil(() => workers.length > 0, "a render job to be queued");
+  // While the Remotion repair render runs, the track switches to After
+  // Effects and a current After Effects export exists.
+  const metadataFile = trackLocations(f.slug).metadata;
+  const raw = JSON.parse(await readFile(metadataFile, "utf8"));
+  await writeFile(metadataFile, JSON.stringify({ ...raw, renderer: "after-effects" }, null, 2));
+  await f.publish("youtube-16x9");
+  await publishExport(f.slug, "youtube-16x9", fingerprintInputs(f.props, "youtube-16x9", undefined, "after-effects", template),
+    async (file) => writeFile(file, "an after effects video"), () => {}, undefined, "after-effects");
+  workers[0].emit("message", { type: "resolved", durationInFrames: 1, fps: 30, outputPath: "x", outputLabel: "x" });
+  workers[0].emit("message", { type: "done", outputPath: "x", outputLabel: "x" });
+  workers[0].emit("exit", 0, null);
+  workers[0].emit("close", 0, null);
+
+  const { results } = await applyPromise;
+  const result = results.find((r) => r.actionId === rerender.id)!;
+  assert.notEqual(result.status, "completed", JSON.stringify(result));
+  assert.match(result.reason ?? "", /After Effects/);
+  const delivered = await fsPromises.readdir(path.join(root, f.slug)).catch(() => [] as string[]);
+  for (const name of delivered.filter((entry) => entry.endsWith(".mp4"))) {
+    assert.notEqual(await readFile(path.join(root, f.slug, name), "utf8"), "an after effects video");
+  }
 });
 
 /* ------------------------------------------------------------------ *

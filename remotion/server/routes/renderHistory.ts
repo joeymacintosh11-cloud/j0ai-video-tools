@@ -9,6 +9,7 @@ import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import { sendOk } from "../http/json.ts";
 import { renderManager } from "../../services/workflows/renderManager.ts";
+import { isTerminalStatus } from "../../services/workflows/renderJobTypes.ts";
 import { getRecentRenderHistory } from "../../services/workflows/renderJournal.ts";
 
 /**
@@ -52,19 +53,19 @@ export const handleGetRenderHistory = (
   const limit = readLimit(searchParams.get("limit"));
 
   // Live authority always wins (mirrors getJobOrHistorical in
-  // server/routes/renders.ts, applied here at the list level): a job
-  // renderManager currently holds live for this track must never be
+  // server/routes/renders.ts, applied here at the list level): an unfinished job
+  // renderManager currently holds active for this track must never be
   // reported through this journal-only endpoint, where it would be
   // misclassified "interrupted" for having no live owner *the journal can
   // see*. It belongs in the live render state this page shows elsewhere.
-  const liveJobIds = new Set(
+  const activeJobIds = new Set(
     renderManager
       .listJobs()
-      .filter((job) => job.slug === slug)
+      .filter((job) => job.slug === slug && !isTerminalStatus(job.status))
       .map((job) => job.id),
   );
 
-  const result = getRecentRenderHistory(slug, limit, liveJobIds);
+  const result = getRecentRenderHistory(slug, limit, activeJobIds);
 
   const jobs: readonly RenderHistoryJobView[] = result.jobs.map((job) => ({
     jobId: job.jobId,

@@ -13,6 +13,7 @@ import {
 import { targetKey } from "../../core/domain/render/renderJournal.ts";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { assertRenderPresetId } from "../../core/domain/video/renderPresets.ts";
+import { storedRendererId, workflowEngineField } from "../../core/domain/video/renderers.ts";
 import { adoptExistingExports } from "../../services/library/recordExport.ts";
 import { inspectRenderTargetLock } from "../../services/render/renderLock.ts";
 import { sendOk } from "../http/json.ts";
@@ -135,8 +136,11 @@ export const handleReexportContentLibraryRecord = async (
     throw lockedElsewhere();
   }
 
+  // A re-export replaces this version's own file, so it renders with the
+  // renderer that made it (eligibility refuses an unknown one), never the default.
+  const engine = storedRendererId(record.template.renderer)!;
   const { batch, skipped, locked } = renderManager.startBatch([
-    { slug: record.track.slug, preset: presetId },
+    { slug: record.track.slug, preset: presetId, ...workflowEngineField(engine) },
   ]);
 
   if (skipped.length > 0) throw alreadyActive();

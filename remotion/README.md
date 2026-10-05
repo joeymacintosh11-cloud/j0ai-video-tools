@@ -79,6 +79,51 @@ npm run prepare-track -- midnight-rider
 npm run render-track -- midnight-rider
 ```
 
+### V2 production journey
+
+1. Open the catalogue and a track. Save its renderer preference and intended
+   formats in **Track info**. Tracks without a renderer field use Remotion;
+   tracks without intended formats retain the historical all-format intent.
+2. Use the toolbar formats for an explicit single/batch render, or **Export
+   missing** / content-package planning for each track’s saved intended formats.
+   These are separate choices: toolbar selection does not rewrite metadata.
+3. Queue the tracks. Jobs retain their engine and format through progress,
+   completion and journal recovery. The server runs one worker at a time;
+   AE additionally protects shared staging across CLI/API processes.
+4. A successful render atomically publishes the engine-specific video/manifest
+   and records it in the content library. Missing/stale exports remain actionable;
+   failed or cancelled attempts preserve the previous published pair.
+5. Inspect freshness and content-package readiness. Re-export stale inputs with
+   the preferred renderer. AE template freshness observes the configured base,
+   preparation contract, mode and composition; prepared-cache eviction does not
+   stale a finished export.
+6. Deliver a fresh export to a configured local destination. Delivery revalidates
+   source identity and the current renderer before publication. Receipts/history
+   retain renderer identity. Release bundles and automatic destination repair
+   remain Remotion-only.
+7. Reload safely: preferences and finished exports remain on disk; saved package
+   sessions attach only to matching engine/format/job identities. After server
+   restart, unfinished journal entries are **interrupted**, never live progress.
+   Inspect AE workspace recovery, preview maintenance and apply only reviewed
+   candidates before retrying a missing/stale export. Ambiguous ownership and
+   unknown files require manual investigation and are not automatically deleted.
+
+For AE, manual preparation remains the default; auto preparation is opt-in and
+requires macOS Automation permission and **Allow Scripts to Write Files and
+Access Network** in After Effects. Auto mode opens a scratch base snapshot and
+saves a per-track working copy; it never saves over the configured base project.
+Vertical/square requests require explicit `compositions` mappings; unmapped
+requests fail before staging or aerender instead of using the default 16:9 comp.
+Configure each mapped composition with the intended canvas/frame rate. V2
+validates picture/audio streams, but does not verify AE canvas dimensions or
+visual correctness; see the AE limitations below.
+
+The stabilization integration suite uses synthetic renderer output to verify
+queue → publication → freshness → package → local delivery/history for both
+engines and all formats. Adapter suites separately verify preparation, locking,
+cache, cancellation and recovery. Synthetic output is not a substitute for
+checking the appearance of a production Adobe template.
+
 ### Preparing a track
 
 ```console
@@ -209,9 +254,9 @@ git-ignored; `TOSHI_AE_CONFIG` can point elsewhere):
 }
 ```
 
-Only `project` and `composition` are required. `compositions` picks a
-composition per format. `outputModule` must name an H.264/MP4 output-module
-template in your After Effects; leave it out to use the project's own. Also
+Only `project` and `composition` are required for YouTube 16:9. `compositions`
+picks a composition per format; vertical and square require explicit mappings.
+`outputModule` must name an H.264/MP4 output-module template in your After Effects; leave it out to use the project's own. Also
 optional: `dataFile` (default: `toshi-render-data.json` beside the project)
 and `aerenderPath`. Missing or wrong settings stop the render with a "not
 configured" error saying what to fix.
@@ -1070,6 +1115,10 @@ disk now. Open **Library** in the app header to filter, inspect a version and
 its lineage, reveal the file, or re-export the version that is on disk now —
 which queues a normal render and adds a new record when it finishes. An older
 version cannot be re-exported: every render uses the track's current files.
+Versions are kept per renderer: an After Effects version is judged against the
+After Effects export (`out/<slug>/after-effects/<preset>.mp4`), never superseded
+by a Remotion render of the same format, and re-exporting it renders with After
+Effects again.
 
 ```console
 npm run content-library                              # newest first

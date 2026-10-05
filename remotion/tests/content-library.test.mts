@@ -7,7 +7,8 @@ import {
   CONTENT_LIBRARY_MAX_LIMIT,
   CONTENT_LIBRARY_SCHEMA_VERSION,
   CONTENT_LIBRARY_STATUS_NOTES,
-  libraryTargetKey,
+  libraryRecordKey,
+  liveExportKey,
   parseContentLibrary,
   parseContentLibraryLine,
   parseContentLibraryQuery,
@@ -65,7 +66,7 @@ const onDisk = (r: ContentLibraryRecord, freshness: LiveExportFacts["freshness"]
 const live = (entries: readonly [ContentLibraryRecord | [string, string], LiveExportFacts][]) =>
   new Map(
     entries.map(([target, facts]) => [
-      Array.isArray(target) ? libraryTargetKey(target[0], target[1]) : libraryTargetKey(target.track.slug, target.preset.id),
+      Array.isArray(target) ? liveExportKey(target[0], target[1], "remotion") : libraryRecordKey(target),
       facts,
     ]),
   );
@@ -244,6 +245,38 @@ test("deliveries are attributed to the version that was current when each happen
   const entries = buildLibraryEntries([first, second], new Map(), events);
   assert.deepEqual(entries[0].deliveries, { count: 2, lastDeliveredAt: "2026-09-03T00:00:00.000Z" });
   assert.deepEqual(entries[1].deliveries, { count: 1, lastDeliveredAt: "2026-09-06T00:00:00.000Z" });
+});
+
+test("each renderer's versions are judged against its own export: an AE render never supersedes a Remotion one", () => {
+  const remotion = record({ generatedAt: "2026-09-01T10:00:00.000Z" });
+  const ae = record({
+    generatedAt: "2026-09-02T10:00:00.000Z",
+    template: { composition: "Toshi Visualizer", visualizerVersion: "aep-sha256:x;prep:1;mode:manual", renderer: "after-effects" },
+    output: { path: "out/probe/after-effects/youtube-16x9.mp4", bytes: 77, mtimeMs: 77, ino: 77 },
+    manifest: { path: "out/probe/after-effects/youtube-16x9.manifest.json", inputFingerprint: hex("7"), inputs: INPUTS },
+  });
+  const facts = new Map([
+    [liveExportKey("probe", "youtube-16x9", "remotion"), onDisk(remotion, "current")],
+    [liveExportKey("probe", "youtube-16x9", "after-effects"), onDisk(ae, "stale")],
+  ]);
+  const [remotionEntry, aeEntry] = buildLibraryEntries([remotion, ae], facts, [
+    // After the AE render: still the Remotion version's delivery, by fingerprint.
+    delivery("2026-09-03T00:00:00.000Z", remotion.manifest.inputFingerprint),
+    delivery("2026-09-03T01:00:00.000Z", ae.manifest.inputFingerprint),
+  ]);
+  assert.equal(remotionEntry.status, "current");
+  assert.equal(remotionEntry.supersededBy, null);
+  assert.deepEqual(remotionEntry.deliveries, { count: 1, lastDeliveredAt: "2026-09-03T00:00:00.000Z" });
+  assert.equal(aeEntry.status, "stale", "judged against the After Effects export, not the Remotion one");
+  assert.deepEqual(aeEntry.deliveries, { count: 1, lastDeliveredAt: "2026-09-03T01:00:00.000Z" });
+
+  // With only the Remotion export on disk, the AE version is missing, not superseded by it.
+  const remotionOnly = buildLibraryEntries([remotion, ae], live([[remotion, onDisk(remotion)]]), null);
+  assert.deepEqual(remotionOnly.map((entry) => entry.status), ["current", "missing"]);
+
+  // A renderer this version does not know never matches any live export.
+  const unknown = record({ template: { ...ae.template, renderer: "premiere-2031" } });
+  assert.equal(buildLibraryEntries([unknown], facts, null)[0].status, "missing");
 });
 
 test("with no destination, delivery facts are null rather than a misleading zero", () => {

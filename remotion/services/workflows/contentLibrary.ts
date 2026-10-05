@@ -1,6 +1,6 @@
 import {
   buildLibraryEntries,
-  libraryTargetKey,
+  liveExportKey,
   selectContentLibrary,
   summarizeContentLibrary,
   summarizeTrackFormats,
@@ -16,6 +16,7 @@ import {
 import type { DeliveryLogEvent } from "../../core/domain/delivery/deliveryHistory.ts";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { isValidSlug } from "../../core/domain/tracks/slug.ts";
+import { storedRendererId, type RendererId } from "../../core/domain/video/renderers.ts";
 import {
   RENDER_PRESET_LIST,
   isRenderPresetId,
@@ -67,35 +68,46 @@ export type ContentLibraryQueryResult = {
 const KNOWN_PRESETS = RENDER_PRESET_LIST.map((preset) => ({ id: preset.id, label: preset.shortLabel }));
 
 /**
- * What sits at each track/format's canonical path right now, for the slugs
- * the given records mention. A slug that fails validation (only possible in a
- * hand-edited file) is never turned into a path; its records read as missing.
+ * What sits at each track/format's canonical path right now, per renderer the
+ * given records name (each renderer publishes to its own path). A slug that
+ * fails validation (only possible in a hand-edited file), or a renderer this
+ * version does not know, is never turned into a path; its records read as
+ * missing.
  */
 const liveFactsFor = (records: readonly ContentLibraryRecord[]): Map<string, LiveExportFacts> => {
   const facts = new Map<string, LiveExportFacts>();
-  const slugs = [...new Set(records.map((record) => record.track.slug))].filter(isValidSlug);
+  const renderersBySlug = new Map<string, Set<RendererId>>();
+  for (const record of records) {
+    const renderer = storedRendererId(record.template.renderer);
+    if (!isValidSlug(record.track.slug) || renderer === null) continue;
+    const renderers = renderersBySlug.get(record.track.slug) ?? new Set<RendererId>();
+    renderers.add(renderer);
+    renderersBySlug.set(record.track.slug, renderers);
+  }
 
-  for (const slug of slugs) {
-    let coverage: ReturnType<typeof trackExportCoverage> = [];
-    try {
-      coverage = trackExportCoverage(slug);
-    } catch {
-      // Unreadable track: every format reads as not-on-disk below.
-    }
+  for (const [slug, renderers] of renderersBySlug) {
+    for (const renderer of renderers) {
+      let coverage: ReturnType<typeof trackExportCoverage> = [];
+      try {
+        coverage = trackExportCoverage(slug, undefined, renderer);
+      } catch {
+        // Unreadable track: every format reads as not-on-disk below.
+      }
 
-    for (const preset of RENDER_PRESET_LIST) {
-      const covered = coverage.find((entry) => entry.presetId === preset.id);
-      const { manifest } = readExportManifest(trackOutputLocation(slug, preset.id).manifest, slug, preset.id);
-      facts.set(libraryTargetKey(slug, preset.id), {
-        freshness: covered?.freshness ?? "missing",
-        manifest: manifest
-          ? {
-              generatedAt: manifest.renderedAt,
-              inputFingerprint: manifest.inputFingerprint,
-              output: manifest.output,
-            }
-          : null,
-      });
+      for (const preset of RENDER_PRESET_LIST) {
+        const covered = coverage.find((entry) => entry.presetId === preset.id);
+        const { manifest } = readExportManifest(trackOutputLocation(slug, preset.id, renderer).manifest, slug, preset.id);
+        facts.set(liveExportKey(slug, preset.id, renderer), {
+          freshness: covered?.freshness ?? "missing",
+          manifest: manifest
+            ? {
+                generatedAt: manifest.renderedAt,
+                inputFingerprint: manifest.inputFingerprint,
+                output: manifest.output,
+              }
+            : null,
+        });
+      }
     }
   }
 
@@ -238,6 +250,9 @@ export const reexportEligibility = async (
   }
   if (!isValidSlug(record.track.slug) || !isRenderPresetId(record.preset.id)) {
     return { allowed: false, reason: "This format is no longer one this tool can render." };
+  }
+  if (storedRendererId(record.template.renderer) === null) {
+    return { allowed: false, reason: "This version was made by a renderer this tool does not know." };
   }
 
   const inspection = await inspectTrack(record.track.slug);

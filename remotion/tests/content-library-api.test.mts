@@ -59,7 +59,7 @@ const track = async (t: TestContext) => {
   await writeFile(f.cover, "cover");
   await writeFile(f.beat, "audio");
   t.after(() => rm(f.outputDir, { recursive: true, force: true }));
-  const publish = async (presetId: RenderPresetId) => {
+  const publish = async (presetId: RenderPresetId, renderer?: "after-effects") => {
     const props = buildTrackProps({
       slug: f.slug,
       metadata: parseTrackMetadata(JSON.parse(await readFile(f.metadata, "utf8")), "fixture"),
@@ -68,8 +68,9 @@ const track = async (t: TestContext) => {
     const outcome = await publishRecordedExport({
       slug: f.slug,
       presetId,
-      inputs: fingerprintInputs(props, presetId),
+      inputs: fingerprintInputs(props, presetId, undefined, renderer, renderer && AE_TEMPLATE),
       track: trackSnapshotFromProps(f.slug, props),
+      ...(renderer ? { renderer, template: AE_TEMPLATE } : {}),
       jobId: null,
       produce: async (file) => writeFile(file, `video ${randomUUID()}`),
     });
@@ -78,6 +79,8 @@ const track = async (t: TestContext) => {
   };
   return { f, publish };
 };
+
+const AE_TEMPLATE = { composition: "Toshi Visualizer", version: "aep-sha256:test;prep:1;mode:manual" };
 
 const get = async (url: string) => {
   const response = await fetch(url);
@@ -199,6 +202,38 @@ test("re-exporting the current version queues exactly one normal render, and nev
   // render does, as a new record.
   assert.equal(await readFile(contentLibraryPath(), "utf8"), before);
   assert.equal(readContentLibrary().records.filter((r) => r.track.slug === f.slug).length, 1);
+});
+
+test("re-exporting an After Effects version queues an After Effects render, never a Remotion one", async (t) => {
+  const childProcess = (await import("node:child_process")).default;
+  const { Worker } = await import("./managerHarness.mts");
+  const { renderManager } = await import("../services/workflows/renderManager.ts");
+  const worker = new Worker();
+  worker.pid = 4243;
+  t.mock.method(childProcess, "fork", () => worker);
+  syncBuiltinESMExports();
+
+  const base = await api(t);
+  const { f, publish } = await track(t);
+  const current = await publish("youtube-16x9", "after-effects");
+  assert.equal(current.template.renderer, "after-effects");
+  let batchId: string | null = null;
+  t.after(() => {
+    if (batchId) renderManager.cancelBatch(batchId);
+    worker.emit("message", { type: "cancelled" });
+    worker.emit("exit", 0, null);
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+
+  const response = await fetch(`${base}/api/content-library/${current.recordId}/reexport`, { method: "POST" });
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  batchId = body.data.batch.id;
+  assert.deepEqual(
+    body.data.batch.jobs.map((job: { slug: string; presetId: string; engine: string }) => [job.slug, job.presetId, job.engine]),
+    [[f.slug, "youtube-16x9", "after-effects"]],
+  );
 });
 
 test("an empty library answers with an empty, well-formed view", async (t) => {
