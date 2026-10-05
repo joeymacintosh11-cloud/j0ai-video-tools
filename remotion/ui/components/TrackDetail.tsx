@@ -28,6 +28,7 @@ import { ExportStatus } from "./ExportStatus.tsx";
 import { AssetDropZone } from "./AssetDropZone.tsx";
 import { MetadataForm } from "./MetadataForm.tsx";
 import { PrepareActions } from "./PrepareActions.tsx";
+import { PublishPanel } from "./PublishPanel.tsx";
 import { TrackRecentRenderHistory } from "./RecentRenderHistory.tsx";
 import { RenderPanel } from "./RenderPanel.tsx";
 import { StatusBadge } from "./StatusBadge.tsx";
@@ -170,6 +171,14 @@ export const TrackDetail: React.FC<{
           onChanged={onChanged}
           onBatchStarted={onBatchStarted}
         />
+      </section>
+
+      {/* Publishing is downstream of the package: it sends one existing,
+          current export to a destination and records a receipt. It never
+          renders and never changes the package above. */}
+      <section className="section" id="publish">
+        <h3 className="section__title">Publish</h3>
+        <PublishPanel track={track} />
       </section>
 
       {/* Everything below is technical detail the Content Package workflow
