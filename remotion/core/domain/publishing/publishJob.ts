@@ -128,9 +128,14 @@ export type PublishJob = {
 };
 
 export class PublishTransitionError extends Error {
-  constructor(readonly from: PublishJobState, readonly to: PublishJobState) {
+  readonly from: PublishJobState;
+  readonly to: PublishJobState;
+
+  constructor(from: PublishJobState, to: PublishJobState) {
     super(`A publish job cannot go from ${from} to ${to}.`);
     this.name = "PublishTransitionError";
+    this.from = from;
+    this.to = to;
   }
 }
 

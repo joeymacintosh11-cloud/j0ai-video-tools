@@ -274,7 +274,7 @@ export const appendPublicationReceipt = async (
       const existing = readPublicationReceipts(root);
       const same = existing.receipts.find((entry) => entry.attemptId === receipt.attemptId || entry.receiptId === receipt.receiptId);
       if (same !== undefined) {
-        if (same.receiptId !== receipt.receiptId || same.jobId !== receipt.jobId)
+        if (same.receiptId !== receipt.receiptId || same.jobId !== receipt.jobId || same.publicationId !== receipt.publicationId)
           throw new Error("A conflicting receipt is already recorded for this attempt.");
         return { appended: false, receipt: same };
       }
