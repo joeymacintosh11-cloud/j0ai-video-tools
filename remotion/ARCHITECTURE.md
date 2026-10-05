@@ -553,6 +553,14 @@ read reconciles it — a receipt for its attempt means `published` (crash betwee
 6's append and save), otherwise `recovery_required`. The server does this at
 startup, without retrying anything.
 
+Dead-owner job lock reclamation uses an exclusive `.reclaim` guard and
+rechecks ownership inside it. Competing reclaimers cannot delete a replacement
+live owner's lock. An interrupted reclamation guard fails closed; inspect
+ownership and confirm no reclaiming process remains before manually removing it.
+The shared receipt-log append lock similarly fences automatic and operator
+reclamation with a `.reclaim` guard; a retained guard requires inspection rather
+than automatic removal.
+
 ### Receipts and idempotency
 
 Receipts are appended to `out/.publishing/receipts.jsonl` — never to export,
@@ -602,6 +610,10 @@ a `publication.json`. The original export is never touched. Fixtures
 cancellation) are explicit options, settable in `publishing.local.json` or by
 tests. It rejects the placeholder title "Untitled" to exercise adapter-level
 validation.
+
+Only an absent publication folder proves the local attempt was not published.
+Missing, unreadable, malformed or mismatched records in an existing folder leave
+reconciliation uncertain and block retry.
 
 ### What the YouTube milestone adds
 

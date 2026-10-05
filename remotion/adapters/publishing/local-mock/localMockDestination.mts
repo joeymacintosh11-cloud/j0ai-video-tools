@@ -4,6 +4,8 @@ import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { DestinationCapabilities } from "../../../core/domain/publishing/destinations.ts";
+import { isPublicationSourceIdentity } from "../../../core/domain/publishing/publicationSource.ts";
+import { IDEMPOTENCY_KEY_PATTERN, PUBLISH_ATTEMPT_ID_PATTERN, PUBLISH_JOB_ID_PATTERN } from "../../../core/domain/publishing/publishJob.ts";
 import type {
   PreparedPublication,
   PublishContext,
@@ -114,9 +116,25 @@ export const createLocalMockDestination = (options: LocalMockOptions): PublishDe
 
   const readRecord = async (publicationId: string): Promise<PublicationRecord | null> => {
     try {
-      return JSON.parse(await readFile(path.join(publicationsDir(), publicationId, "publication.json"), "utf8")) as PublicationRecord;
-    } catch {
-      return null;
+      const record = JSON.parse(await readFile(path.join(publicationsDir(), publicationId, "publication.json"), "utf8")) as PublicationRecord | null;
+      if (record === null || typeof record !== "object" || record.publicationId !== publicationId ||
+          typeof record.idempotencyKey !== "string" || !IDEMPOTENCY_KEY_PATTERN.test(record.idempotencyKey) ||
+          typeof record.jobId !== "string" || !PUBLISH_JOB_ID_PATTERN.test(record.jobId) ||
+          typeof record.attemptId !== "string" || !PUBLISH_ATTEMPT_ID_PATTERN.test(record.attemptId) ||
+          typeof record.publishedAt !== "string" || !Number.isFinite(Date.parse(record.publishedAt)) ||
+          !isPublicationSourceIdentity(record.source)) throw new Error("Invalid local publication record.");
+      return record;
+    } catch (error) {
+      // Only an absent publication folder proves nothing was published.
+      // A missing/damaged record inside an existing folder is uncertain.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        try {
+          await stat(path.join(publicationsDir(), publicationId));
+        } catch (folderError) {
+          if ((folderError as NodeJS.ErrnoException).code === "ENOENT") return null;
+        }
+      }
+      throw new Error("The local publication record could not be read; its outcome remains uncertain.");
     }
   };
 
@@ -214,9 +232,11 @@ export const createLocalMockDestination = (options: LocalMockOptions): PublishDe
     recover: async (request) => {
       const publicationId = publicationIdFor(request.accountId, request.idempotencyKey);
       const record = await readRecord(publicationId);
-      return record !== null && record.idempotencyKey === request.idempotencyKey
-        ? { outcome: "published", publicationId, url: urlFor(publicationId), publishedAt: record.publishedAt }
-        : { outcome: "not_published" };
+      if (record === null) return { outcome: "not_published" };
+      if (record.idempotencyKey !== request.idempotencyKey || record.jobId !== request.jobId ||
+          record.attemptId !== request.attemptId || record.accountId !== request.accountId)
+        return { outcome: "unknown", message: "The local publication record does not match this attempt." };
+      return { outcome: "published", publicationId, url: urlFor(publicationId), publishedAt: record.publishedAt };
     },
   };
 };

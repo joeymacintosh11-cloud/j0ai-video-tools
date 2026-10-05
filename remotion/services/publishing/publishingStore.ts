@@ -218,12 +218,21 @@ export const acquireJobLock = (jobId: string, root: string = publishingRoot()): 
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     if (inspectJobLock(jobId, root) !== "abandoned")
       throw new TrackError(trackIssue("PUBLISH_JOB_CONFLICT", `Publish job ${jobId} is being worked on by another process.`));
-    // Reclaim only a dead local owner's lock; the caller re-reads the job and
-    // treats an interrupted "publishing" job as recovery_required.
+    // Serialize reclaimers: otherwise a second contender can unlink the
+    // first contender's new live lock after both observed the dead owner.
+    const guard = `${file}.reclaim`;
+    let guardFd: number;
     try {
-      unlinkSync(file);
+      guardFd = openSync(guard, "wx");
     } catch {
-      // Someone else reclaimed it first; the retry below decides.
+      throw new TrackError(trackIssue("PUBLISH_JOB_CONFLICT", `Publish job ${jobId} ownership is being reconciled. Try again later.`));
+    }
+    try {
+      // Recheck while fenced, never act on the pre-guard observation.
+      if (inspectJobLock(jobId, root) === "abandoned") unlinkSync(file);
+    } finally {
+      closeSync(guardFd);
+      unlinkSync(guard);
     }
     try {
       write();

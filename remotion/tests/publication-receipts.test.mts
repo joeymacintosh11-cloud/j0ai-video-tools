@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { hostname } from "node:os";
 import { readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -20,6 +23,7 @@ import {
   receiptsPath,
 } from "../services/publishing/publishingStore.ts";
 import { ALL_FORMATS, isolatePublishing, metadata, publishingTrack, service } from "./publishingHarness.mts";
+import { releaseJsonlLock } from "../services/storage/jsonlAppendLog.ts";
 
 const FINGERPRINT = "a".repeat(64);
 const valid = (overrides: Partial<PublicationReceipt> = {}): PublicationReceipt => {
@@ -49,6 +53,32 @@ const valid = (overrides: Partial<PublicationReceipt> = {}): PublicationReceipt 
     ...overrides,
   };
 };
+
+test("receipt append reclamation fences a competing operator before clearing the dead owner", async (t) => {
+  const iso = await isolatePublishing(t);
+  fs.mkdirSync(iso.root, { recursive: true });
+  const lock = path.join(iso.root, ".receipts.lock");
+  fs.writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 + 12345, hostname: hostname(), token: "dead" }));
+  const original = fs.unlinkSync;
+  let competing: ReturnType<typeof releaseJsonlLock> | undefined;
+  t.mock.method(fs, "unlinkSync", (file: Parameters<typeof fs.unlinkSync>[0]) => {
+    if (file === lock && competing === undefined) {
+      competing = releaseJsonlLock(iso.root, ".receipts.lock", "receipts");
+      assert.equal(competing.released, false, "another reclaimer must not enter the unlink window");
+    }
+    return original(file);
+  });
+  syncBuiltinESMExports();
+  try {
+    await appendPublicationReceipt(valid());
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+  assert.match(competing!.problem!, /being reconciled/);
+  assert.equal(readPublicationReceipts().receipts.length, 1);
+  assert.equal(fs.existsSync(`${lock}.reclaim`), false);
+});
 
 test("a well-formed receipt parses; malformed receipts are rejected with a reason", () => {
   assert.equal(parsePublicationReceipt(valid()).problem, null);

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import fs, { existsSync } from "node:fs";
+import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
+import { hostname } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
@@ -26,6 +28,7 @@ import { updateTrackMetadata } from "../services/tracks/updateTrackMetadata.ts";
 import { toTrackDetailView } from "../services/workflows/trackView.ts";
 import {
   appendPublicationReceipt,
+  acquireJobLock,
   attemptIdentity,
   destinationWorkspace,
   readPublicationReceipts,
@@ -41,6 +44,72 @@ import {
   publishingTrack,
   service,
 } from "./publishingHarness.mts";
+
+test("a stale-lock contender cannot delete a replacement live owner's lock", async (t) => {
+  const iso = await isolatePublishing(t);
+  const jobId = "pub_0123456789abcdef01234567";
+  const first = acquireJobLock(jobId);
+  first.release();
+  const file = path.join(iso.root, "locks", `${jobId}.lock`);
+  const dead = { pid: 2 ** 22 + 12345, hostname: hostname(), token: "dead" };
+  fs.writeFileSync(file, JSON.stringify(dead));
+  const original = fs.readFileSync;
+  let reads = 0;
+  const live = JSON.stringify({ ...dead, pid: process.pid, token: "replacement" });
+  t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
+    const value = original(...args);
+    // Another process wins reclamation after this contender observes the old owner.
+    if (args[0] === file && ++reads === 2) fs.writeFileSync(file, live);
+    return value;
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => acquireJobLock(jobId), code("PUBLISH_JOB_CONFLICT"));
+    assert.equal(original(file, "utf8"), live);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+  assert.equal(existsSync(`${file}.reclaim`), false);
+});
+
+test("a held reclamation guard fails closed without removing ownership", async (t) => {
+  const iso = await isolatePublishing(t);
+  const jobId = "pub_0123456789abcdef01234567";
+  acquireJobLock(jobId).release();
+  const file = path.join(iso.root, "locks", `${jobId}.lock`);
+  const dead = JSON.stringify({ pid: 2 ** 22 + 12345, hostname: hostname(), token: "dead" });
+  await writeFile(file, dead);
+  await writeFile(`${file}.reclaim`, "held");
+  assert.throws(() => acquireJobLock(jobId), code("PUBLISH_JOB_CONFLICT"));
+  assert.equal(await readFile(file, "utf8"), dead);
+  assert.equal(await readFile(`${file}.reclaim`, "utf8"), "held");
+});
+
+for (const damage of ["truncated", "missing", "invalid", "wrong-attempt"] as const) {
+  test(`a ${damage} local publication record cannot prove a safe retry`, async (t) => {
+    await isolatePublishing(t);
+    const f = await publishingTrack(t);
+    await f.render("remotion");
+    const { publishing, knobs } = service();
+    knobs.behavior = "uncertain";
+    const job = await publishing.execute((await publishing.createJob(request(f.slug))).jobId);
+    const dirs = await publicationDirs();
+    assert.equal(dirs.length, 1);
+    const recordFile = path.join(destinationWorkspace("test-mock"), "publications", dirs[0], "publication.json");
+    if (damage === "missing") await rm(recordFile);
+    else if (damage === "wrong-attempt") {
+      const record = JSON.parse(await readFile(recordFile, "utf8"));
+      await writeFile(recordFile, JSON.stringify({ ...record, jobId: "pub_000000000000000000000000" }));
+    } else await writeFile(recordFile, damage === "invalid" ? "{}" : '{"partial');
+    const recovered = await publishing.recover(job.jobId);
+    assert.equal(recovered.state, "recovery_required");
+    assert.equal(recovered.certainty, "uncertain");
+    await assert.rejects(publishing.execute(job.jobId), code("PUBLISH_JOB_CONFLICT"));
+    assert.deepEqual(await publicationDirs(), dirs);
+    assert.equal(readPublicationReceipts().receipts.length, 0);
+  });
+}
 
 const code = (expected: string) => (error: unknown) => error instanceof TrackError && error.code === expected;
 const yt = (slug: string, renderer: "remotion" | "after-effects" = "remotion") => ({ slug, presetId: "youtube-16x9" as const, renderer });
