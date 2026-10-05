@@ -41,6 +41,9 @@ const STATUS_BY_CODE: Record<TrackErrorCode, number> = {
   RENDER_TARGET_LOCKED: 409,
   LIBRARY_RECORD_NOT_FOUND: 404,
   LIBRARY_RECORD_NOT_CURRENT: 409,
+  PUBLISH_DESTINATION_UNKNOWN: 400,
+  PUBLISH_JOB_NOT_FOUND: 404,
+  PUBLISH_JOB_CONFLICT: 409,
 };
 
 export const statusForCode = (code: TrackErrorCode): number =>
