@@ -325,6 +325,7 @@ export const RenderPanel: React.FC<{
         <p className="muted">
           Renders with {engineName}, this track&apos;s chosen engine (Track
           info).
+          {engine === "after-effects" ? " Vertical and square require explicit After Effects composition mappings." : null}
         </p>
       ) : null}
 

@@ -203,3 +203,13 @@ test("actual cache eviction does not change AE export freshness or real track in
   try {assert.equal(prunePreparedCache(config,null,lock.token,0).removed.length,2);}finally{lock();}
   assert.equal(f.state().freshness,"current");assert.deepEqual(await readFile(f.metadata),metadata);assert.deepEqual(await readFile(c.project),base);
 });
+
+test("unmapped AE formats have no canonical template identity; default 16:9 remains available", async (t) => {
+  await setup(t);
+  for (const preset of ["vertical-9x16", "square-1x1"] as const) {
+    const state = readAfterEffectsTemplateIdentity(preset);
+    assert.equal(state.template, null);
+    assert.match(state.problem!, /explicit.*compositions/);
+  }
+  assert.ok(readAfterEffectsTemplateIdentity("youtube-16x9").template);
+});

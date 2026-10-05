@@ -431,3 +431,10 @@ appear immediately without waiting for in-memory retention eviction or restart.
 The history panel refreshes with the track snapshot and names each renderer.
 After applied workspace maintenance the UI performs a fresh inspection because
 the maintenance response contains the preview’s pre-operation inspection.
+
+AE’s default composition is restricted to the default 16:9 preset. Vertical and
+square require explicit config mappings, checked before acquiring staging locks
+or writing assets. Canonical identity uses the same selector, so an unmapped
+format cannot be treated as a valid template for freshness/delivery either.
+Explicitly mapped compositions still require operator verification of canvas,
+frame rate and visual correctness.

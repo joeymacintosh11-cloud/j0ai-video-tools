@@ -112,9 +112,11 @@ For AE, manual preparation remains the default; auto preparation is opt-in and
 requires macOS Automation permission and **Allow Scripts to Write Files and
 Access Network** in After Effects. Auto mode opens a scratch base snapshot and
 saves a per-track working copy; it never saves over the configured base project.
-Map vertical/square compositions with the intended canvas/frame rate before
-queueing those formats. V2 validates picture/audio streams, but does not verify
-AE canvas dimensions or visual correctness; see the AE limitations below.
+Vertical/square requests require explicit `compositions` mappings; unmapped
+requests fail before staging or aerender instead of using the default 16:9 comp.
+Configure each mapped composition with the intended canvas/frame rate. V2
+validates picture/audio streams, but does not verify AE canvas dimensions or
+visual correctness; see the AE limitations below.
 
 The stabilization integration suite uses synthetic renderer output to verify
 queue → publication → freshness → package → local delivery/history for both
@@ -252,9 +254,9 @@ git-ignored; `TOSHI_AE_CONFIG` can point elsewhere):
 }
 ```
 
-Only `project` and `composition` are required. `compositions` picks a
-composition per format. `outputModule` must name an H.264/MP4 output-module
-template in your After Effects; leave it out to use the project's own. Also
+Only `project` and `composition` are required for YouTube 16:9. `compositions`
+picks a composition per format; vertical and square require explicit mappings.
+`outputModule` must name an H.264/MP4 output-module template in your After Effects; leave it out to use the project's own. Also
 optional: `dataFile` (default: `toshi-render-data.json` beside the project)
 and `aerenderPath`. Missing or wrong settings stop the render with a "not
 configured" error saying what to fix.

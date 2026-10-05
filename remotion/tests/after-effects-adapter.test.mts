@@ -278,7 +278,7 @@ const setup = async (
     metadata: parseTrackMetadata(JSON.parse(await readFile(f.metadata, "utf8")), "fixture"),
     analysisAvailable: false,
   });
-  const tpl = await template(t, config, options.references);
+  const tpl = await template(t, { compositions: { "vertical-9x16": "Toshi Visualizer", "square-1x1": "Toshi Visualizer" }, ...config }, options.references);
   const argsFile = path.join(tpl.dir, "argv.json");
   withEnv(t, { FAKE_AERENDER_ARGS_FILE: argsFile, FAKE_AERENDER_MODE: undefined });
   const logs: string[] = [];
@@ -473,7 +473,7 @@ test("render-track --engine after-effects: unavailable, then unconfigured, then 
   await run("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=1", "-ac", "2", "-ar", "44100", "-c:a", "pcm_s24le", "-y", f.beat]);
   t.after(() => rm(f.outputDir, { recursive: true, force: true }));
   t.after(() => rm(f.analysis, { force: true }));
-  const tpl = await template(t);
+  const tpl = await template(t, { compositions: { "square-1x1": "Toshi Visualizer" } });
 
   const unavailable = await cli([f.slug, "--engine", "after-effects"], { TOSHI_AERENDER_PATH: "/nonexistent/aerender" });
   assert.equal(unavailable.code, 1);
@@ -709,3 +709,15 @@ test("cancellation waits for delayed aerender shutdown before releasing staging 
   await assert.rejects(readFile(trackOutputLocation(ctx.f.slug,"youtube-16x9","after-effects").path));
   assert.deepEqual(libraryFor(ctx.f.slug),[]);
 });
+
+for (const presetId of ["vertical-9x16", "square-1x1"] as const) {
+  test(`unmapped ${presetId} fails before staging or aerender instead of using the default composition`, async (t) => {
+    const ctx = await setup(t, { compositions: {} });
+    if (!ctx) return;
+    await assert.rejects(renderTrackVideo({ engine: ctx.engine, slug: ctx.f.slug, props: ctx.props, presetId }),
+      trackErrorCode("RENDERER_NOT_CONFIGURED", /explicit.*compositions/));
+    await assert.rejects(readFile(ctx.argsFile), { code: "ENOENT" });
+    await assert.rejects(readFile(readAfterEffectsConfig(ctx.tpl.file).dataFile), { code: "ENOENT" });
+    assert.equal(libraryFor(ctx.f.slug).length, 0);
+  });
+}

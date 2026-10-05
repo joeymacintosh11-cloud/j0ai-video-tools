@@ -18,7 +18,7 @@ import {
   discoverInstalledAerender,
   type AerenderDiscovery,
 } from "./aerenderDiscovery.mts";
-import { readAfterEffectsConfig, type AfterEffectsConfig } from "./afterEffectsConfig.mts";
+import { afterEffectsComposition, readAfterEffectsConfig, type AfterEffectsConfig } from "./afterEffectsConfig.mts";
 import {
   missingTemplateFiles,
   renderedMediaProblems,
@@ -215,6 +215,8 @@ export const createAfterEffectsRenderEngine = (
           resolvingActive = true;
           const task = (async (): Promise<ResolvedVideo> => {
             if (closed || cancelled) throw renderFailed("After Effects preparation cancelled.");
+            const preset = renderPreset(props.presetId ?? DEFAULT_RENDER_PRESET_ID);
+            const composition = afterEffectsComposition(config, preset.id);
             log("After Effects: Waiting for After Effects lock.");
             releaseStaging ??= acquireAfterEffectsStagingLock(config.dataFile);
             if (config.templatePreparation === "auto") {
@@ -223,8 +225,6 @@ export const createAfterEffectsRenderEngine = (
             }
             ownership({ trackIdentity: JSON.stringify([props.audioSrc, props.coverSrc]) });
             log("After Effects: serial execution; shared staging lock held until aerender stops.");
-            const preset = renderPreset(props.presetId ?? DEFAULT_RENDER_PRESET_ID);
-            const composition = config.compositions[preset.id] ?? config.composition;
             const seconds = await deps.probeAudioDurationInSeconds(path.join(deps.publicDir, props.audioSrc));
             const durationInFrames = secondsToFrames(seconds, preset.fps);
 

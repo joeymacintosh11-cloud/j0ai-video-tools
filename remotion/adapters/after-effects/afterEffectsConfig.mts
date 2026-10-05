@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
-import { isRenderPresetId, type RenderPresetId } from "../../core/domain/video/renderPresets.ts";
+import { DEFAULT_RENDER_PRESET_ID, isRenderPresetId, type RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { TEMPLATE_DATA_FILE_NAME } from "./templateContract.mts";
 
 /**
@@ -34,7 +34,7 @@ export const AFTER_EFFECTS_CONFIG_ENV = "TOSHI_AE_CONFIG";
 export type AfterEffectsConfig = {
   /** Absolute path of the .aep/.aepx project. */
   readonly project: string;
-  /** The composition to render when the format has no entry in `compositions`. */
+  /** Default 16:9 composition; other formats require an explicit mapping. */
   readonly composition: string;
   /** Per-format compositions, e.g. a 9:16 comp for vertical-9x16. */
   readonly compositions: Partial<Record<RenderPresetId, string>>;
@@ -53,6 +53,14 @@ export type AfterEffectsConfig = {
   readonly applicationBundleId: string;
   readonly preparationTimeoutMs: number;
   readonly workingDirectory: string;
+};
+
+/** A missing format mapping must never relabel the default canvas as another format. */
+export const afterEffectsComposition = (config: AfterEffectsConfig, presetId: RenderPresetId): string => {
+  const mapped = config.compositions[presetId];
+  if (mapped) return mapped;
+  if (presetId === DEFAULT_RENDER_PRESET_ID) return config.composition;
+  throw notConfigured(`After Effects format "${presetId}" needs an explicit "compositions"."${presetId}" mapping to a composition with that format's canvas and frame rate. The default composition is only used for ${DEFAULT_RENDER_PRESET_ID}.`);
 };
 
 export const afterEffectsConfigFile = (

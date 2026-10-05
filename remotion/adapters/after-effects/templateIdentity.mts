@@ -2,7 +2,7 @@ import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import type { RenderTemplateIdentity } from "../../core/ports/renderEngine.ts";
 import type { TemplateIdentityState } from "../../core/ports/templateIdentity.ts";
 import { fileContentHash } from "../../services/tracks/exportManifest.ts";
-import { readAfterEffectsConfig, type AfterEffectsConfig } from "./afterEffectsConfig.mts";
+import { afterEffectsComposition, readAfterEffectsConfig, type AfterEffectsConfig } from "./afterEffectsConfig.mts";
 import { PREPARATION_VERSION } from "./afterEffectsScripting.mts";
 
 /** Canonical base identity, never a generated project's hash or track marker. */
@@ -12,7 +12,7 @@ export const afterEffectsTemplateIdentity = (
   baseHash: string,
   prepVersion = PREPARATION_VERSION,
 ): RenderTemplateIdentity => ({
-  composition: config.compositions[presetId] ?? config.composition,
+  composition: afterEffectsComposition(config, presetId),
   version: `aep-sha256:${baseHash};prep:${prepVersion};mode:${config.templatePreparation}`,
 });
 
