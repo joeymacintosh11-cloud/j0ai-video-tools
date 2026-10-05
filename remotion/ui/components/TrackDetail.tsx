@@ -318,7 +318,7 @@ export const TrackDetail: React.FC<{
             readiness. */}
         <section className="section">
           <h3 className="section__title">Recent render</h3>
-          <TrackRecentRenderHistory slug={track.slug} />
+          <TrackRecentRenderHistory slug={track.slug} refreshKey={track} />
         </section>
 
         <section className="section">

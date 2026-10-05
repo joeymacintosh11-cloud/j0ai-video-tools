@@ -1,3 +1,4 @@
+import type { RenderHistoryView } from "../core/domain/api/views.ts";
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -7,7 +8,7 @@ import { createServer } from "node:http";
 import { syncBuiltinESMExports } from "node:module";
 import test, { type TestContext } from "node:test";
 import { handleRequest } from "../server/app.ts";
-import { RENDER_MANAGER_BOOT_ID } from "../services/workflows/renderJournal.ts";
+import { RENDER_MANAGER_BOOT_ID, waitForRenderJournalIdle } from "../services/workflows/renderJournal.ts";
 import {
   RENDER_JOURNAL_SCHEMA_VERSION,
   type RenderJournalEvent,
@@ -341,6 +342,17 @@ test("a job currently live in the render manager is excluded from history, never
   assert.equal(data.jobs.length, 1);
   assert.equal(data.jobs[0].jobId, oldJobId);
   assert.equal(data.jobs[0].status, "completed");
+
+  const job = (await started.json()).data.job;
+  worker.emit("message", { type: "done", outputPath: "synthetic.mp4", outputLabel: "synthetic.mp4" });
+  worker.emit("exit", 0, null);
+  await waitForRenderJournalIdle();
+  const settled = ((await history(base, f.slug, 10)).body.data as RenderHistoryView).jobs;
+  assert.equal(settled.length, 2, "a retained completed manager job must appear immediately in history");
+  const latest = settled.find((entry: { jobId: string }) => entry.jobId === job.id);
+  assert.ok(latest);
+  assert.equal(latest.status, "completed");
+  assert.equal(latest.engine, "remotion");
 });
 
 /* ------------------------------------------------------------------ *

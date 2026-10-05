@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
-import type { RenderHistoryJobView, RenderHistoryView } from "../../core/domain/api/views.ts";
+import type {
+  RenderHistoryJobView,
+  RenderHistoryView,
+} from "../../core/domain/api/views.ts";
 import { formatRecentRenderTimestamp } from "../../core/domain/render/renderJournal.ts";
+import { RENDERER_LABELS } from "../../core/domain/video/renderers.ts";
 import { RENDER_PRESETS } from "../../core/domain/video/renderPresets.ts";
 import { getRenderHistory } from "../api/client.ts";
 
@@ -15,10 +19,10 @@ import { getRenderHistory } from "../api/client.ts";
  * *historical* terminal state — completed/failed/cancelled/interrupted —
  * never queued/preparing/rendering, so nothing here can be confused with the
  * live render state `RenderPanel` already shows elsewhere on this page. This
- * component does not subscribe to SSE and does not poll; it fetches once per
- * slug (see the effect below) and otherwise updates only when the caller
- * re-mounts or re-fetches it after a render settles, exactly like
- * `TrackDeliveryHistory` (ui/components/DeliveryHistoryPanel.tsx).
+ * component does not subscribe to SSE and does not poll; it fetches when the
+ * slug or caller’s refreshed track snapshot changes.
+ * Completion/cancellation callbacks already refresh that snapshot, so history
+ * follows settled jobs without adding a polling loop.
  */
 
 const STATUS_TEXT: Record<RenderHistoryJobView["status"], string> = {
@@ -36,15 +40,23 @@ const STATUS_TITLE: Partial<Record<RenderHistoryJobView["status"], string>> = {
 const presetLabel = (presetId: RenderHistoryJobView["presetId"]): string =>
   RENDER_PRESETS[presetId]?.label ?? presetId;
 
-const HistoryRow: React.FC<{ readonly job: RenderHistoryJobView }> = ({ job }) => (
-  <li className="recenthistory__row" aria-label={`${STATUS_TEXT[job.status]}, ${presetLabel(job.presetId)}`}>
+const HistoryRow: React.FC<{ readonly job: RenderHistoryJobView }> = ({
+  job,
+}) => (
+  <li
+    className="recenthistory__row"
+    aria-label={`${STATUS_TEXT[job.status]}, ${presetLabel(job.presetId)}`}
+  >
     <span
       className={`badge badge--job-${job.status}`}
       title={STATUS_TITLE[job.status]}
     >
       {STATUS_TEXT[job.status]}
     </span>
-    <span className="recenthistory__preset">{presetLabel(job.presetId)}</span>
+    <span className="recenthistory__preset">
+      {presetLabel(job.presetId)} ·{" "}
+      {job.engine === null ? "Unknown renderer" : RENDERER_LABELS[job.engine]}
+    </span>
     <span
       className="recenthistory__when"
       title={new Date(job.recordedAt).toISOString()}
@@ -59,9 +71,10 @@ const HistoryRow: React.FC<{ readonly job: RenderHistoryJobView }> = ({ job }) =
   </li>
 );
 
-export const TrackRecentRenderHistory: React.FC<{ readonly slug: string }> = ({
-  slug,
-}) => {
+export const TrackRecentRenderHistory: React.FC<{
+  readonly slug: string;
+  readonly refreshKey?: object;
+}> = ({ slug, refreshKey }) => {
   const [history, setHistory] = useState<RenderHistoryView | null>(null);
   const [unavailable, setUnavailable] = useState(false);
 
@@ -81,7 +94,7 @@ export const TrackRecentRenderHistory: React.FC<{ readonly slug: string }> = ({
     return () => {
       current = false;
     };
-  }, [slug]);
+  }, [slug, refreshKey]);
 
   if (unavailable) {
     return (
