@@ -78,10 +78,11 @@ test("core/ never reaches outward into an adapter or app", () => {
   );
 });
 
-/** The one adapters/ module a host may import: engines by renderer id. */
+/** The adapters/ modules a host may import: engines by renderer id, destinations by id. */
 const ENGINE_REGISTRY = path.join("adapters", "renderEngines.mts");
+const PUBLISH_REGISTRY = path.join("adapters", "publishDestinations.mts");
 
-test("services, server and CLI reach renderers only through the engine registry", () => {
+test("services, server and CLI reach adapters only through the engine and destination registries", () => {
   // They pass VisualizerProps (core/domain/video/visualizerProps.ts) around
   // and ask adapters/renderEngines.mts for an engine by id. No host imports a
   // specific engine or the composition; only the adapter itself, and the web
@@ -91,7 +92,7 @@ test("services, server and CLI reach renderers only through the engine registry"
       violations(
         dir,
         (_specifier, target) =>
-          target !== null && isUnder(target, "adapters") && target !== ENGINE_REGISTRY,
+          target !== null && isUnder(target, "adapters") && target !== ENGINE_REGISTRY && target !== PUBLISH_REGISTRY,
       ),
       [],
       dir,
@@ -193,4 +194,98 @@ test("After Effects specifics (aerender, .aep projects) stay inside adapters/aft
     .flatMap((dir) => sourceFilesUnder(dir))
     .filter((file) => /aerender|\.aepx?\b|OMtemplate/i.test(code(file)));
   assert.deepEqual(leaks, []);
+});
+
+/* ------------------------------------------------------------------ *
+ * Publishing (V3)
+ * ------------------------------------------------------------------ */
+
+const PUBLISHING_ADAPTERS = path.join("adapters", "publishing");
+
+test("publishing adapters are reached only through the destination registry", () => {
+  for (const dir of ["core", "services", "server", "scripts", "ui", path.join("adapters", "remotion"), path.join("adapters", "after-effects")]) {
+    assert.deepEqual(
+      violations(dir, (_specifier, target) => target !== null && isUnder(target, PUBLISHING_ADAPTERS)),
+      [],
+      dir,
+    );
+  }
+  assert.deepEqual(
+    sourceFilesUnder("adapters")
+      .filter((file) => !isUnder(file, PUBLISHING_ADAPTERS) && file !== PUBLISH_REGISTRY)
+      .filter((file) => importsOf(file).some((specifier) => {
+        const target = resolveRelative(file, specifier);
+        return target !== null && (isUnder(target, PUBLISHING_ADAPTERS) || target === PUBLISH_REGISTRY);
+      })),
+    [],
+  );
+});
+
+test("publishing and rendering adapters never depend on each other", () => {
+  assert.deepEqual(
+    violations(PUBLISHING_ADAPTERS, (_specifier, target) =>
+      target !== null &&
+      (target === ENGINE_REGISTRY ||
+        isUnder(target, path.join("adapters", "remotion")) ||
+        isUnder(target, path.join("adapters", "after-effects")) ||
+        isUnder(target, path.join("services", "render")) ||
+        isUnder(target, path.join("services", "workflows")))),
+    [],
+  );
+  for (const dir of [path.join("adapters", "remotion"), path.join("adapters", "after-effects")]) {
+    assert.deepEqual(
+      violations(dir, (_specifier, target) =>
+        target !== null &&
+        (isUnder(target, path.join("services", "publishing")) || isUnder(target, path.join("core", "domain", "publishing")))),
+      [],
+      dir,
+    );
+  }
+});
+
+test("rendering, delivery, library and content-package code never depends on publishing", () => {
+  // Publishing is strictly downstream: it consumes exports and packages and
+  // changes nothing they compute.
+  for (const dir of ["render", "delivery", "library", "tracks", "content", "workflows", "storage"]) {
+    assert.deepEqual(
+      violations(path.join("services", dir), (_specifier, target) =>
+        target !== null &&
+        (isUnder(target, path.join("services", "publishing")) || isUnder(target, path.join("core", "domain", "publishing")))),
+      [],
+      dir,
+    );
+  }
+  for (const dir of ["content", "delivery", "library", "render", "tracks", "video"]) {
+    assert.deepEqual(
+      violations(path.join("core", "domain", dir), (_specifier, target) =>
+        target !== null && isUnder(target, path.join("core", "domain", "publishing"))),
+      [],
+      dir,
+    );
+  }
+});
+
+test("the publishing domain is pure core: it imports neither ports nor services", () => {
+  assert.ok(sourceFilesUnder(path.join("core", "domain", "publishing")).length >= 5);
+  assert.deepEqual(
+    violations(path.join("core", "domain", "publishing"), (_specifier, target) =>
+      target === null || !isUnder(target, path.join("core", "domain"))),
+    [],
+  );
+});
+
+test("publishing makes no network calls in this milestone, and platform SDKs stay inside adapters", () => {
+  const code = (file: string) =>
+    readFileSync(path.join(PROJECT_ROOT, file), "utf8")
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join("\n");
+  const networked = [path.join("services", "publishing"), PUBLISHING_ADAPTERS]
+    .flatMap((dir) => sourceFilesUnder(dir))
+    .filter((file) => /\bfetch\s*\(|node:https?\b|node:net\b|XMLHttpRequest|WebSocket/.test(code(file)));
+  assert.deepEqual(networked, []);
+  const sdkLeaks = ["core", "services", "server", "scripts", "ui"]
+    .flatMap((dir) => sourceFilesUnder(dir))
+    .filter((file) => /googleapis|graph\.facebook|graph\.instagram|open\.tiktokapis|oauth2/i.test(code(file)));
+  assert.deepEqual(sdkLeaks, []);
 });
