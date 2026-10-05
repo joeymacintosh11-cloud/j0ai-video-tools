@@ -37,7 +37,9 @@ export const WorkspacePanel: React.FC = () => {
               ...(item.relatedPaths ?? []),
             ]),
       );
-      setState(result.inspection);
+      // Maintenance returns its pre-operation inspection; observe the result
+      // again after applying so removed locks do not remain on screen.
+      setState(dryRun ? result.inspection : await inspectWorkspace());
       setPlan(dryRun ? result : null);
       if (result.failures.length)
         setError(
