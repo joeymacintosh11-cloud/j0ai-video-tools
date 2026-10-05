@@ -578,3 +578,33 @@ test("publishing settings hold identifiers only: credentials are refused and dis
   await writeFile(iso.settingsFile, "{nope");
   assert.match(mock().problem!, /not valid JSON/);
 });
+
+test("one execution per job: a concurrent execute or a live lock owner is refused; a dead owner's lock is reclaimed", async (t) => {
+  const iso = await isolatePublishing(t);
+  const f = await publishingTrack(t);
+  await f.render("remotion");
+  const { publishing, knobs } = service();
+
+  knobs.delayMs = 300;
+  const job = await publishing.createJob(request(f.slug));
+  const results = await Promise.allSettled([publishing.execute(job.jobId), publishing.execute(job.jobId)]);
+  assert.deepEqual(results.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
+  const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+  assert.ok(code("PUBLISH_JOB_CONFLICT")(rejected.reason));
+  assert.equal(readPublicationReceipts().receipts.length, 1);
+  knobs.delayMs = 0;
+
+  const locked = await publishing.createJob(request(f.slug));
+  const lockFile = path.join(iso.root, "locks", `${locked.jobId}.lock`);
+  const { hostname } = await import("node:os");
+  // A live owner (this very process, as another worker would be).
+  await writeFile(lockFile, JSON.stringify({ pid: process.pid, hostname: hostname(), token: "x", createdAt: new Date().toISOString() }));
+  await assert.rejects(publishing.execute(locked.jobId), code("PUBLISH_JOB_CONFLICT"));
+  // Another host cannot be judged, so it counts as held.
+  await writeFile(lockFile, JSON.stringify({ pid: 1, hostname: "elsewhere", token: "x", createdAt: new Date().toISOString() }));
+  await assert.rejects(publishing.execute(locked.jobId), code("PUBLISH_JOB_CONFLICT"));
+  // A dead local owner is reclaimed.
+  await writeFile(lockFile, JSON.stringify({ pid: 2 ** 22 + 12345, hostname: hostname(), token: "x", createdAt: new Date().toISOString() }));
+  assert.equal((await publishing.execute(locked.jobId)).state, "published");
+  assert.equal(existsSync(lockFile), false, "released after execution");
+});
