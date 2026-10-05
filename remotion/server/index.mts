@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { handleRequest } from "./app.ts";
 import { renderManager } from "../services/workflows/renderManager.ts";
 import { rendererWorkspace } from "../services/render/rendererWorkspace.ts";
+import { publishing } from "./routes/publishing.ts";
 
 /**
  * Local-only API server for the Toshi visualizer.
@@ -30,6 +31,12 @@ server.listen(port, HOST, () => {
   void rendererWorkspace().inspect().then((state) => {
     if (state.configured && (state.manual || state.orphanedLocks || state.recoverable)) console.warn(`[ae-workspace] ${state.manual} manual inspection items, ${state.orphanedLocks} orphaned locks, ${state.recoverable} safe cleanup candidates. Inspect with npm run ae-workspace. Startup deletes nothing.`);
   }).catch((error: unknown) => console.warn(`[ae-workspace] inspection unavailable: ${String(error)}`));
+  // Reading jobs settles any left "publishing" by a previous process into
+  // recovery_required (fail closed). Nothing is retried or published here.
+  void publishing.listJobs().then(({ jobs }) => {
+    const uncertain = jobs.filter((job) => job.state === "recovery_required").length;
+    if (uncertain > 0) console.warn(`[publish] ${uncertain} publish job(s) need reconciliation (recovery_required). Inspect with npm run publish-history.`);
+  }).catch((error: unknown) => console.warn(`[publish] job inspection unavailable: ${String(error)}`));
 });
 
 server.on("error", (error) => {
