@@ -1115,6 +1115,10 @@ disk now. Open **Library** in the app header to filter, inspect a version and
 its lineage, reveal the file, or re-export the version that is on disk now —
 which queues a normal render and adds a new record when it finishes. An older
 version cannot be re-exported: every render uses the track's current files.
+Versions are kept per renderer: an After Effects version is judged against the
+After Effects export (`out/<slug>/after-effects/<preset>.mp4`), never superseded
+by a Remotion render of the same format, and re-exporting it renders with After
+Effects again.
 
 ```console
 npm run content-library                              # newest first
