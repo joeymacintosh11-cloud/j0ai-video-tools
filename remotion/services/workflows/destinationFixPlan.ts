@@ -21,6 +21,7 @@ import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
 import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import { RENDER_PRESETS, type RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import {
+  DEFAULT_RENDERER_ID,
   remotionOnlyProblem,
   resolveTrackRenderer,
 } from "../../core/domain/video/renderers.ts";
@@ -707,7 +708,9 @@ const deliverIfNeeded = async (
     return settle(action, "skipped_already_fixed", "Already matches what was delivered.", { jobId, startedAt });
   }
 
-  const outcome = await deliverExport({ slug, presetId, settings });
+  // Repair is Remotion-only (see planning). Pinned, so a preference switched
+  // during a followed render is refused instead of delivering that engine's export.
+  const outcome = await deliverExport({ slug, presetId, settings, engine: DEFAULT_RENDERER_ID });
   const completedAt = new Date().toISOString();
 
   if (outcome.status === "delivered") {

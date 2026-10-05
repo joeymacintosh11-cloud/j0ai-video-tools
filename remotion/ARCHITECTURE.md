@@ -193,7 +193,11 @@ GET /api/renderers  ─> registry.status()  ─> per id: ready | unavailable | n
   before publish. Legacy receipts without a renderer mean Remotion. Destination
   health also reads old-engine receipts after a preference change, preserving
   evidence of previous deliveries. Release bundles and automatic destination
-  repair still use `remotionOnlyProblem()` and require manual AE review.
+  repair still use `remotionOnlyProblem()` and require manual AE review;
+  repair delivery is pinned to Remotion, so a preference switched while a
+  repair render runs is refused rather than delivering the AE export. The
+  content library keys versions by track, format and renderer; a re-export
+  renders with the version's own renderer.
 - **Serial execution.** The manager runs one worker globally and waits for its
   exit before starting another; CLI batches also run sequentially. AE sessions
   acquire an exclusive lock beside the configured data file before staging,
