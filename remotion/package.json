@@ -56,6 +56,10 @@
     "content-metadata": "node scripts/content-metadata.mts",
     "render-journal": "node scripts/render-journal.mts",
     "content-library": "node scripts/content-library.mts",
+    "publish-destinations": "node scripts/publish.mts --destinations",
+    "publish-plan": "node scripts/publish.mts --plan",
+    "publish-track": "node scripts/publish.mts --publish",
+    "publish-history": "node scripts/publish.mts --history",
     "test": "node --test tests/*.test.mts",
     "render-all-formats": "node scripts/render-track.mts --all-formats"
   }

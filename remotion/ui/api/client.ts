@@ -36,6 +36,12 @@ import type {
   DeliverySettingsBody,
   DeliverySettingsView,
   HealthView,
+  PublicationHistoryView,
+  PublishDestinationsView,
+  PublishJobsView,
+  PublishJobView,
+  PublishPlanView,
+  PublishRequestBody,
   RenderersView,
   PrepareTrackView,
   ReleaseBundleBody,
@@ -683,3 +689,32 @@ export const reexportContentLibraryRecord = (recordId: string): Promise<ContentL
 /** Records exports already on disk that the library does not know about. */
 export const adoptExistingExports = (): Promise<ContentLibraryAdoptView> =>
   jsonRequest<ContentLibraryAdoptView>("/api/content-library/adopt", "POST", {});
+
+/* ------------------------------------------------------------------ *
+ * Publishing (V3) — local/mock destinations only in this milestone
+ * ------------------------------------------------------------------ */
+
+export const listPublishDestinations = (): Promise<PublishDestinationsView> =>
+  request<PublishDestinationsView>("/api/publish/destinations");
+
+/** Validation only: nothing is created or published. */
+export const planPublication = (body: PublishRequestBody): Promise<PublishPlanView> =>
+  jsonRequest<PublishPlanView>("/api/publish/plan", "POST", body);
+
+export const createPublishJob = (body: PublishRequestBody): Promise<PublishJobView> =>
+  jsonRequest<PublishJobView>("/api/publish/jobs", "POST", body);
+
+export const executePublishJob = (jobId: string): Promise<PublishJobView> =>
+  jsonRequest<PublishJobView>(`/api/publish/jobs/${encodeURIComponent(jobId)}/execute`, "POST");
+
+export const cancelPublishJob = (jobId: string): Promise<PublishJobView> =>
+  jsonRequest<PublishJobView>(`/api/publish/jobs/${encodeURIComponent(jobId)}/cancel`, "POST");
+
+export const recoverPublishJob = (jobId: string): Promise<PublishJobView & { readonly recovery: string }> =>
+  jsonRequest<PublishJobView & { readonly recovery: string }>(`/api/publish/jobs/${encodeURIComponent(jobId)}/recover`, "POST");
+
+export const listPublishJobs = (track: string): Promise<PublishJobsView> =>
+  request<PublishJobsView>(`/api/publish/jobs?${new URLSearchParams({ track }).toString()}`);
+
+export const getPublicationHistory = (track: string): Promise<PublicationHistoryView> =>
+  request<PublicationHistoryView>(`/api/publish/receipts?${new URLSearchParams({ track }).toString()}`);

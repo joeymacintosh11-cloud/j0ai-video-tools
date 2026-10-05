@@ -67,8 +67,26 @@ const readOwner = (file: string): LockOwner | null => {
   }
 };
 
-/** Only a dead process on this host permits reclaiming; see deliveryHistoryLog.ts's twin. */
-const clearAbandoned = (file: string): boolean => {
+/** Fence competing automatic/operator reclaimers from deleting a replacement lock. */
+const withReclaimGuard = <T>(file: string, operation: () => T): T | null => {
+  const guard = `${file}.reclaim`;
+  let fd: number;
+  try {
+    fd = openSync(guard, "wx");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
+    throw error;
+  }
+  try {
+    return operation();
+  } finally {
+    closeSync(fd);
+    unlinkSync(guard);
+  }
+};
+
+/** Only a dead process on this host permits reclaiming. Re-read inside the guard. */
+const clearAbandoned = (file: string): boolean => withReclaimGuard(file, () => {
   const owner = readOwner(file);
   if (owner === null || owner.hostname !== hostname() || isAlive(owner.pid)) return false;
   try {
@@ -78,7 +96,7 @@ const clearAbandoned = (file: string): boolean => {
   } catch {
     return false;
   }
-};
+}) ?? false;
 
 /** Publishes the lock complete or not at all: temp file, fsync, then link (EEXIST if held). */
 const publishLock = (file: string, token: string): void => {
@@ -191,6 +209,16 @@ export const releaseJsonlLock = (
   label: string,
 ): ReleaseJsonlLockResult => {
   const file = path.join(root, lockFilename);
+  try {
+    return withReclaimGuard(file, () => releaseJsonlLockGuarded(file, label)) ??
+      { released: false, problem: `The ${label} lock is being reconciled; nothing was cleared.` };
+  } catch (error) {
+    return { released: false, problem: (error as NodeJS.ErrnoException).code === "ENOENT"
+      ? `There is no ${label} lock to clear.` : (error as Error).message };
+  }
+};
+
+const releaseJsonlLockGuarded = (file: string, label: string): ReleaseJsonlLockResult => {
   const owner = readOwner(file);
 
   if (owner === null) {

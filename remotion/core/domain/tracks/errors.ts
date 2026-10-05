@@ -32,7 +32,10 @@ export type TrackErrorCode =
   | "RENDER_ALREADY_ACTIVE"
   | "RENDER_TARGET_LOCKED"
   | "LIBRARY_RECORD_NOT_FOUND"
-  | "LIBRARY_RECORD_NOT_CURRENT";
+  | "LIBRARY_RECORD_NOT_CURRENT"
+  | "PUBLISH_DESTINATION_UNKNOWN"
+  | "PUBLISH_JOB_NOT_FOUND"
+  | "PUBLISH_JOB_CONFLICT";
 
 export type TrackIssue = {
   readonly code: TrackErrorCode;

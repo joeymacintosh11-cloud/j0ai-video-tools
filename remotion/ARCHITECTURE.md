@@ -26,6 +26,10 @@ core/                   Platform-independent. Pure TypeScript: no node:*, no
     rendererWorkspace.ts Read-only inventory and explicit dry-run maintenance port.
     renderEngineRegistry.ts
                         Looks engines up by renderer id, with clear errors.
+    publishDestination.ts, publishDestinationRegistry.ts
+                        The publishing destination contract and its registry.
+    destinationCredentials.ts
+                        The secrets boundary for future network destinations.
 
 services/               The engine runtime on Node: the single owner of the
                         filesystem, ffmpeg, locks and append-only logs.
@@ -39,7 +43,10 @@ services/               The engine runtime on Node: the single owner of the
 
 adapters/               Implementations of core ports for one technology.
   renderEngines.mts     The engine registry: renderer id -> engine (lazy).
-                        The only adapters/ module a host imports.
+  publishDestinations.mts
+                        The destination registry: destination id -> adapter (lazy).
+                        These two registries are the only adapters/ modules a host imports.
+  publishing/local-mock/ The deterministic local mock destination (no network).
   remotion/             The Remotion renderer.
     remotionRenderEngine.mts   RenderEngine via bundle/selectComposition/
                                renderMedia; owns the encoding settings.
@@ -74,7 +81,7 @@ Dependencies point inward: hosts and adapters depend on `services/` and
 | `core/` | `core/` | any package (`node:*`, React, Remotion…), anything outside `core/` |
 | `services/` | `core/`, `services/`, Node | `adapters/`*, `server/`, `scripts/`, `ui/`, Remotion |
 | `adapters/<x>/` | `core/`, `services/` building blocks, its own technology | other adapters, hosts |
-| `server/`, `scripts/` | `core/`, `services/`, the engine registry (`adapters/renderEngines.mts`) | any specific engine or composition, Remotion packages; `scripts/` never imports `server/` |
+| `server/`, `scripts/` | `core/`, `services/`, the engine and destination registries (`adapters/renderEngines.mts`, `adapters/publishDestinations.mts`) | any specific engine, destination adapter or composition, Remotion packages; `scripts/` never imports `server/` |
 | `ui/` | `core/`, the composition (for the `<Player>` preview) | `services/`, `server/`, `scripts/` |
 
 \* `services/workflows/render-worker.mts` is the exception. It is a process
@@ -426,8 +433,9 @@ Finished exports are authoritative on disk. Queue/job history alone cannot
 make a package ready. Journal recovery is historical state, not a resumed
 worker; workspace cleanup is a previewed ownership-fenced operation, not a
 scheduler. V2 remains local: release bundles/destination repair are Remotion-only,
-and publishing, Premiere, cloud rendering, analytics and general scheduling are
-future work. AE template canvas/frame-rate correctness remains an operator
+and Premiere, cloud rendering, analytics and general scheduling are future
+work. V3 adds the publishing foundation (below); real platform uploads are
+the next milestone. AE template canvas/frame-rate correctness remains an operator
 setup requirement rather than a media-dimension check.
 
 The recent-render endpoint excludes only active manager jobs, so settled jobs
@@ -442,3 +450,183 @@ or writing assets. Canonical identity uses the same selector, so an unmapped
 format cannot be treated as a valid template for freshness/delivery either.
 Explicitly mapped compositions still require operator verification of canvas,
 frame rate and visual correctness.
+
+
+## Publishing (V3 foundation)
+
+### Rendering, delivery and publishing
+
+| | Rendering | Delivery | Publishing |
+| --- | --- | --- | --- |
+| Does | turns a track into an export | copies a current export into a local folder | hands a current export + metadata to a destination |
+| Through | `RenderEngine` (renderer registry) | the delivery copy worker | `PublishDestination` (destination registry) |
+| Writes | `out/<slug>[/<renderer>]/<preset>.mp4` + manifest, library record | the copy, a delivery receipt beside the export, the destination's log | `out/.publishing/` only: jobs, receipts, the mock's workspace |
+| Proof | export manifest | delivery receipt | publication receipt |
+
+Publishing is strictly downstream. It consumes an existing, current export and
+never renders, never modifies an export, its manifest, the content library,
+delivery receipts or a content package (architecture tests forbid render,
+delivery, library and content code from importing publishing at all). A later
+workflow may chain render → publish explicitly; nothing does so implicitly.
+
+### Model
+
+```
+core/domain/publishing/
+  destinations.ts        destination ids (open set; youtube/instagram/tiktok reserved),
+                         capabilities (formats → mode, metadata rules, cancel, recover,
+                         idempotentPublish, accounts, network), status
+  publicationSource.ts   PublicationSourceRef {slug, presetId, renderer} — renderer mandatory
+                         PublicationSourceIdentity = ref + manifest fingerprint, renderedAt,
+                         output {bytes, mtimeMs, ino}, outputLabel
+  publicationMetadata.ts title, description/caption, tags, visibility, scheduledAt (data
+                         only), thumbnail {source:"track-cover"}; generic + destination rules
+  publishJob.ts          job, attempts, lifecycle table, certainty, transitions
+  publicationReceipt.ts  receipt shape, strict parse, receiptMismatch(job, receipt)
+  publicationHistory.ts  JSONL parse (damage/duplicates reported) and queries
+  publishProblems.ts     lowercase reasons: destination_unknown, destination_unavailable,
+                         destination_not_configured, format_unsupported, track_invalid,
+                         export_missing, export_stale, source_changed,
+                         publication_metadata_invalid, publish_failed, publish_cancelled,
+                         recovery_required, receipt_invalid, already_published
+```
+
+Reasons describe states on plans, jobs and receipts (like `StaleReason`). Bad
+*requests* are `TrackError`s: `PUBLISH_DESTINATION_UNKNOWN` (400),
+`PUBLISH_JOB_NOT_FOUND` (404), `PUBLISH_JOB_CONFLICT` (409), plus the existing
+`INVALID_REQUEST`/`INVALID_RENDERER`/`INVALID_PRESET`/`INVALID_SLUG`.
+
+**Source decision.** Publish jobs consume a small normalised
+`PublicationSourceRef`, not export records or content-package entries
+directly. A content package is one way to arrive at one
+(`publicationSourceFromPackage(view, platformId)` takes the package's own
+renderer and the platform's preset, and refuses a platform that is not ready),
+and `seedPublicationMetadata(entry)` turns the package's resolved copy into
+starting metadata. Platform adapters never see a package or UI component, and
+package derivation is unchanged.
+
+### Destination contract and registry
+
+`core/ports/publishDestination.ts`. Unlike `RenderEngine`, it is built around
+certainty, because a publication is an external side effect that may succeed
+without the caller finding out:
+
+```
+registry.status()/describe()   static descriptor + probe (installed?) + configured (account?) — loads nothing
+validate(request)              destination-specific metadata checks           -> problems
+prepare(request, ctx)          read the pinned export (engine holds its lock) -> PreparedPublication
+publish(prepared, ctx)         -> published {publicationId, url, publishedAt}
+                                | failed (definitely nothing took effect)
+                                | cancelled (before anything took effect)
+                                | uncertain (may or may not have)
+inspect(publicationId)         remote state, or null
+recover(attempt)               -> published | not_published | unknown      (when capabilities.recover)
+cancel                         ctx.cancelSignal                            (when capabilities.cancel)
+```
+
+`createPublishDestinationRegistry` mirrors the renderer registry: unknown ids
+throw `PUBLISH_DESTINATION_UNKNOWN`, reserved ids without adapters are listed
+as `unavailable` / not implemented, and `resolve()` refuses anything not
+`ready`. Nothing ever substitutes another destination.
+
+### Execution (services/publishing/publishing.ts)
+
+`createPublishingService(registry)` — hosts pass `adapters/publishDestinations.mts`;
+tests pass their own. `plan()` collects *every* problem without persisting
+anything: destination state and account, format capability, the named
+renderer's export only (`resolvePublicationSource`: missing / stale / invalid
+→ reasons; no fallback), generic and destination metadata rules, then the
+adapter's `validate()`. `createJob()` saves `pending → validating → ready|failed`
+and pins the export identity. `execute()`:
+
+1. takes the job's execution lock (`locks/<jobId>.lock`, one process per job);
+2. re-validates; a pinned job whose export changed fails `source_changed`;
+3. records a new attempt and saves `publishing` **before** calling the adapter;
+4. under the export's render target lock (the one renders and deliveries take)
+   calls `prepare()`, then re-checks the pinned identity before releasing it;
+5. calls `publish()`; a thrown adapter error is treated as `uncertain`;
+6. builds the receipt, validates it (`parsePublicationReceipt`,
+   `receiptMismatch`), appends it, then saves `published`.
+
+A crash after step 3 leaves `publishing` with no live lock owner: any later
+read reconciles it — a receipt for its attempt means `published` (crash between
+6's append and save), otherwise `recovery_required`. The server does this at
+startup, without retrying anything.
+
+Dead-owner job lock reclamation uses an exclusive `.reclaim` guard and
+rechecks ownership inside it. Competing reclaimers cannot delete a replacement
+live owner's lock. An interrupted reclamation guard fails closed; inspect
+ownership and confirm no reclaiming process remains before manually removing it.
+The shared receipt-log append lock similarly fences automatic and operator
+reclamation with a `.reclaim` guard; a retained guard requires inspection rather
+than automatic removal.
+
+### Receipts and idempotency
+
+Receipts are appended to `out/.publishing/receipts.jsonl` — never to export,
+delivery or library records, which publishing does not mutate. A receipt holds
+the destination and account id, publication id and URL (http(s) or `mock:`,
+never with credentials), job, attempt and idempotency key, the pinned source
+identity (so history stays renderer-aware), the metadata snapshot, mode and
+timestamps. No paths, no secrets: the parser rejects credential-shaped keys.
+
+- Job ids are random (`pub_…`). An attempt's id and idempotency key are
+  `sha256(jobId, attemptNumber)`: resuming the *same* attempt reuses its key;
+  a retry after a definite failure is attempt n+1 with a new key.
+- `receiptId = f(idempotencyKey)`, so one attempt can only ever have one
+  receipt id. Appending is serialised by a cross-process lock; the same
+  receipt again is a no-op, a different receipt for the same attempt or a
+  second receipt for the same job is refused.
+- The key is handed to the adapter. Whether a *platform* deduplicates is the
+  adapter's to prove (`capabilities.idempotentPublish`); the engine never
+  assumes it. The local mock proves it: its publication id is derived from the
+  key and appears by atomic rename, so repeating an attempt returns the same
+  publication.
+- `recovery_required` never retries blindly. `recover()` settles it only from
+  evidence: a recorded receipt for the attempt, or the adapter's `recover()`
+  proving published (a receipt is recorded) or not published (`failed`,
+  retryable). Anything else stays `recovery_required`.
+
+### Configuration and secrets boundary
+
+- `publishing.local.json` (gitignored, `TOSHI_PUBLISHING_SETTINGS` overrides):
+  per destination `enabled`, `accountId` and plain non-secret options. A file
+  with credential-shaped keys is refused entirely; a malformed file makes
+  destinations `not_configured` rather than guessing.
+- `core/ports/destinationCredentials.ts` is where OAuth tokens/API keys will be
+  read. They may only reach an adapter, never a job, receipt, log, track
+  metadata, export manifest or git. This milestone ships only `noCredentials`;
+  no credential storage exists yet.
+- Destination status and every API response carry identifiers only.
+
+### The local mock destination
+
+`adapters/publishing/local-mock/` registered as `local-mock` (16:9 → video,
+9:16 → short, 1:1 → post) and `local-mock-landscape` (16:9 only). `prepare()`
+copies the export into `out/.publishing/destinations/<id>/staging/` and checks
+its size; `publish()` moves that copy into `publications/<publicationId>/` with
+a `publication.json`. The original export is never touched. Fixtures
+(`success`, `failure`, `uncertain`, `throw`, `invalid-receipt`, `delayMs` for
+cancellation) are explicit options, settable in `publishing.local.json` or by
+tests. It rejects the placeholder title "Untitled" to exercise adapter-level
+validation.
+
+Only an absent publication folder proves the local attempt was not published.
+Missing, unreadable, malformed or mismatched records in an existing folder leave
+reconciliation uncertain and block retry.
+
+### What the YouTube milestone adds
+
+- `adapters/publishing/youtube/`: a `PublishDestination` mapping title,
+  description, tags, visibility (and later scheduledAt, thumbnail) onto the
+  YouTube Data API, registered in `adapters/publishDestinations.mts` with a
+  probe/configured check and `capabilities.network: true`.
+- A real `DestinationCredentialProvider` (OS keychain or encrypted local
+  store) and the OAuth consent flow — a person-driven, external step.
+- Resumable upload inside `publish()`, cancellation through the cancel signal,
+  and `recover()` that searches the channel for an upload carrying the
+  attempt's key (YouTube has no native idempotency, so
+  `idempotentPublish: false` until proven otherwise).
+- `inspect()` against the platform (processing/published/removed) and quota
+  and rate-limit failures mapped to definite `failed` vs `uncertain`.
+- Scheduling execution, thumbnail upload and per-platform metadata limits.

@@ -14,6 +14,10 @@ after-effects.local.json
 # Machine-local prepared AE projects, provenance and interrupted preparation runs.
 .toshi-ae-work/
 
+# Machine-local publishing destination settings (account identifiers only;
+# credentials are never stored in this file or anywhere in git).
+publishing.local.json
+
 # Machine/person-local content-package metadata template overrides.
 content-metadata.local.json
 

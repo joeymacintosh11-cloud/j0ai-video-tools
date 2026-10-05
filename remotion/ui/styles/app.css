@@ -2649,3 +2649,58 @@ body {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------- *
+ * Publishing (V3) — local mock destinations only
+ * ---------------------------------------------------------------- */
+
+.publish {
+  display: grid;
+  gap: 12px;
+}
+
+.publish .form__grid {
+  align-items: start;
+}
+
+.publish textarea.field__input {
+  resize: vertical;
+  font-size: 13px;
+}
+
+.publish__plan {
+  display: grid;
+  gap: 8px;
+}
+
+.section__subtitle {
+  font-family: var(--font-label);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 8px 0 0;
+}
+
+.publish__history {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.publish__history th,
+.publish__history td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-strong);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.publish__history th {
+  font-family: var(--font-label);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--vintage-gold);
+}

@@ -20,6 +20,18 @@ import {
 } from "./routes/deliveryHistory.ts";
 import { handleExportMissing } from "./routes/exportMissing.ts";
 import { handleListRenderers } from "./routes/renderers.ts";
+import {
+  handleCancelPublishJob,
+  handleCreatePublishJob,
+  handleExecutePublishJob,
+  handleGetDestination,
+  handleGetPublicationHistory,
+  handleGetPublishJob,
+  handleListDestinations,
+  handleListPublishJobs,
+  handlePlanPublication,
+  handleRecoverPublishJob,
+} from "./routes/publishing.ts";
 import { handleInspectWorkspace, handleMaintainWorkspace } from "./routes/rendererWorkspace.ts";
 import { handleGetRenderHistory } from "./routes/renderHistory.ts";
 import {
@@ -106,6 +118,31 @@ const route = async (
       return;
     }
     handleListRenderers(response);
+    return;
+  }
+
+  if (collection === "publish") {
+    const fourth = segments[4];
+    // /api/publish/destinations[/:id]
+    if (second === "destinations" && method === "GET") {
+      if (segments.length === 3) { handleListDestinations(response); return; }
+      if (segments.length === 4) { handleGetDestination(third!, response); return; }
+    }
+    if (second === "plan" && segments.length === 3 && method === "POST") { await handlePlanPublication(request, response); return; }
+    if (second === "receipts" && segments.length === 3 && method === "GET") { handleGetPublicationHistory(request, response); return; }
+    if (second === "jobs") {
+      // /api/publish/jobs
+      if (segments.length === 3 && method === "GET") { await handleListPublishJobs(request, response); return; }
+      if (segments.length === 3 && method === "POST") { await handleCreatePublishJob(request, response); return; }
+      // /api/publish/jobs/:jobId[/execute|cancel|recover]
+      if (segments.length === 4 && method === "GET") { await handleGetPublishJob(third!, response); return; }
+      if (segments.length === 5 && method === "POST") {
+        if (fourth === "execute") { await handleExecutePublishJob(third!, response); return; }
+        if (fourth === "cancel") { await handleCancelPublishJob(third!, response); return; }
+        if (fourth === "recover") { await handleRecoverPublishJob(third!, response); return; }
+      }
+    }
+    sendNotFound(response, "Endpoint");
     return;
   }
 
