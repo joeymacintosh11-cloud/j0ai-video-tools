@@ -1340,6 +1340,84 @@ queued, the panel shows that job's real status inline, and once it settles
 the panel automatically re-applies with `waitForCompletion` to get the
 confirmed result. It never implies success while an action is only queued.
 
+### Publishing (V3 foundation)
+
+Rendering makes an export. Delivery copies a current export into a local
+folder. **Publishing** hands one current export, plus publication metadata,
+to a *destination* and records a **publication receipt**. This milestone builds
+the generic foundation only: the destinations that can actually publish are
+two **local mock** destinations that never touch a network. YouTube, Instagram
+and TikTok are listed as reserved destinations, "not implemented".
+
+```
+Render ─> Export ─> (Content Package) ─> Publish job ─> Destination ─> Publication receipt
+            out/<slug>[/<renderer>]/<preset>.mp4          local-mock     out/.publishing/receipts.jsonl
+```
+
+**A publication names one export exactly.** A publish request names the track,
+the format *and the renderer* whose export to publish. The engine checks that
+export (exists, current, a format the destination accepts) and pins its
+identity — manifest fingerprint, render time, file identity. A job publishes
+that exact export or nothing: an After Effects publication can never be
+answered with the Remotion export of the same track and format, or the other
+way round, and a re-render after the job was created blocks it
+(`source_changed`) rather than silently publishing the new file. Publishing
+never renders, never changes an export, its manifest, the content library,
+delivery receipts or a content package.
+
+From the track's **Publish** section in the app: pick a destination (its
+availability and accepted formats are shown), a format and the source renderer
+(the track's preference by default), adjust the title/description/tags/
+visibility seeded from the content package's copy, and read the server's
+validation — the source export identity, or every reason it is blocked. Publish
+runs the job; the receipt then appears in the track's publication history,
+which is read from disk and survives a reload or restart.
+
+From the terminal:
+
+```console
+npm run publish-destinations
+npm run publish-plan    -- ghetto-geek --destination local-mock
+npm run publish-track   -- ghetto-geek --destination local-mock --format vertical-9x16 --renderer after-effects
+npm run publish-track   -- ghetto-geek --destination local-mock --title "Ghetto Geek" --tag lofi --tag beats
+npm run publish-track   -- --job <job-id> --retry | --cancel | --recover
+npm run publish-history -- --track ghetto-geek
+npm run publish-history -- --jobs --json
+```
+
+`publish-plan` publishes nothing. Without `--renderer`, the track's saved
+renderer preference is used and printed.
+
+**Job lifecycle.** `pending → validating → ready → publishing → published`,
+with `failed`, `cancelled` and `recovery_required`. Only listed transitions are
+possible. `published` requires a receipt validated against the job, its
+attempt and its pinned export. `failed` always means *definitely not
+published* and may be retried; each retry is a new attempt with its own attempt
+id and idempotency key. Anything uncertain — an interrupted process, an adapter
+that throws, a success answer that is not a valid receipt — becomes
+`recovery_required`: no retry and no receipt until reconciliation (`--recover`,
+or **Reconcile** in the app) proves it published or not.
+
+**Where it lives.** `out/.publishing/` (gitignored with the rest of `out/`):
+`jobs/<id>.json`, `receipts.jsonl` (append-only history), `locks/`, and the mock
+destinations' own workspace under `destinations/<id>/`. Set
+`TOSHI_PUBLISHING_DIR` to put it elsewhere.
+
+**Settings and secrets.** Optional `publishing.local.json` (gitignored) holds
+non-secret settings only:
+
+```json
+{ "schemaVersion": 1, "destinations": { "local-mock": { "enabled": true, "accountId": "studio" } } }
+```
+
+A file containing anything credential-shaped (`token`, `secret`, `password`,
+`apiKey`, …) is refused as a whole. OAuth tokens and API keys will never be
+stored in track metadata, export manifests, jobs, receipts or git; they will be
+read through a credentials port in the milestone that adds the first network
+destination. The mock destination accepts `"simulate": "failure" | "uncertain"
+| "throw" | "invalid-receipt"` and `"delayMs"` for exercising those paths by
+hand.
+
 ### Editing metadata while something else changes it
 
 Saves are conditional. The API reports a `metadataRevision` for each track, the
@@ -1369,7 +1447,10 @@ core/                   Platform-independent: no node:*, React or Remotion.
     video/              compositionConfig · renderPresets — the export formats,
                         defined once and read by everything · visualizerProps —
                         the render input every renderer consumes
-  ports/                renderEngine — the interface a renderer implements
+    publishing/         destinations · publicationSource · publicationMetadata ·
+                        publishJob (lifecycle) · publicationReceipt · history
+  ports/                renderEngine — the interface a renderer implements ·
+                        publishDestination — the interface a destination implements
 
 services/               Node only. The single owner of filesystem and ffmpeg
                         access; renders through whichever RenderEngine it's given.
@@ -1378,9 +1459,14 @@ services/               Node only. The single owner of filesystem and ffmpeg
                         prepareTrack · buildTrackProps · audioDuration
   render/               renderTrackVideo · publishExport — staged video/manifest publication
   tracks/               exportCoverage · exportManifest — freshness and cached fingerprints
+  publishing/           publishing (plan/create/execute/cancel/recover) ·
+                        publishingStore · resolvePublicationSource · destinationSettings
   workflows/            Planners, health/fix plans, library and history queries,
                         and the render job manager, shared by the API and the CLI
     render-worker.mts   Runs one render in its own process.
+
+adapters/publishDestinations.mts   The destination registry (local mocks only).
+adapters/publishing/    Publishing destination adapters (local-mock).
 
 adapters/remotion/      The Remotion renderer.
   remotionRenderEngine.mts   RenderEngine: bundle, Chromium, encoding settings
@@ -1474,6 +1560,16 @@ Set `TOSHI_API_PORT` to use a different port. Port 4600 deliberately avoids
 | GET | `/api/destination-health` | Compare the destination against current records; `track` may repeat for a named subset, omitted scans the catalogue |
 | POST | `/api/destination-health/plan` | Dry-run remediation plan for current drift; `{"tracks":[...]}` or `{"catalogue":true}` |
 | POST | `/api/destination-health/apply-plan` | Run named safe action ids, revalidated against a freshly re-derived plan; same body plus `"actionIds"`, optional `"waitForCompletion"`/`"timeoutMs"` |
+| GET | `/api/publish/destinations` | Publishing destinations: state (`ready`/`unavailable`/`not_configured`) with the reason, account id, accepted formats and capabilities |
+| GET | `/api/publish/destinations/:id` | One destination; an unknown id is `PUBLISH_DESTINATION_UNKNOWN` |
+| POST | `/api/publish/plan` | Validate `{"destination","source":{"track","format","renderer"},"metadata"}` without creating anything |
+| POST | `/api/publish/jobs` | Create and validate a publish job (same body) — `ready`, or `failed` with every reason |
+| GET | `/api/publish/jobs` | Publish jobs, newest first; `track`, `destination` |
+| GET | `/api/publish/jobs/:jobId` | One job with its receipt |
+| POST | `/api/publish/jobs/:jobId/execute` | Publish (or retry a definite failure) |
+| POST | `/api/publish/jobs/:jobId/cancel` | Cancel a running or not-yet-published job |
+| POST | `/api/publish/jobs/:jobId/recover` | Reconcile a `recovery_required` job from evidence |
+| GET | `/api/publish/receipts` | Publication history; `track`, `destination`, `format`, `renderer`, `limit` |
 
 Successful responses are `{"ok":true,"data":...}`. Failures are
 `{"ok":false,"error":{"code","message","path?"}}`, where `code` is the shared
