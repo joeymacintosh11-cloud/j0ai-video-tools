@@ -90,6 +90,11 @@ export const newWorkspaceOwner = (): WorkspaceOwner => ({
   childPid: null,
 });
 
+/** How long a held ownership guard is waited for before it counts as crashed. */
+export const GUARD_WAIT_MS = 1_000;
+const GUARD_POLL_MS = 5;
+const GUARD_SLEEP = new Int32Array(new SharedArrayBuffer(4));
+
 /** Every ownership mutation uses the same exclusive guard. A crashed guard
  * stays manual: it can fence a half-finished ownership transition. */
 export const withWorkspaceLockGuard = <T,>(
@@ -97,15 +102,29 @@ export const withWorkspaceLockGuard = <T,>(
   work: () => T,
 ): T => {
   const guard = `${folder}.guard`;
-  try {
-    mkdirSync(guard, { mode: 0o700 });
-  } catch {
-    throw new TrackError(
-      trackIssue(
-        "RENDER_TARGET_LOCKED",
-        `AE ownership mutation is locked at ${guard}; inspect before recovery.`,
-      ),
-    );
+  // Guarded sections are a few synchronous file operations, so a held guard
+  // is normally another process's momentary mutation (often a refused
+  // acquire). Wait briefly for it, so that contention never fails a live
+  // owner's update or release; a guard still held after that is treated as
+  // crashed and stays manual.
+  const deadline = Date.now() + GUARD_WAIT_MS;
+  for (;;) {
+    try {
+      mkdirSync(guard, { mode: 0o700 });
+      break;
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException).code !== "EEXIST" ||
+        Date.now() >= deadline
+      )
+        throw new TrackError(
+          trackIssue(
+            "RENDER_TARGET_LOCKED",
+            `AE ownership mutation is locked at ${guard}; inspect before recovery.`,
+          ),
+        );
+      Atomics.wait(GUARD_SLEEP, 0, 0, GUARD_POLL_MS);
+    }
   }
   try {
     writeFileSync(

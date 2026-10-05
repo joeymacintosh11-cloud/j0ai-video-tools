@@ -480,7 +480,8 @@ a dead local owner is recoverable only with a confirmed safe phase or a matching
 terminal job/status result proving JSX closed. Dead `rendering` owners remain
 manual because a missing launcher does not prove Adobe stopped. Foreign-host,
 legacy, malformed or inaccessible ownership and interrupted `.guard` directories
-fail closed. Unknown files and symlinks are never swept recursively.
+fail closed. A guard held for more than a second counts as interrupted; a
+shorter one is another session's momentary check and is simply waited for. Unknown files and symlinks are never swept recursively.
 
 Normal auto-session cleanup retains at most **20 validated prepared pairs** by
 last-use time, always keeping the current copy. Failed pruning is reported rather

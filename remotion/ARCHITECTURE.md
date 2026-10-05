@@ -377,7 +377,9 @@ export fingerprinting or renderer selection.
 AE staging ownership spans resolve through confirmed child shutdown. Auto mode
 also holds a workspace fence across preparation, cache use, rendering and
 retention; GUI preparation has its existing shared machine-wide lock. Guarded
-ownership mutations prevent recovery from racing release or acquisition.
+ownership mutations prevent recovery from racing release or acquisition; a
+held guard is waited for briefly (`GUARD_WAIT_MS`), so a competing session's
+refused acquire never fails a live owner's update or release.
 Schema-2 records identify token, owner/host, phase, track, run and child. Dead
 owners are not enough: only explicit safe phases or matching terminal status
 permit recovery. Live children, uncertain Adobe completion, legacy ownership,
