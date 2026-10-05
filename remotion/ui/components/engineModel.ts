@@ -2,6 +2,8 @@ import type {
   RendererState,
   RendererStatus,
 } from "../../core/domain/video/renderers.ts";
+import type { RenderJobView } from "../../core/domain/api/views.ts";
+import type { RenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import {
   DEFAULT_RENDERER_ID,
   RENDERER_IDS,
@@ -53,8 +55,17 @@ export const engineOptions = (
 
     if (status === null) {
       if (statuses !== null && !isCurrent) return [];
-      if (statuses === null && !isCurrent && id !== DEFAULT_RENDERER_ID) return [];
-      return [{ id, label: RENDERER_LABELS[id], state: "checking", problem: null, selectable: true }];
+      if (statuses === null && !isCurrent && id !== DEFAULT_RENDERER_ID)
+        return [];
+      return [
+        {
+          id,
+          label: RENDERER_LABELS[id],
+          state: "checking",
+          problem: null,
+          selectable: true,
+        },
+      ];
     }
 
     if (!status.implemented && !isCurrent) return [];
@@ -81,8 +92,24 @@ export const engineStateLabel = (state: EngineOptionState): string | null =>
         : null;
 
 /** The engine a track's renders use from the app: its own saved preference. */
-export const trackEngine = (track: { readonly renderer: RendererId | null }): RendererId =>
-  resolveTrackRenderer(track.renderer);
+export const trackEngine = (track: {
+  readonly renderer: RendererId | null;
+}): RendererId => resolveTrackRenderer(track.renderer);
+
+/** Reload and duplicate-request adoption must follow the selected renderer. */
+export const activeRenderFor = (
+  jobs: readonly RenderJobView[],
+  slug: string,
+  engine: RendererId,
+  presetId?: RenderPresetId,
+): RenderJobView | undefined =>
+  jobs.find(
+    (job) =>
+      job.slug === slug &&
+      job.engine === engine &&
+      (presetId === undefined || job.presetId === presetId) &&
+      ["queued", "preparing", "rendering"].includes(job.status),
+  );
 
 /**
  * Why the app must not start a render with this engine right now, or null.

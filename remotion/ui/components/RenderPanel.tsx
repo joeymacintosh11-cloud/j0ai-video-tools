@@ -25,7 +25,11 @@ import {
 import { batchTargets } from "../api/engineRequest.ts";
 import { useRenderJob } from "../hooks/useRenderJob.ts";
 import { useStillCurrent } from "../hooks/useStillCurrent.ts";
-import { renderBlockedReason, trackEngine } from "./engineModel.ts";
+import {
+  activeRenderFor,
+  renderBlockedReason,
+  trackEngine,
+} from "./engineModel.ts";
 import { ErrorBanner } from "./ErrorBanner.tsx";
 
 const asApiError = (cause: unknown): ApiRequestError =>
@@ -74,8 +78,20 @@ export const RenderPanel: React.FC<{
   const [error, setError] = useState<ApiRequestError | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
-  const { job, logs, missing } = useRenderJob(jobId, onChanged);
-  const stillCurrent = useStillCurrent(track.slug);
+  const engine = trackEngine(track);
+  const requestKey = `${track.slug}::${engine}`;
+  const {
+    job: followedJob,
+    logs: followedLogs,
+    missing,
+  } = useRenderJob(jobId, onChanged);
+  const job =
+    followedJob?.slug === track.slug &&
+    followedJob.engine === engine
+      ? followedJob
+      : null;
+  const logs = job ? followedLogs : [];
+  const stillCurrent = useStillCurrent(requestKey);
 
   // Drop the followed job when switching tracks, so one track's render does not
   // appear under another — then recover the real state from the server.
@@ -97,10 +113,7 @@ export const RenderPanel: React.FC<{
         if (abandoned) {
           return;
         }
-        const active = jobs.find(
-          (candidate) =>
-            candidate.slug === slug && ACTIVE.includes(candidate.status),
-        );
+        const active = activeRenderFor(jobs, slug, engine);
         if (active) {
           setJobId(active.id);
         }
@@ -110,7 +123,29 @@ export const RenderPanel: React.FC<{
     return () => {
       abandoned = true;
     };
-  }, [track.slug]);
+  }, [track.slug, engine]);
+
+  // Catalogue/package actions can start another job while this panel stays
+  // mounted. Adopt that work when the refreshed export view reports it.
+  const inFlightFormats = track.exports
+    .filter(
+      (output) => output.status === "queued" || output.status === "rendering",
+    )
+    .map((output) => output.presetId)
+    .join(",");
+  useEffect(() => {
+    if (!inFlightFormats) return;
+    let abandoned = false;
+    void listRenders()
+      .then((jobs) => {
+        const active = activeRenderFor(jobs, track.slug, engine);
+        if (!abandoned && active) setJobId(active.id);
+      })
+      .catch(() => undefined);
+    return () => {
+      abandoned = true;
+    };
+  }, [track.slug, engine, inFlightFormats]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ block: "end" });
@@ -122,7 +157,6 @@ export const RenderPanel: React.FC<{
   // cannot run here (not installed, or not configured) blocks the button with
   // the reason, instead of queuing a render that would fail or quietly
   // becoming a Remotion render.
-  const engine = trackEngine(track);
   const engineName = RENDERER_LABELS[engine];
   const blocked = renderBlockedReason(engine, renderers?.renderers ?? null);
 
@@ -137,9 +171,11 @@ export const RenderPanel: React.FC<{
       // Several formats become a batch, which the queue panel then follows.
       // A single format stays a single job, exactly as before.
       if (chosen.length > 1) {
-        const created = await createRenderBatch(batchTargets(slug, chosen, engine));
+        const created = await createRenderBatch(
+          batchTargets(slug, chosen, engine),
+        );
 
-        if (stillCurrent(slug)) {
+        if (stillCurrent(requestKey)) {
           onBatchStarted(created.batchId);
           onChanged();
         }
@@ -148,7 +184,7 @@ export const RenderPanel: React.FC<{
 
       const started = await startRender(slug, chosen[0], engine);
 
-      if (stillCurrent(slug)) {
+      if (stillCurrent(requestKey)) {
         setJobId(started.jobId);
       }
     } catch (cause) {
@@ -159,24 +195,19 @@ export const RenderPanel: React.FC<{
       // cannot act on.
       if (failure.code === "RENDER_ALREADY_ACTIVE") {
         const jobs = await listRenders().catch(() => []);
-        const active = jobs.find(
-          (candidate) =>
-            candidate.slug === slug &&
-            candidate.presetId === chosen[0] &&
-            ACTIVE.includes(candidate.status),
-        );
+        const active = activeRenderFor(jobs, slug, engine, chosen[0]);
 
-        if (stillCurrent(slug) && active) {
+        if (stillCurrent(requestKey) && active) {
           setJobId(active.id);
           return;
         }
       }
 
-      if (stillCurrent(slug)) {
+      if (stillCurrent(requestKey)) {
         setError(failure);
       }
     } finally {
-      if (stillCurrent(slug)) {
+      if (stillCurrent(requestKey)) {
         setBusy(false);
       }
     }
@@ -190,7 +221,7 @@ export const RenderPanel: React.FC<{
     try {
       await revealTrackOutput(slug, presetId, engine);
     } catch (cause) {
-      if (stillCurrent(slug)) {
+      if (stillCurrent(requestKey)) {
         setError(asApiError(cause));
       }
     }
@@ -201,19 +232,17 @@ export const RenderPanel: React.FC<{
       return;
     }
 
-    const slug = track.slug;
-
     setBusy(true);
     setError(null);
 
     try {
       await cancelRender(jobId);
     } catch (cause) {
-      if (stillCurrent(slug)) {
+      if (stillCurrent(requestKey)) {
         setError(asApiError(cause));
       }
     } finally {
-      if (stillCurrent(slug)) {
+      if (stillCurrent(requestKey)) {
         setBusy(false);
       }
     }
@@ -224,7 +253,9 @@ export const RenderPanel: React.FC<{
   return (
     <div className="render">
       {engine === "after-effects" ? <WorkspacePanel key={track.slug} /> : null}
-      {error ? <ErrorBanner error={error} title="Render request failed" /> : null}
+      {error ? (
+        <ErrorBanner error={error} title="Render request failed" />
+      ) : null}
 
       <div className="form__actions">
         <button
@@ -234,7 +265,7 @@ export const RenderPanel: React.FC<{
           title={
             !track.validation.ok
               ? "Fix the problems below before rendering"
-              : blocked ?? `Render this track to out/ with ${engineName}`
+              : (blocked ?? `Render this track to out/ with ${engineName}`)
           }
           onClick={() => void begin()}
         >
@@ -274,7 +305,10 @@ export const RenderPanel: React.FC<{
               ))
           : null}
         {!active && track.render.legacyPresent ? (
-          <span className="actions__result" title={track.render.outputPath ?? undefined}>
+          <span
+            className="actions__result"
+            title={track.render.outputPath ?? undefined}
+          >
             plus an earlier render at {`out/${track.slug}.mp4`}
           </span>
         ) : null}
@@ -289,15 +323,16 @@ export const RenderPanel: React.FC<{
         </p>
       ) : engine !== DEFAULT_RENDERER_ID ? (
         <p className="muted">
-          Renders with {engineName}, this track&apos;s chosen engine (Track info).
+          Renders with {engineName}, this track&apos;s chosen engine (Track
+          info).
         </p>
       ) : null}
 
       {missing ? (
         <p className="muted">
-          That render job is no longer known to the server — job history is kept
-          in memory and is lost when the server restarts. Any finished video is
-          still on disk.
+          That render job could not be recovered from the server or its journal.
+          Any finished video is still on disk; refresh the track and queue again
+          if its export is missing or stale.
         </p>
       ) : null}
 
@@ -307,7 +342,12 @@ export const RenderPanel: React.FC<{
             <span className={`badge badge--job-${job.status}`}>
               {job.status}
             </span>
-            <span>{PHASE_TEXT[job.status]}</span>
+            <span>
+              {job.status === "preparing" && engine === "after-effects"
+                ? "Preparing — staging assets and validating the AE project"
+                : PHASE_TEXT[job.status]}{" "}
+              · {engineName}
+            </span>
             <span className="app__spacer" />
             <span className="actions__result">
               {formatElapsed(job.elapsedMs)}
