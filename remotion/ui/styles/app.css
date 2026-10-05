@@ -2659,6 +2659,10 @@ body {
   gap: 12px;
 }
 
+.publish .form__grid {
+  align-items: start;
+}
+
 .publish textarea.field__input {
   resize: vertical;
   font-size: 13px;
