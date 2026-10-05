@@ -52,6 +52,13 @@ import type {
   ValidationResult,
 } from "../tracks/types.ts";
 import type { RenderPresetId } from "../video/renderPresets.ts";
+import type { DestinationStatus, PublicationMode } from "../publishing/destinations.ts";
+import type { PublicationMetadata } from "../publishing/publicationMetadata.ts";
+import type { PublicationReceipt } from "../publishing/publicationReceipt.ts";
+import type { PublicationHistoryProblem, PublicationHistoryRead } from "../publishing/publicationHistory.ts";
+import type { PublishJob } from "../publishing/publishJob.ts";
+import type { PublishProblem } from "../publishing/publishProblems.ts";
+import type { PublicationSourceIdentity, PublicationSourceRef } from "../publishing/publicationSource.ts";
 
 /**
  * The local API's wire format, declared once and shared by both ends.
@@ -1330,3 +1337,77 @@ export type ContentLibraryAdoptView = {
   readonly skipped: readonly { readonly slug: string; readonly presetId: string; readonly reason: string }[];
   readonly problems: readonly string[];
 };
+
+/* ------------------------------------------------------------------ *
+ * Publishing (V3)
+ * ------------------------------------------------------------------ */
+
+/** GET /api/publish/destinations */
+export type PublishDestinationsView = {
+  readonly destinations: readonly DestinationStatus[];
+  /** Set when publishing.local.json is malformed; destinations then use safe defaults. */
+  readonly settingsProblem: string | null;
+};
+
+/**
+ * POST /api/publish/plan — and every job's validation. Nothing is persisted
+ * by a plan; it says whether a publish job for this request could start now.
+ */
+export type PublishPlanView = {
+  readonly ok: boolean;
+  readonly destination: DestinationStatus;
+  readonly sourceRef: PublicationSourceRef;
+  /** The exact export that would be published; null unless it exists and is current. */
+  readonly source: PublicationSourceIdentity | null;
+  readonly sourceStatus: {
+    readonly freshness: ExportFreshness;
+    readonly staleReasons: readonly StaleReason[];
+    readonly outputLabel: string;
+  };
+  readonly mode: PublicationMode | null;
+  readonly accountId: string | null;
+  /** Normalised metadata, when it passed the generic rules. */
+  readonly metadata: PublicationMetadata | null;
+  readonly problems: readonly PublishProblem[];
+};
+
+/** POST /api/publish/plan and /api/publish/jobs */
+export type PublishRequestBody = {
+  readonly destination: string;
+  readonly source: { readonly track: string; readonly format: RenderPresetId; readonly renderer: RendererId };
+  readonly metadata: Partial<PublicationMetadata>;
+  readonly accountId?: string | null;
+};
+
+/** One job, with its receipt when published. */
+export type PublishJobView = PublishJob & {
+  readonly receipt: PublicationReceipt | null;
+  /** This server process is executing it right now. */
+  readonly executing: boolean;
+};
+
+/** GET /api/publish/jobs */
+export type PublishJobsView = {
+  readonly jobs: readonly PublishJobView[];
+  readonly problems: readonly { readonly file: string; readonly message: string }[];
+};
+
+/** GET /api/publish/receipts */
+export type PublicationHistoryView = {
+  readonly status: PublicationHistoryRead["status"];
+  readonly receipts: readonly PublicationReceipt[];
+  readonly problems: readonly PublicationHistoryProblem[];
+};
+
+export type {
+  DestinationCapabilities,
+  DestinationState,
+  DestinationStatus,
+  PublicationMode,
+  PublicationVisibility,
+} from "../publishing/destinations.ts";
+export type { PublicationMetadata } from "../publishing/publicationMetadata.ts";
+export type { PublicationReceipt } from "../publishing/publicationReceipt.ts";
+export type { PublishJob, PublishJobState, PublishAttempt, PublicationCertainty } from "../publishing/publishJob.ts";
+export type { PublishProblem, PublishProblemReason } from "../publishing/publishProblems.ts";
+export type { PublicationSourceIdentity, PublicationSourceRef } from "../publishing/publicationSource.ts";

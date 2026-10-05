@@ -172,7 +172,11 @@ export const executionProblem = (job: PublishJob): string | null => {
     case "validating":
       return null;
     case "failed":
-      return job.certainty === "not_published" ? null : "This job's outcome is uncertain; reconcile it before retrying.";
+      if (job.certainty !== "not_published") return "This job's outcome is uncertain; reconcile it before retrying.";
+      // Its metadata never validated, so there is nothing trustworthy to retry with.
+      return job.source === null && job.problems.some((problem) => problem.reason === "publication_metadata_invalid")
+        ? "This job's publication metadata is invalid; create a new job with corrected metadata."
+        : null;
     case "publishing":
       return "This job is already publishing.";
     case "published":
