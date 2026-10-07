@@ -2704,3 +2704,34 @@ body {
   text-transform: uppercase;
   color: var(--vintage-gold);
 }
+
+/* Publishing dashboard (drafts): reuses .publish__history tables and .librarybadge. */
+.publishing {
+  display: grid;
+  gap: 10px;
+}
+
+.draftbadge--draft {
+  color: var(--text-faint);
+  border: 1px solid var(--border-strong);
+}
+.draftbadge--ready {
+  color: var(--vintage-gold);
+  background: var(--gold-wash);
+}
+.draftbadge--posted {
+  color: var(--status-ready);
+  background: var(--ready-wash);
+}
+
+.publishing__editor .form__grid {
+  align-items: start;
+}
+
+.publishing__editor {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}

@@ -35,7 +35,10 @@ export type TrackErrorCode =
   | "LIBRARY_RECORD_NOT_CURRENT"
   | "PUBLISH_DESTINATION_UNKNOWN"
   | "PUBLISH_JOB_NOT_FOUND"
-  | "PUBLISH_JOB_CONFLICT";
+  | "PUBLISH_JOB_CONFLICT"
+  | "PUBLISH_DRAFT_NOT_FOUND"
+  | "PUBLISH_DRAFT_CONFLICT"
+  | "PUBLISH_DRAFT_INVALID";
 
 export type TrackIssue = {
   readonly code: TrackErrorCode;

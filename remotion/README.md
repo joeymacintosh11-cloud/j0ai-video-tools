@@ -1418,6 +1418,40 @@ destination. The mock destination accepts `"simulate": "failure" | "uncertain"
 | "throw" | "invalid-receipt"` and `"delayMs"` for exercising those paths by
 hand.
 
+### Publishing dashboard (drafts)
+
+**Publishing** in the app header lists every rendered export (each track's
+preferred renderer) and the publication drafts written for them. A draft is
+what one export will say on **YouTube**, **Instagram** or **TikTok**: a title,
+a description (the caption on Instagram/TikTok), hashtags and a status. A new
+draft starts from the track's content-package copy.
+
+| Status | Meaning |
+| --- | --- |
+| Draft | Being written; anything may be incomplete. |
+| Ready to post | Checked: the export is current and the text fits the platform. |
+| Posted (manually) | You posted it yourself; recorded, not verified. |
+
+Ready and Posted are refused while anything is wrong: a format the platform
+does not take (TikTok is 9:16 only, Instagram 9:16 or 1:1, YouTube 16:9 or
+9:16 Shorts), a missing or stale export (judged by the draft's own renderer,
+so an After Effects draft never reads the Remotion file), an empty title, or
+text over the platform's limits (titles 100; descriptions 5,000 on YouTube,
+captions 2,200; at most 15 hashtags on YouTube and 30 elsewhere; hashtags of
+letters, digits and underscores only). Saving as Draft always works.
+
+Drafts are kept one file each in `out/.publishing/drafts/`. Every save names
+the revision it was edited from, so a stale form gets `PUBLISH_DRAFT_CONFLICT`
+(409) instead of overwriting a newer save. Nothing here uploads, schedules or
+creates a publish job, and no export, manifest or track file is changed.
+
+```console
+GET   /api/publish/drafts[?track=<slug>]
+POST  /api/publish/drafts                {platform, source:{track,format,renderer}, title, description, hashtags, status}
+GET   /api/publish/drafts/<draftId>
+PATCH /api/publish/drafts/<draftId>      same fields + "revision"
+```
+
 ### Editing metadata while something else changes it
 
 Saves are conditional. The API reports a `metadataRevision` for each track, the

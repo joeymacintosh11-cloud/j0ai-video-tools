@@ -16,6 +16,7 @@ import { ApiRequestError } from "./api/client.ts";
 import { catalogueBatchTargets } from "./api/engineRequest.ts";
 import { BatchContentPackagePanel } from "./components/BatchContentPackagePanel.tsx";
 import { ContentLibraryPanel } from "./components/ContentLibraryPanel.tsx";
+import { PublishingDashboard } from "./components/PublishingDashboard.tsx";
 import { ContentMetadataSettingsPanel } from "./components/ContentMetadataSettingsPanel.tsx";
 import { DeliverPanel } from "./components/DeliverPanel.tsx";
 import { DeliveryHistoryPanel } from "./components/DeliveryHistoryPanel.tsx";
@@ -58,6 +59,7 @@ export const App: React.FC = () => {
   const [showingSettings, setShowingSettings] = useState(false);
   const [showingHistory, setShowingHistory] = useState(false);
   const [showingLibrary, setShowingLibrary] = useState(false);
+  const [showingPublishing, setShowingPublishing] = useState(false);
   // Bumped whenever anything may have changed (a render finished, the window
   // regained focus), so an open library re-reads without polling.
   const [libraryRefresh, setLibraryRefresh] = useState(0);
@@ -275,6 +277,7 @@ export const App: React.FC = () => {
             setShowingSettings((previous) => !previous);
             setShowingHistory(false);
             setShowingLibrary(false);
+            setShowingPublishing(false);
           }}
         >
           {showingSettings ? "Close settings" : "Delivery"}
@@ -288,9 +291,22 @@ export const App: React.FC = () => {
             setShowingLibrary((previous) => !previous);
             setShowingSettings(false);
             setShowingHistory(false);
+            setShowingPublishing(false);
           }}
         >
           {showingLibrary ? "Close library" : "Library"}
+        </button>
+        <button
+          type="button"
+          className="button button--quiet"
+          onClick={() => {
+            setShowingPublishing((previous) => !previous);
+            setShowingSettings(false);
+            setShowingHistory(false);
+            setShowingLibrary(false);
+          }}
+        >
+          {showingPublishing ? "Close publishing" : "Publishing"}
         </button>
         {/* Only once there is a destination: before that nothing can have
             been delivered, and the settings panel is where that is set. */}
@@ -302,6 +318,7 @@ export const App: React.FC = () => {
               setShowingHistory((previous) => !previous);
               setShowingSettings(false);
               setShowingLibrary(false);
+              setShowingPublishing(false);
             }}
           >
             {showingHistory ? "Close history" : "History"}
@@ -449,6 +466,18 @@ export const App: React.FC = () => {
               onChanged={refreshAll}
               onClose={() => setShowingBatchPackage(false)}
             />
+          </div>
+        ) : showingPublishing ? (
+          <div className="detail">
+            <section className="section">
+              <h3 className="section__title">Publishing</h3>
+              <p className="muted">
+                Write what each export will say on YouTube, Instagram and TikTok, and track
+                where each post stands. Drafts are kept in <code>out/.publishing/drafts/</code>;
+                nothing is uploaded or scheduled from here.
+              </p>
+              <PublishingDashboard tracks={tracks.data ?? []} />
+            </section>
           </div>
         ) : showingLibrary ? (
           <div className="detail">

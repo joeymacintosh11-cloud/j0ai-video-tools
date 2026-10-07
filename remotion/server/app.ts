@@ -22,15 +22,19 @@ import { handleExportMissing } from "./routes/exportMissing.ts";
 import { handleListRenderers } from "./routes/renderers.ts";
 import {
   handleCancelPublishJob,
+  handleCreatePublicationDraft,
   handleCreatePublishJob,
   handleExecutePublishJob,
+  handleGetPublicationDraft,
   handleGetDestination,
   handleGetPublicationHistory,
   handleGetPublishJob,
   handleListDestinations,
+  handleListPublicationDrafts,
   handleListPublishJobs,
   handlePlanPublication,
   handleRecoverPublishJob,
+  handleUpdatePublicationDraft,
 } from "./routes/publishing.ts";
 import { handleInspectWorkspace, handleMaintainWorkspace } from "./routes/rendererWorkspace.ts";
 import { handleGetRenderHistory } from "./routes/renderHistory.ts";
@@ -130,6 +134,13 @@ const route = async (
     }
     if (second === "plan" && segments.length === 3 && method === "POST") { await handlePlanPublication(request, response); return; }
     if (second === "receipts" && segments.length === 3 && method === "GET") { handleGetPublicationHistory(request, response); return; }
+    if (second === "drafts") {
+      // /api/publish/drafts[/:draftId]
+      if (segments.length === 3 && method === "GET") { await handleListPublicationDrafts(request, response); return; }
+      if (segments.length === 3 && method === "POST") { await handleCreatePublicationDraft(request, response); return; }
+      if (segments.length === 4 && method === "GET") { await handleGetPublicationDraft(third!, response); return; }
+      if (segments.length === 4 && method === "PATCH") { await handleUpdatePublicationDraft(third!, request, response); return; }
+    }
     if (second === "jobs") {
       // /api/publish/jobs
       if (segments.length === 3 && method === "GET") { await handleListPublishJobs(request, response); return; }

@@ -484,6 +484,9 @@ core/domain/publishing/
   publishJob.ts          job, attempts, lifecycle table, certainty, transitions
   publicationReceipt.ts  receipt shape, strict parse, receiptMismatch(job, receipt)
   publicationHistory.ts  JSONL parse (damage/duplicates reported) and queries
+  publicationDraft.ts    operator drafts per platform (youtube/instagram/tiktok): fields,
+                         status draft|ready|posted, platform formats and limits, readiness
+                         (reuses publishProblems reasons); planning data, never a job
   publishProblems.ts     lowercase reasons: destination_unknown, destination_unavailable,
                          destination_not_configured, format_unsupported, track_invalid,
                          export_missing, export_stale, source_changed,
@@ -614,6 +617,16 @@ validation.
 Only an absent publication folder proves the local attempt was not published.
 Missing, unreadable, malformed or mismatched records in an existing folder leave
 reconciliation uncertain and block retry.
+
+### Publication drafts
+
+`services/publishing/publicationDrafts.ts` stores drafts as
+`out/.publishing/drafts/<draftId>.json` (atomic writes, revision-checked edits,
+unreadable files reported and left untouched). A draft refers to an export by
+track, format and renderer and is judged with that renderer's own coverage; it
+never creates a publish job, receipt or upload. The Publishing dashboard
+(`ui/components/PublishingDashboard.tsx`) is its only UI. A later milestone can
+turn a ready draft into a publish job once a platform adapter exists.
 
 ### What the YouTube milestone adds
 

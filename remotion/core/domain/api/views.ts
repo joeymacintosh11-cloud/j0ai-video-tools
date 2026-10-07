@@ -57,6 +57,7 @@ import type { PublicationMetadata } from "../publishing/publicationMetadata.ts";
 import type { PublicationReceipt } from "../publishing/publicationReceipt.ts";
 import type { PublicationHistoryProblem, PublicationHistoryRead } from "../publishing/publicationHistory.ts";
 import type { PublishJob } from "../publishing/publishJob.ts";
+import type { PublicationDraft } from "../publishing/publicationDraft.ts";
 import type { PublishProblem } from "../publishing/publishProblems.ts";
 import type { PublicationSourceIdentity, PublicationSourceRef } from "../publishing/publicationSource.ts";
 
@@ -1399,6 +1400,26 @@ export type PublicationHistoryView = {
   readonly problems: readonly PublicationHistoryProblem[];
 };
 
+/** One publication draft, with its export and readiness as of this response. */
+export type PublicationDraftView = {
+  readonly draft: PublicationDraft;
+  readonly export: {
+    readonly freshness: ExportFreshness;
+    /** Short format label, e.g. "Reels 9:16". */
+    readonly label: string;
+    readonly trackValid: boolean;
+  };
+  /** What stands between this draft and "ready" right now; empty means it could be marked ready. */
+  readonly problems: readonly PublishProblem[];
+};
+
+/** GET /api/publish/drafts */
+export type PublicationDraftsView = {
+  readonly drafts: readonly PublicationDraftView[];
+  /** Draft files that could not be read; left on disk untouched. */
+  readonly problems: readonly { readonly file: string; readonly message: string }[];
+};
+
 export type {
   DestinationCapabilities,
   DestinationState,
@@ -1411,3 +1432,9 @@ export type { PublicationReceipt } from "../publishing/publicationReceipt.ts";
 export type { PublishJob, PublishJobState, PublishAttempt, PublicationCertainty } from "../publishing/publishJob.ts";
 export type { PublishProblem, PublishProblemReason } from "../publishing/publishProblems.ts";
 export type { PublicationSourceIdentity, PublicationSourceRef } from "../publishing/publicationSource.ts";
+export type {
+  DraftPlatform,
+  DraftStatus,
+  PublicationDraft,
+  PublicationDraftFields,
+} from "../publishing/publicationDraft.ts";

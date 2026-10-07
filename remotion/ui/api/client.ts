@@ -39,6 +39,9 @@ import type {
   PublicationHistoryView,
   PublishDestinationsView,
   PublishJobsView,
+  PublicationDraftFields,
+  PublicationDraftView,
+  PublicationDraftsView,
   PublishJobView,
   PublishPlanView,
   PublishRequestBody,
@@ -712,6 +715,21 @@ export const cancelPublishJob = (jobId: string): Promise<PublishJobView> =>
 
 export const recoverPublishJob = (jobId: string): Promise<PublishJobView & { readonly recovery: string }> =>
   jsonRequest<PublishJobView & { readonly recovery: string }>(`/api/publish/jobs/${encodeURIComponent(jobId)}/recover`, "POST");
+
+/** Drafts are planning data: saving one never publishes or creates a publish job. */
+export const listPublicationDrafts = (): Promise<PublicationDraftsView> =>
+  request<PublicationDraftsView>("/api/publish/drafts");
+
+export const createPublicationDraft = (fields: PublicationDraftFields): Promise<PublicationDraftView> =>
+  jsonRequest<PublicationDraftView>("/api/publish/drafts", "POST", fields);
+
+/** `revision` is the one the edit started from; a newer save answers 409 PUBLISH_DRAFT_CONFLICT. */
+export const updatePublicationDraft = (
+  draftId: string,
+  revision: number,
+  fields: PublicationDraftFields,
+): Promise<PublicationDraftView> =>
+  jsonRequest<PublicationDraftView>(`/api/publish/drafts/${encodeURIComponent(draftId)}`, "PATCH", { ...fields, revision });
 
 export const listPublishJobs = (track: string): Promise<PublishJobsView> =>
   request<PublishJobsView>(`/api/publish/jobs?${new URLSearchParams({ track }).toString()}`);
