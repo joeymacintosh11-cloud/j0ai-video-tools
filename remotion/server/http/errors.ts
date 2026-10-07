@@ -44,6 +44,9 @@ const STATUS_BY_CODE: Record<TrackErrorCode, number> = {
   PUBLISH_DESTINATION_UNKNOWN: 400,
   PUBLISH_JOB_NOT_FOUND: 404,
   PUBLISH_JOB_CONFLICT: 409,
+  PUBLISH_DRAFT_NOT_FOUND: 404,
+  PUBLISH_DRAFT_CONFLICT: 409,
+  PUBLISH_DRAFT_INVALID: 400,
 };
 
 export const statusForCode = (code: TrackErrorCode): number =>

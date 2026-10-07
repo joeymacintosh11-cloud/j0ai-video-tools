@@ -7,6 +7,12 @@ import { assertValidSlug } from "../../core/domain/tracks/slug.ts";
 import { assertRenderPresetId } from "../../core/domain/video/renderPresets.ts";
 import { isRendererId, type RendererId } from "../../core/domain/video/renderers.ts";
 import { createPublishingService, type PublishInput } from "../../services/publishing/publishing.ts";
+import {
+  createPublicationDraft,
+  getPublicationDraft,
+  listPublicationDrafts,
+  updatePublicationDraft,
+} from "../../services/publishing/publicationDrafts.ts";
 import { readJsonBody, sendOk } from "../http/json.ts";
 
 /**
@@ -105,4 +111,23 @@ export const handleGetPublicationHistory = (request: IncomingMessage, response: 
       ...(limit === null ? {} : { limit: Number(limit) }),
     }),
   );
+};
+
+/* Publication drafts: planning data only — never a publish job, never an upload. */
+
+export const handleListPublicationDrafts = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  const track = queryOf(request).get("track");
+  sendOk(response, await listPublicationDrafts(track === null ? {} : { track: assertValidSlug(track) }));
+};
+
+export const handleCreatePublicationDraft = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  sendOk(response, await createPublicationDraft(await readJsonBody(request)));
+};
+
+export const handleGetPublicationDraft = async (draftId: string, response: ServerResponse): Promise<void> => {
+  sendOk(response, await getPublicationDraft(draftId));
+};
+
+export const handleUpdatePublicationDraft = async (draftId: string, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  sendOk(response, await updatePublicationDraft(draftId, await readJsonBody(request)));
 };
