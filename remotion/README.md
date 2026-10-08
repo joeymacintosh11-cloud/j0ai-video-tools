@@ -1418,6 +1418,43 @@ destination. The mock destination accepts `"simulate": "failure" | "uncertain"
 | "throw" | "invalid-receipt"` and `"delayMs"` for exercising those paths by
 hand.
 
+### Engagement Optimizer
+
+The **Engagement** section of a track suggests copy for the first second and
+the caption of an Instagram Reels, TikTok or YouTube Shorts post (all of them
+post the Reels 9:16 export):
+
+- **Three hooks** — *tease the drop*, *ask a question*, *name it* — built from
+  the track's title, artist, key, BPM and subtitle, each short enough to read
+  in about a second (at most 8 words / 50 characters, shorter wording used
+  when a long title would not fit).
+- **Three caption styles** — engagement (invite comments/saves), discovery
+  (reach new listeners) and conversion (send people to the full beat) — each
+  opening with the chosen hook, with a platform CTA and postable hashtags
+  (YouTube Shorts always gets `#Shorts`).
+- **Platform CTAs** for every style, ready to copy.
+- A **pre-export checklist**: track details complete, hook chosen and
+  readable, first line visible before "more", CTA included, hashtag count,
+  caption length, and whether the 9:16 export is intended and current.
+
+Suggestions are deterministic templates: the same track always gets the same
+copy, with no network and no new dependencies. The chosen hook and caption
+style are saved in `metadata.json` as `"engagement": {"hook", "captionStyle"}`
+through the normal metadata save (revision-checked). They are **copy only** —
+never passed to Remotion or After Effects, never part of an export's
+fingerprint — so choosing one never re-renders or stales an export.
+
+A saved `engagement` value this version does not understand (a newer hook,
+an extra field) is ignored when reading — the track stays valid — and is
+written back untouched by every save that does not name `engagement`. A save
+that does name it must be valid: an object with `hook` and/or `captionStyle`
+replaces the whole selection, `null` clears it, and anything else (including
+`{}`) is refused with `INVALID_REQUEST`, by the API and by the service alike.
+Keys keep their accidentals in hashtags (`F# Minor` → `#FSharpMinor`), and
+lengths are counted in characters as readers see them (an emoji is one). Drawing
+the hook into the video is left to a later milestone because it needs a new
+visualizer field in both renderers and a new After Effects template layer.
+
 ### Publishing dashboard (drafts)
 
 **Publishing** in the app header lists every rendered export (each track's

@@ -2,6 +2,10 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { withFileMutation, writeAtomicFile } from "./atomicFile.ts";
 import { metadataRevision } from "./metadataRevision.ts";
+import {
+  parseEngagementSelection,
+  type EngagementSelection,
+} from "../../core/domain/content/engagementOptimizer.ts";
 import { parseMetadataTemplates } from "../../core/domain/content/metadataTemplates.ts";
 import type { TrackMetadataPatch } from "../../core/domain/api/views.ts";
 import { TrackError, trackIssue } from "../../core/domain/tracks/errors.ts";
@@ -31,7 +35,7 @@ export type UpdateTrackMetadataResult = {
 
 const readExistingDraft = async (
   slug: string,
-): Promise<{ current: TrackMetadataDraft; revision: string }> => {
+): Promise<{ current: TrackMetadataDraft; revision: string; storedEngagement: unknown }> => {
   const locations = trackLocations(slug);
   const source = publicLabel(trackAssetPaths(slug).metadata);
 
@@ -81,7 +85,27 @@ const readExistingDraft = async (
     );
   }
 
-  return { current, revision: metadataRevision(raw) };
+  // Verbatim, not coerced: a hook or field this version does not know (a
+  // newer app's, or a hand edit) is still the user's, and an unrelated save
+  // must write it back untouched rather than normalise it away.
+  const storedEngagement = (parsed as Record<string, unknown>).engagement;
+
+  return { current, revision: metadataRevision(raw), storedEngagement };
+};
+
+/**
+ * undefined: the patch leaves engagement alone. null: clear it. Otherwise the
+ * whole new selection, which must be valid — an invalid one is refused, never
+ * coerced into a silent clear.
+ */
+const requestedEngagementFor = (
+  value: unknown,
+  source: string,
+): EngagementSelection | null | undefined => {
+  if (value === undefined) return undefined;
+  const { selection, problems } = parseEngagementSelection(value);
+  if (problems.length > 0) throw new TrackError(trackIssue("INVALID_REQUEST", `${source}: ${problems.join(" ")}`, source));
+  return selection;
 };
 
 /**
@@ -105,7 +129,10 @@ export const updateTrackMetadata = async (
 
   return withFileMutation(locations.metadata, async () => {
     try {
-      const { current, revision } = await readExistingDraft(slug);
+      // An explicit engagement value is checked here, not only at the HTTP
+      // boundary, so no caller can clear a saved choice with a malformed one.
+      const requestedEngagement = requestedEngagementFor(patch.engagement, source);
+      const { current, revision, storedEngagement } = await readExistingDraft(slug);
       const conflict = () => new TrackError(trackIssue(
         "METADATA_CONFLICT",
         "Metadata changed since it was read. Refresh the track before saving again.",
@@ -145,6 +172,7 @@ export const updateTrackMetadata = async (
           patch.contentMetadataOverrides === undefined
             ? current.contentMetadataOverrides
             : (patch.contentMetadataOverrides ?? undefined),
+        engagement: requestedEngagement === undefined ? current.engagement : (requestedEngagement ?? undefined),
       };
       const { issues, metadata } = validateTrackMetadata(merged, source);
       if (metadata === null) {
@@ -154,7 +182,19 @@ export const updateTrackMetadata = async (
 
       await writeAtomicFile(
         locations.metadata,
-        (handle) => handle.writeFile(serializeTrackMetadata(metadata), "utf-8"),
+        (handle) =>
+          handle.writeFile(
+            serializeTrackMetadata({
+              ...metadata,
+              // Untouched by this patch: written back exactly as it was read,
+              // even a value only a newer version understands.
+              engagement:
+                requestedEngagement === undefined
+                  ? (storedEngagement as EngagementSelection | undefined)
+                  : metadata.engagement,
+            }),
+            "utf-8",
+          ),
         async () => {
           // Catch edits made outside this process while we staged the update.
           const latest = await readFile(locations.metadata, "utf-8");

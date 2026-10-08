@@ -147,7 +147,7 @@ const readExportPresets = (
 
 const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch => {
   const patch: Record<string, unknown> = {};
-  const allowed = ["title", "artist", "key", "subtitle", "deliveryFolder", "bpm", "exportPresets", "renderer", "contentMetadataOverrides"];
+  const allowed = ["title", "artist", "key", "subtitle", "deliveryFolder", "bpm", "exportPresets", "renderer", "contentMetadataOverrides", "engagement"];
   for (const key of Object.keys(body)) {
     if (!allowed.includes(key)) {
       throw new TrackError(trackIssue("INVALID_REQUEST", `Unknown metadata field "${key}".`));
@@ -218,11 +218,17 @@ const readMetadataPatch = (body: Record<string, unknown>): TrackMetadataPatch =>
     patch.contentMetadataOverrides = body.contentMetadataOverrides;
   }
 
+  // null clears the choices; an object is the whole selection. Validated by
+  // updateTrackMetadata, so HTTP and direct callers get the same answer.
+  if (body.engagement !== undefined) {
+    patch.engagement = body.engagement;
+  }
+
   if (Object.keys(patch).length === 0) {
     throw new TrackError(
       trackIssue(
         "INVALID_REQUEST",
-        "Provide at least one of: title, artist, key, bpm, subtitle, exportPresets, renderer, deliveryFolder, contentMetadataOverrides.",
+        "Provide at least one of: title, artist, key, bpm, subtitle, exportPresets, renderer, deliveryFolder, contentMetadataOverrides, engagement.",
       ),
     );
   }

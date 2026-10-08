@@ -2735,3 +2735,42 @@ body {
   border: 1px solid var(--border-strong);
   border-radius: 4px;
 }
+
+/* Engagement Optimizer (track view). */
+.engagement {
+  display: grid;
+  gap: 12px;
+}
+
+.engagement__group {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.engagement__option {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  cursor: pointer;
+}
+
+.engagement__list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.engagement__check--pass > span:first-child {
+  color: var(--status-ready);
+}
+.engagement__check--warn > span:first-child {
+  color: var(--vintage-gold);
+}
+.engagement__check--fail > span:first-child {
+  color: var(--status-invalid);
+}
