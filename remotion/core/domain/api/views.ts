@@ -44,6 +44,7 @@ import type {
   MetadataTemplatesResetPatch,
   PartialMetadataTemplates,
 } from "../content/metadataTemplates.ts";
+import type { EngagementSelection } from "../content/engagementOptimizer.ts";
 import type { TrackErrorCode, TrackIssue } from "../tracks/errors.ts";
 import type {
   TrackMetadata,
@@ -250,6 +251,11 @@ export type TrackMetadataPatch = {
    * object replaces the whole set — never deep-merged with what is on disk.
    */
   readonly contentMetadataOverrides?: PartialMetadataTemplates | null;
+  /**
+   * The Engagement Optimizer's choices. Omitted leaves them; `null` clears
+   * them; an object replaces the whole selection. Never affects rendering.
+   */
+  readonly engagement?: EngagementSelection | null;
 };
 
 /** POST /api/tracks request body. */

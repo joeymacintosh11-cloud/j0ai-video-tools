@@ -14,6 +14,7 @@ import { revealDelivery } from "../api/client.ts";
 import { useRenderers } from "../hooks/useRenderers.ts";
 import { AssetChecklist } from "./AssetChecklist.tsx";
 import { ContentPackagePanel } from "./ContentPackagePanel.tsx";
+import { EngagementPanel } from "./EngagementPanel.tsx";
 import { DeliverPanel } from "./DeliverPanel.tsx";
 import { DestinationFixPlanPanel } from "./DestinationFixPlanPanel.tsx";
 import { DestinationHealthPanel } from "./DestinationHealthPanel.tsx";
@@ -171,6 +172,14 @@ export const TrackDetail: React.FC<{
           onChanged={onChanged}
           onBatchStarted={onBatchStarted}
         />
+      </section>
+
+      {/* Copy for the first second and the caption: hooks, caption styles,
+          CTAs and a pre-export checklist. Saved with the track's metadata;
+          never part of what is rendered. */}
+      <section className="section">
+        <h3 className="section__title">Engagement</h3>
+        <EngagementPanel track={track} onChanged={onChanged} />
       </section>
 
       {/* Publishing is downstream of the package: it sends one existing,

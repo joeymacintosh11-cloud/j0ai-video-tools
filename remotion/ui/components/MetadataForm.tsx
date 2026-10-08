@@ -170,6 +170,8 @@ export const MetadataForm: React.FC<{
   });
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  const initialRef = useRef(initial);
+  initialRef.current = initial;
   const stillCurrent = useStillCurrent(track.slug);
 
   useEffect(() => {
@@ -177,9 +179,17 @@ export const MetadataForm: React.FC<{
       switchedTrack: seeded.current.slug !== track.slug,
       revisionChanged: seeded.current.revision !== track.metadataRevision,
       dirty: dirtyRef.current,
+      formFieldsChanged: !sameFields(toFields(track), initialRef.current),
     });
 
     if (decision === "ignore") {
+      return;
+    }
+
+    if (decision === "rebase") {
+      // Only fields this form does not edit moved (the engagement choice,
+      // say). Adopt the revision so the edit in progress still saves.
+      seeded.current = { slug: track.slug, revision: track.metadataRevision };
       return;
     }
 

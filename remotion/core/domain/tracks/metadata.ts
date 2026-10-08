@@ -3,6 +3,7 @@ import {
   coerceMetadataTemplates,
   parseMetadataTemplates,
 } from "../content/metadataTemplates.ts";
+import { coerceEngagementSelection } from "../content/engagementOptimizer.ts";
 import { TrackError, trackIssue, type TrackIssue } from "./errors.ts";
 import {
   coerceExportPresetList,
@@ -79,6 +80,7 @@ export const coerceMetadataDraft = (
         ? raw.deliveryFolder.trim()
         : undefined,
     contentMetadataOverrides: coerceMetadataTemplates(raw.contentMetadataOverrides),
+    engagement: coerceEngagementSelection(raw.engagement),
   };
 };
 
@@ -100,6 +102,7 @@ export const serializeTrackMetadata = (
     renderer: metadata.renderer,
     deliveryFolder: metadata.deliveryFolder,
     contentMetadataOverrides: metadata.contentMetadataOverrides,
+    engagement: metadata.engagement,
   };
 
   return `${JSON.stringify(ordered, null, 2)}\n`;
@@ -240,6 +243,9 @@ export const validateTrackMetadata = (
       renderer,
       deliveryFolder,
       contentMetadataOverrides: contentMetadataOverrides ?? undefined,
+      // Lenient on purpose: an unknown hook or style reads as "not chosen",
+      // never as an invalid track that could not be rendered.
+      engagement: coerceEngagementSelection(raw.engagement),
     },
   };
 };

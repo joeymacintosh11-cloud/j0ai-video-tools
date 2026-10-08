@@ -1,6 +1,7 @@
 import type { TrackIssue } from "./errors.ts";
 import type { TrackAssetPaths } from "./paths.ts";
 import type { PartialMetadataTemplates } from "../content/metadataTemplates.ts";
+import type { EngagementSelection } from "../content/engagementOptimizer.ts";
 import type { RenderPresetId } from "../video/renderPresets.ts";
 import type { RendererId } from "../video/renderers.ts";
 
@@ -43,6 +44,13 @@ export type TrackMetadata = {
    * composition (title/artist/key/bpm/subtitle) do that.
    */
   readonly contentMetadataOverrides?: PartialMetadataTemplates;
+  /**
+   * The Engagement Optimizer's saved choices (hook, caption style). Copy
+   * only: never passed to a renderer and not part of any export fingerprint,
+   * so changing it never re-renders or stales an export. See
+   * core/domain/content/engagementOptimizer.ts.
+   */
+  readonly engagement?: EngagementSelection;
 };
 
 /**
@@ -74,6 +82,13 @@ export type TrackMetadataDraft = {
   readonly deliveryFolder?: string;
   /** See TrackMetadata.contentMetadataOverrides. */
   readonly contentMetadataOverrides?: PartialMetadataTemplates;
+  /**
+   * The Engagement Optimizer's saved choices (hook, caption style). Copy
+   * only: never passed to a renderer and not part of any export fingerprint,
+   * so changing it never re-renders or stales an export. See
+   * core/domain/content/engagementOptimizer.ts.
+   */
+  readonly engagement?: EngagementSelection;
 };
 
 /**
